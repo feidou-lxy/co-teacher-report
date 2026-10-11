@@ -254,9 +254,10 @@ th{color:#8a9099;font-weight:600}
 .attflag.green{background:#e8f7f0;color:#2ba471}
 .lvnote{font-size:12px;color:#8a9099;margin-top:6px;line-height:1.6}
 .noatt{font-size:13px;color:#8a9099}
-.tabs{position:sticky;top:52px;z-index:20;background:#f5f6f8;padding:10px 0;display:flex;gap:8px;flex-wrap:wrap;border-bottom:2px solid #e6e8eb;margin-bottom:18px}
-.tab{border:1px solid #d8dce3;background:#fff;color:#3a5bdb;font-size:13px;font-weight:600;padding:8px 14px;border-radius:10px;cursor:pointer;line-height:1.3;text-align:left;transition:.15s}
-.tab .tcount{font-size:11px;font-weight:400;color:#8a9099}
+.tabs{position:sticky;top:52px;z-index:20;background:#f5f6f8;padding:10px 0;display:flex;gap:8px;flex-wrap:wrap;border-bottom:2px solid #e6e8eb;margin-bottom:18px;max-height:212px;overflow-y:auto}
+.tab{border:1px solid #d8dce3;background:#fff;color:#3a5bdb;font-size:13px;font-weight:600;padding:7px 12px;border-radius:10px;cursor:pointer;line-height:1.3;text-align:left;transition:.15s;max-width:232px}
+.tab .tname{display:block;max-width:206px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab .tcount{display:block;font-size:11px;font-weight:400;color:#8a9099;margin-top:2px}
 .tab:hover{border-color:#3a5bdb}
 .tab.active{background:#3a5bdb;color:#fff;border-color:#3a5bdb}
 .tab.active .tcount{color:#dce3ff}
@@ -371,16 +372,16 @@ def main():
             cr = by_co[ck]
             co_sections.append(build_section("co", f"co-{ci}", cr, ck, False, None, False, True))
 
-        course_tabs = ['<button class="tab active" onclick="showTab(\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
+        course_tabs = ['<button class="tab active" onclick="showTab(\'course\',\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(course_order):
             n = len(by_course[ck])
             t = sum(1 for r in by_course[ck] if r["timeout"])
-            course_tabs.append(f'<button class="tab" onclick="showTab(\'c\',{ci})" title="{ck}">{ck}<br><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
-        co_tabs = ['<button class="tab active" onclick="showTab(\'co\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
+            course_tabs.append(f'<button class="tab" onclick="showTab(\'course\',\'c\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
+        co_tabs = ['<button class="tab active" onclick="showTab(\'co\',\'co\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(co_order):
             n = len(by_co[ck])
             t = sum(1 for r in by_co[ck] if r["timeout"])
-            co_tabs.append(f'<button class="tab" onclick="showTab(\'co\',{ci})" title="{ck}">{ck}<br><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
+            co_tabs.append(f'<button class="tab" onclick="showTab(\'co\',\'co\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
 
         dim_bar = '''<div class="dimswitch">
   <span class="dimlabel">查看维度：</span>
@@ -404,11 +405,11 @@ def main():
         for ci, ck in enumerate(course_order):
             cr = [r for r in rows if r["course"] == ck]
             course_sections.append(build_section("c", f"c-{ci}", cr, ck, False, None, False, False))
-        course_tabs = ['<button class="tab active" onclick="showTab(\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
+        course_tabs = ['<button class="tab active" onclick="showTab(\'course\',\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(course_order):
             n = sum(1 for r in rows if r["course"] == ck)
             t = sum(1 for r in rows if r["course"] == ck and r["timeout"])
-            course_tabs.append(f'<button class="tab" onclick="showTab(\'c\',{ci})" title="{ck}">{ck}<br><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
+            course_tabs.append(f'<button class="tab" onclick="showTab(\'course\',\'c\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
         panels = f'''<div class="dim-panel" id="dim-course">
   <div class="tabs">{''.join(course_tabs)}</div>
   {''.join(course_sections)}
@@ -451,15 +452,15 @@ function showDim(d){{
   document.querySelectorAll('.dimb').forEach(function(el){{el.classList.remove('active');}});
   var p=document.getElementById('dim-'+d); if(p) p.style.display='block';
   var b=document.querySelector('.dimb[data-d="'+d+'"]'); if(b) b.classList.add('active');
-  showTab(d, -1);
+  showTab(d, d==='co'?'co':'c', -1);
 }}
-function showTab(prefix, idx){{
-  var panel=document.getElementById('dim-'+prefix); if(!panel) return;
-  panel.querySelectorAll('.grp').forEach(function(el){{el.style.display='none';}});
-  panel.querySelectorAll('.tab').forEach(function(el){{el.classList.remove('active');}});
+function showTab(panel, prefix, idx){{
+  var pn=document.getElementById('dim-'+panel); if(!pn) return;
+  pn.querySelectorAll('.grp').forEach(function(el){{el.style.display='none';}});
+  pn.querySelectorAll('.tab').forEach(function(el){{el.classList.remove('active');}});
   var el=document.getElementById(prefix+'-'+(idx<0?'all':idx)); if(el) el.style.display='block';
-  var tabs=panel.querySelectorAll('.tab');
-  if(idx<0) tabs[0].classList.add('active'); else tabs[idx+1].classList.add('active');
+  var tabs=pn.querySelectorAll('.tab');
+  if(tabs.length){{ (idx<0?tabs[0]:tabs[idx+1]).classList.add('active'); }}
   window.scrollTo({{top:0,behavior:'smooth'}});
 }}
 function coFilter(sel){{
