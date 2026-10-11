@@ -139,34 +139,43 @@ def main():
         is_timeout = (str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True)
         hw_bad = hits(all_txt, ["没写", "没做", "不会做", "漏交"])
         att_bad = hits(all_txt, ["请假", "回放", "没来", "缺课"])
+        # 命中的具体关键词（用于把 To-Do 写「具体」，避免千人一面）
+        neg_kws = [k for k in NEG if k in all_txt]
+        att_kws = [k for k in ["请假", "回放", "没来", "缺课", "迟到", "早退"] if k in all_txt]
+        hw_kws = [k for k in ["没写", "没做", "不会做", "漏交"] if k in all_txt]
+        tp = "、".join(top_topics[:2])
+        tp_s = f"（{tp}）" if tp else ""
+        att_s = "、".join(att_kws) if att_kws else "请假/缺课"
+        hw_s = "、".join(hw_kws) if hw_kws else "未完成/不会做"
+        neg_s = "、".join(neg_kws[:3]) if neg_kws else "情绪波动"
         if is_edu:
-            # 教务视角：To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」
+            # 教务视角：To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」，并注入该生具体信息
             if is_timeout:
-                todos.append(("高", f"响应超时：第一时间联系家长说明并致歉，避免满意度下滑（后台标记超时 {g.get('timeoutDuration')}）", "后台响应时效标记"))
+                todos.append(("高", f"响应超时 {g.get('timeoutDuration')}：第一时间联系家长说明并致歉，避免满意度下滑", "后台响应时效标记"))
             if unresolved:
-                todos.append(("高", "将该生未解答疑问的跟进进展反馈家长，让家长看到服务闭环", "会话尾部存在未获回应提问"))
-            if hw and hw_bad > 0:
-                todos.append(("中", "就作业完成情况与家长沟通，商定家校督促方案", "作业相关负面信号"))
-            if att and att_bad > 0:
-                todos.append(("中", "就出勤/请假情况与家长确认，同步补课与回放安排", "出勤相关信号"))
-            if neg:
-                todos.append(("中", "学生出现情绪/压力信号，主动与家长沟通关怀、建立信任", "负面情绪信号"))
+                todos.append(("高", f"该生仍有未闭环疑问{tp_s}，把跟进进展反馈家长，让家长看到服务闭环", "会话尾部存在未获回应提问"))
+            if hw_bad > 0:
+                todos.append(("中", f"该生作业出现「{hw_s}」，与家长沟通并商定家校督促方案", f"作业负面信号 {hw_bad} 处"))
+            if att_bad > 0:
+                todos.append(("中", f"该生近况涉及「{att_s}」，与家长确认并同步补课/回放安排", f"出勤相关信号 {att_bad} 处"))
+            if neg_kws:
+                todos.append(("中", f"家长/学生提及「{neg_s}」，主动关怀沟通、建立信任", f"负面情绪信号 {neg} 处"))
             if q >= 5:
-                todos.append(("中", "向家长反馈该生薄弱点与提升建议，铺垫续报沟通", f"学生疑问密度高（{q} 处）"))
+                todos.append(("中", f"该生高频疑问集中在{tp or '多个知识点'}（{q} 处），向家长反馈薄弱点与提升建议，铺垫续报沟通", f"学生疑问密度高（{q} 处）"))
             if not todos:
                 todos.append(("低", "常规家长沟通：同步学习近况、维护关系、铺垫续报", "无明显风险信号"))
         else:
-            # 联席视角：To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」
+            # 联席视角：To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」，同样注入具体信息
             if is_timeout:
                 todos.append(("高", f"跟进超时未回复咨询（后台标记超时 {g.get('timeoutDuration')}）", "后台响应时效标记"))
             if unresolved:
-                todos.append(("高", "回复学生近期提出的未解答疑问", "会话尾部存在未获回应提问"))
-            if hw and hw_bad > 0:
-                todos.append(("中", "针对作业未完成/不会做进行辅导或订正跟进", "作业相关负面信号"))
-            if att and att_bad > 0:
-                todos.append(("中", "确认出勤与请假情况，必要时补回放/补课", "出勤相关信号"))
+                todos.append(("高", f"回复学生未解答疑问{tp_s}", "会话尾部存在未获回应提问"))
+            if hw_bad > 0:
+                todos.append(("中", f"针对作业问题「{hw_s}」进行辅导或订正跟进", f"作业负面信号 {hw_bad} 处"))
+            if att_bad > 0:
+                todos.append(("中", f"确认出勤/请假「{att_s}」，必要时补回放/补课", f"出勤相关信号 {att_bad} 处"))
             if q >= 5:
-                todos.append(("中", "整理该生高频疑问，统一集中答疑一次", f"学生疑问密度高（{q} 处）"))
+                todos.append(("中", f"整理该生高频疑问{tp_s}，统一集中答疑一次", f"学生疑问密度高（{q} 处）"))
             if not todos:
                 todos.append(("低", "维持常规跟进，关注下次作业与提问", "无明显风险信号"))
         students[stu] = {
