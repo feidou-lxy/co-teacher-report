@@ -24,6 +24,9 @@ WINDOW_DEFAULT = "2026-09-01"
 ATT = ["请假", "病", "发烧", "医院", "回放", "没来", "缺课", "到课", "出勤", "迟到", "早退", "身体", "不舒服", "康复", "休"]
 HW = ["作业", "提交", "交作业", "没写", "没做", "不会做", "漏交", "订正", "打卡", "练习", "错题", "刷题", "补"]
 Q = ["?", "？", "怎么", "为什么", "如何", "不懂", "听不懂", "不会", "求解", "求", "请教", "迷茫", "卡住", "思路", "咋"]
+# 真实「提问」判定（用于未闭环）：比 Q 更严，剔除「求」「不会」「思路」等描述性易误命中词
+Q_ASK = ["?", "？", "不懂", "听不懂", "没听懂", "不理解", "没明白", "不会做", "不会写", "求解",
+         "怎么", "为什么", "为啥", "如何", "请教", "没思路", "卡住", "咋", "求助", "帮忙看", "对不对"]
 POS = ["谢谢", "感谢", "辛苦", "麻烦您", "麻烦你", "感激", "太好了", "棒"]
 NEG = ["焦虑", "着急", "担心", "烦躁", "抱怨", "不满意", "无奈", "心烦", "压力", "崩溃", "难受", "愁", "委屈"]
 STU_SELF = ["我自己", "我这道题", "我算", "我听", "我做", "我提交", "我交了", "我错了", "我漏",
@@ -75,9 +78,12 @@ def main():
     students = {}
     for stu, blk in d.items():
         g = blk["group"]
+        # 接口返回为倒序（最新在前）；此处显式按时间升序排序，消除后续对顺序的隐式依赖
         msgs = [m for m in blk["messages"] if (m.get("msgTime") or "") >= CUT]
-        texts = [(m.get("role"), get_text(m)) for m in msgs]
-        texts = [(r, t) for r, t in texts if t]
+        msgs.sort(key=lambda m: m.get("msgTime") or "")
+        triples_all = [((m.get("msgTime") or ""), m.get("role"), get_text(m)) for m in msgs]
+        triples = [x for x in triples_all if x[2]]
+        texts = [(r, t) for _, r, t in triples]
         if not texts:
             empty_todos = ([("低", "暂无可分析互动，主动联系家长了解学生近况与续报意愿", "窗口内无聊天")]
                            if is_edu else
@@ -87,7 +93,8 @@ def main():
                 "newest": None, "oldest": None, "att": 0, "hw": 0, "q": 0,
                 "pos": 0, "neg": 0, "hw_neg": 0, "att_leave": 0,
                 "student_coop": 0, "parent_coop": 0, "top_topics": [],
-                "unresolved": False,
+                "unresolved": False, "unresolved_at": "", "unresolved_q": "",
+                "unres_evi": "窗口内无聊天",
                 "summary": f"{CUT} 起该群无可分析聊天记录（窗口内无互动）。",
                 "todos": empty_todos,
             }
@@ -99,8 +106,8 @@ def main():
         n_tea = len(tea_txt)
         voice = sum(1 for m in msgs if m.get("msgType") == "voice")
         times = [m.get("msgTime") for m in msgs if m.get("msgTime")]
-        newest = times[0] if times else None
-        oldest = times[-1] if times else None
+        newest = times[-1] if times else None
+        oldest = times[0] if times else None
         att = hits(all_txt, ATT)
         hw = hits(all_txt, HW)
         q = sum(hits(t, Q) for t in stu_txt)
@@ -118,12 +125,24 @@ def main():
             if c:
                 tc[name] = c
         top_topics = [t for t, _ in tc.most_common(3)]
+        # —— 未闭环判定：只看「会话尾部」（最新 12 条，triples_all 已升序、含图片/文件等非文本消息）——
+        # 规则：若「最后一条老师消息之后」仍有学生/家长的实质提问，才视为未获回应；
+        # 一旦老师在其后有过任意回复（文本答疑、发图片/讲义/视频、催看等），即视为已闭环。
+        tail = triples_all[-12:]
+        last_tea_idx = max([i for i, (_, r, _) in enumerate(tail) if r == 1], default=-1)
         unresolved = False
-        for r, t in texts[-8:]:
-            if r == 2 and hits(t, Q):
+        unresolved_at = ""
+        unresolved_q = ""
+        for i in range(last_tea_idx + 1, len(tail)):
+            ts, r, t = tail[i]
+            if r == 2 and hits(t, Q_ASK):
                 unresolved = True
-            if r == 1:
-                unresolved = False
+                unresolved_at = (ts or "")[:10]
+                unresolved_q = re.sub(r"\s+", " ", t)[:24]
+        if unresolved:
+            unres_evi = f"{unresolved_at} 学生提问「{unresolved_q}…」，其后群内无老师回复"
+        else:
+            unres_evi = "会话尾部无未获回应提问"
         parts = [f"近窗覆盖 {oldest[:10]} ~ {newest[:10]}（共 {len(texts)} 条可分析消息；学生/家长 {n_stu} 条、老师 {n_tea} 条）。"]
         parts.append(f"高频问题集中在：{ '、'.join(top_topics) }。" if top_topics else "未提取到明确知识点主题。")
         if att:
@@ -153,7 +172,7 @@ def main():
             if is_timeout:
                 todos.append(("高", f"响应超时 {g.get('timeoutDuration')}：第一时间联系家长说明并致歉，避免满意度下滑", "后台响应时效标记"))
             if unresolved:
-                todos.append(("高", f"该生仍有未闭环疑问{tp_s}，把跟进进展反馈家长，让家长看到服务闭环", "会话尾部存在未获回应提问"))
+                todos.append(("高", f"该生仍有未闭环疑问{tp_s}，把跟进进展反馈家长，让家长看到服务闭环", unres_evi))
             if hw_bad > 0:
                 todos.append(("中", f"该生作业出现「{hw_s}」，与家长沟通并商定家校督促方案", f"作业负面信号 {hw_bad} 处"))
             if att_bad > 0:
@@ -169,7 +188,7 @@ def main():
             if is_timeout:
                 todos.append(("高", f"跟进超时未回复咨询（后台标记超时 {g.get('timeoutDuration')}）", "后台响应时效标记"))
             if unresolved:
-                todos.append(("高", f"回复学生未解答疑问{tp_s}", "会话尾部存在未获回应提问"))
+                todos.append(("高", f"回复学生未解答疑问{tp_s}（{unresolved_at} 提问）", unres_evi))
             if hw_bad > 0:
                 todos.append(("中", f"针对作业问题「{hw_s}」进行辅导或订正跟进", f"作业负面信号 {hw_bad} 处"))
             if att_bad > 0:
@@ -185,11 +204,14 @@ def main():
             "hw_neg": hw_neg, "att_leave": att_leave,
             "student_coop": student_coop, "parent_coop": parent_coop,
             "top_topics": top_topics, "unresolved": unresolved,
+            "unresolved_at": unresolved_at, "unresolved_q": unresolved_q,
+            "unres_evi": unres_evi,
             "summary": summary, "todos": todos,
         }
 
     json.dump(students, open(f"{wd}/analysis.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    print(f"✅ 学生数 {len(students)} -> analysis.json")
+    n_unres = sum(1 for v in students.values() if v["unresolved"])
+    print(f"✅ 学生数 {len(students)} -> analysis.json（未闭环疑问 {n_unres} 人）")
 
 
 if __name__ == "__main__":
