@@ -9,33 +9,33 @@
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;line-height:1.65;}
   .page{max-width:860px;margin:22px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(20,30,60,.08);}
-  .head{background:linear-gradient(120deg,var(--blue),var(--blue2));color:#fff;padding:26px 34px;}
-  .head h1{margin:0;font-size:23px;font-weight:800;letter-spacing:.5px;}
+  .head{background:linear-gradient(120deg,var(--blue),var(--blue2));color:#fff;padding:24px 34px;}
+  .head h1{margin:0;font-size:22px;font-weight:800;letter-spacing:.5px;}
   .head p{margin:8px 0 0;font-size:13.5px;opacity:.92;}
   .head .tag{display:inline-block;margin-top:12px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);font-size:12px;padding:3px 12px;border-radius:20px;margin-right:6px;}
-  .body{padding:24px 34px 30px;}
-  .lead{background:#eef2ff;border-left:4px solid var(--blue);border-radius:8px;padding:13px 16px;font-size:14px;color:#33415c;margin-bottom:20px;}
+  .body{padding:22px 34px 28px;}
+  .lead{background:#eef2ff;border-left:4px solid var(--blue);border-radius:8px;padding:12px 16px;font-size:14px;color:#33415c;margin-bottom:18px;}
   .lead b{color:var(--blue);}
-  .step{padding:18px 0;border-top:1px dashed var(--line);}
+  .step{padding:16px 0;border-top:1px dashed var(--line);}
   .step:first-of-type{border-top:none;}
-  .step .h{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
-  .num{flex:0 0 40px;height:40px;border-radius:11px;background:var(--blue);color:#fff;font-weight:800;font-size:18px;display:flex;align-items:center;justify-content:center;}
-  .step .h h3{margin:0;font-size:16.5px;color:var(--ink);}
+  .step .h{display:flex;align-items:center;gap:12px;margin-bottom:8px;}
+  .num{flex:0 0 38px;height:38px;border-radius:11px;background:var(--blue);color:#fff;font-weight:800;font-size:17px;display:flex;align-items:center;justify-content:center;}
+  .step .h h3{margin:0;font-size:16px;color:var(--ink);}
   .step .h .when{margin-left:auto;font-size:12px;color:var(--sub);background:#f3f4f6;border:1px solid var(--line);padding:3px 10px;border-radius:14px;}
-  .step p{margin:0 0 10px;font-size:13.5px;color:var(--sub);}
-  .say{background:#f0f7ff;border:1px solid #cfe0ff;border-radius:10px;padding:11px 15px;margin:8px 0;position:relative;}
-  .say .lbl{font-size:11px;color:var(--blue);font-weight:700;margin-bottom:3px;}
+  .step p{margin:0 0 9px;font-size:13.5px;color:var(--sub);}
+  .say{background:#f0f7ff;border:1px solid #cfe0ff;border-radius:10px;padding:10px 15px;margin:7px 0;position:relative;}
+  .say .lbl{font-size:11px;color:var(--blue);font-weight:700;margin-bottom:2px;}
   .say .txt{font-size:14px;color:#1f2329;font-weight:600;}
   .say .txt code{background:none;border:none;padding:0;color:var(--blue);font-size:13.5px;}
-  .tip{font-size:12.5px;color:#475569;background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:9px 13px;margin-top:8px;}
+  .tip{font-size:12.5px;color:#475569;background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:9px 13px;margin-top:7px;}
   .tip b{color:var(--ok);}
-  pre{background:#1f2329;color:#e6e8eb;border-radius:10px;padding:13px 15px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.7;overflow-x:auto;margin:6px 0 2px;}
-  .note{margin-top:20px;background:#fff7ec;border-left:4px solid var(--warn);border-radius:8px;padding:13px 16px;font-size:13px;color:#7a5a1f;}
+  .note{margin-top:18px;background:#fff7ec;border-left:4px solid var(--warn);border-radius:8px;padding:13px 16px;font-size:13px;color:#7a5a1f;}
   .note b{color:var(--warn);}
   .note li{margin:4px 0;}
-  .out{margin-top:18px;background:#eafaf1;border-left:4px solid var(--ok);border-radius:8px;padding:12px 16px;font-size:13.5px;color:#235c41;}
+  .out{margin-top:16px;background:#eafaf1;border-left:4px solid var(--ok);border-radius:8px;padding:12px 16px;font-size:13.5px;color:#235c41;}
   .out b{color:var(--ok);}
-  .foot{margin-top:24px;padding-top:14px;border-top:1px solid var(--line);font-size:11.5px;color:#9aa3b2;text-align:center;}
+  .out div{margin:3px 0;}
+  .foot{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);font-size:11.5px;color:#9aa3b2;text-align:center;}
   @media print{ body{background:#fff;} .page{margin:0;box-shadow:none;border-radius:0;max-width:100%;} @page{size:A4;margin:12mm;} .step,.note,.out,.lead{page-break-inside:avoid;} }
 </style>
 </head>
@@ -43,7 +43,7 @@
 <div class="page">
   <div class="head">
     <h1>学生学情报告 · 操作手册</h1>
-    <p>3 步出报告（联席 / 教务双视角），全程只用跟 WorkBuddy 说话，不用写代码</p>
+    <p>3 步出报告，全程只用跟 WorkBuddy 说话，不用写代码</p>
     <span class="tag">🗣️ 对话驱动</span>
     <span class="tag">🔑 自动登录取凭证</span>
     <span class="tag">📊 出 HTML + Excel</span>
@@ -51,32 +51,24 @@
 
   <div class="body">
     <div class="lead">
-      你只需要做三件事：<b>让 WorkBuddy 登录后台 → 让它装技能 → 告诉它查谁、查哪个月</b>。
-      所有取数、分析、排版都由技能自动完成。请使用<b>你自己的后台账号</b>，不要和他人共用。
-      <br>可查<b>联席</b>（某联席名下学生，按课程切换）或<b>教务</b>（某教务管辖的全部学生，按下属联席下钻）。
-    </div>
-
-    <div class="lead" style="margin-top:16px;">
-      <b>当前版本 v3.3</b>：支持<b>联席 / 教务双视角</b>，所有判定以聊天记录为准——
-      「是否需回复」「响应时效」均由聊天自算，<b>不再采信后台「是否回复 / 超时未回复」列</b>（实测不准）；
-      学生/家长的「好的、谢谢老师」等礼节收尾语（含表情）识别为无需回复。
+      只需三步：<b>登录后台 → 安装技能 → 说出姓名和月份</b>。取数、分析、排版全部自动完成。
+      支持<b>联席</b>（某联席名下学生）与<b>教务</b>（某教务全部学生）两种视角。请使用<b>自己的后台账号</b>。
     </div>
 
     <!-- 第 0 步 -->
     <div class="step">
       <div class="h">
         <div class="num">0</div>
-        <h3>准备后台凭证（让 WorkBuddy 帮你登录）</h3>
+        <h3>登录后台（取凭证）</h3>
         <span class="when">仅首次 / token 过期时</span>
       </div>
-      <p>报告数据来自「学生管理后台」，需要你的登录凭证（x-token）。不用你自己找，让 WorkBuddy 代你登录并自动保存。</p>
+      <p>让 WorkBuddy 代你登录「学生管理后台」，自动保存凭证，无需自己操作。</p>
       <div class="say">
         <div class="lbl">你对 WorkBuddy 说：</div>
         <div class="txt">帮我登录学生管理后台 stadminv2.xqmsx.cn 取 token</div>
       </div>
       <div class="tip">
-        WorkBuddy 会打开登录页面 → <b>你输入自己的账号密码 + 图形验证码</b> → 它自动把 token 存好（有效期约 24 小时）。
-        这一步只需在第一次用、或第二天再跑时重复做一次。
+        它会打开登录页 → <b>你输入自己的账号密码 + 图形验证码</b> → 自动存好凭证（有效期约 24 小时）。
       </div>
     </div>
 
@@ -84,17 +76,17 @@
     <div class="step">
       <div class="h">
         <div class="num">1</div>
-        <h3>安装技能（只做一次）</h3>
+        <h3>安装技能</h3>
         <span class="when">仅首次</span>
       </div>
-      <p>把下面这条命令发给 WorkBuddy，让它帮你运行一次，技能就装好了。</p>
+      <p>把下面这条命令发给 WorkBuddy，让它运行一次即可。</p>
       <div class="say">
         <div class="lbl">你对 WorkBuddy 说：</div>
         <div class="txt">帮我运行这条安装命令：<code>bash &lt;(curl -sL https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/main/install.sh)</code></div>
       </div>
       <div class="tip">
-        看到 <b>「✅ 技能已安装到 ~/.workbuddy/skills/co-teacher-report」</b> 就成功了。
-        装完之后，<b>请重新开一个对话</b>再走下一步（刚装的技能需要在新会话里才会生效）。
+        看到 <b>「✅ 技能已安装到 ~/.workbuddy/skills/co-teacher-report」</b> 即成功。
+        <b>装完后请新开一个对话</b>再继续（新技能需在新会话生效）。
       </div>
     </div>
 
@@ -102,39 +94,34 @@
     <div class="step">
       <div class="h">
         <div class="num">2</div>
-        <h3>生成报告（查谁、查哪个月）</h3>
+        <h3>生成报告</h3>
         <span class="when">每次出报告</span>
       </div>
-      <p>在<strong>新对话</strong>里，把姓名、角色（联席 / 教务）和月份告诉 WorkBuddy 即可。</p>
+      <p>在<strong>新对话</strong>里，说出<strong>姓名 + 角色 + 月份</strong>即可。</p>
       <div class="say">
-        <div class="lbl">你对 WorkBuddy 说（联席视角）：</div>
+        <div class="lbl">联席视角：</div>
         <div class="txt">用 co-teacher-report 技能，生成 <b>张巍</b>（联席） <b>2026年9月</b> 的学情报告</div>
       </div>
       <div class="say">
-        <div class="lbl">你对 WorkBuddy 说（教务视角）：</div>
+        <div class="lbl">教务视角：</div>
         <div class="txt">用 co-teacher-report 技能，生成 <b>罗绂燕</b>（教务） <b>2026年9月</b> 的学情报告</div>
       </div>
       <div class="tip">
-        换人 / 换月：只改名字和月份，其它不变。例如查「李娜（联席）2026年10月」就照说。
-        教务视角会一次性拉出该教务管辖的全部学生（跨多个下属联席），报告顶部可切换两种查看维度：
-        <b>① 按课程维度</b>（课程 Tab 切换，每个课程下还能「筛选联席」，课程 → 联席两级下钻）；
-        <b>② 按联席维度</b>（按下属联席分组下钻，横向对比各联席学情）。
-        <br>报告最后一块会随角色自动变化：<b>联席视角</b>是「联席跟进 Action」（跟课、答疑、批改、作业订正）；<b>教务视角</b>是「教务 To-Do」（家长沟通、反馈学生问题、建立信任、推动续报）。
-        技能自动拉群聊 + 出勤，几分钟后给你两份文件。
+        换人 / 换月：只改名字和月份即可。教务视角会拉出该教务管辖的全部学生，报告可切换<b>「按课程」/「按联席」</b>两种维度查看。
       </div>
       <div class="out">
-        <b>你会拿到：</b><br>
-        • <b>&lt;姓名&gt;_学情分析报告.html</b> —— 彩色报告（学生姓名后标注<b>购课类型</b>：直播 / 回放；联席按课程切换 / 教务双维度：按课程+按联席；速览 / 出勤 / 薄弱点 / 跟进动作——联席=联席跟进 Action，教务=教务 To-Do）<br>
-        • <b>&lt;姓名&gt;_学生待办清单.xlsx</b> —— 总览 + 待办 + 出勤明细（含购课类型、所属联席列），可直接下发（教务为「教务To-Do·按课程 / 按联席」两个 sheet）
+        <b>你会拿到两份文件：</b>
+        <div>• <b>&lt;姓名&gt;_学情分析报告.html</b> —— 彩色报告（学生姓名后标注购课类型：直播 / 回放；含速览、出勤、薄弱点、跟进动作）</div>
+        <div>• <b>&lt;姓名&gt;_学生待办清单.xlsx</b> —— 总览 + 待办 + 出勤明细，可直接下发</div>
       </div>
     </div>
 
     <div class="note">
       <b>⚠️ 三点提醒</b>
       <ul style="margin:8px 0 0;padding-left:20px;">
-        <li><b>token 约 24 小时过期</b>：第二天再出报告，先重说第 0 步「帮我登录后台取 token」。</li>
-        <li><b>装完技能要新开对话</b>：否则 WorkBuddy 可能没加载到刚装的技能。</li>
-        <li><b>各用各账号</b>：凭证只自己用，不要发给别人，也不互传 token。</li>
+        <li><b>token 约 24 小时过期</b>：第二天再出报告，先重说第 0 步。</li>
+        <li><b>装完技能要新开对话</b>：否则可能没加载到技能。</li>
+        <li><b>各用各账号</b>：凭证只自己用，不要互传。</li>
       </ul>
     </div>
 
