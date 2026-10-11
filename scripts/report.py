@@ -67,9 +67,14 @@ def badge(text, cls):
 
 def coop_conclusion(s):
     n_stu, q = s["n_stu"], s["q"]
+    n_sub = s.get("n_stu_sub", n_stu)
+    n_ack = s.get("n_ack", 0)
     sc, pc = s.get("student_coop", 0), s.get("parent_coop", 0)
-    if n_stu == 0:
-        return "窗口内学生/家长均无发言，暂无法判断配合度，需先主动确认学生状态与学习意愿。"
+    if n_sub == 0:
+        if n_stu == 0:
+            return "窗口内学生/家长均无发言，暂无法判断配合度，需先主动确认学生状态与学习意愿。"
+        return (f"窗口内学生/家长仅 {n_ack} 条礼节性回应（好的/收到/致谢，均无需回复），"
+                "无实质互动，配合度暂无法判断，建议主动联系确认学习状态与意愿。")
     stu_lv = {0: "学生本人几乎不露面", 1: "学生自驱偏低", 2: "学生自驱偏低",
               3: "学生自驱中等", 4: "学生自驱较强", 5: "学生自驱标杆级"}[sc]
     par_lv = {0: "无家长互动", 1: "家长参与较少", 2: "家长配合偏弱",
@@ -181,7 +186,7 @@ def card_html(r, edu=False):
         <div class="cgroup">{r['course_raw']}{co_tag}</div>
         <div class="cstatus">{gdbadge}{status}</div>
       </div>
-      <div class="cmeta">近窗 {s['oldest'][:10]} ~ {s['newest'][:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
+      <div class="cmeta">近窗 {s['oldest'][:10]} ~ {s['newest'][:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']}，其中礼节 {s.get('n_ack', 0)} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
       <div class="blk"><div class="blk-h">① 速览卡</div>
         <div class="coop"><b>配合度</b>{coop}</div>
         <div class="watch">最该盯：{top_todo}</div>

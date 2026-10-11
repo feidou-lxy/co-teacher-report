@@ -47,9 +47,13 @@ def grade(s, timeout, unreply):
 
 def coop_conclusion(s):
     n_stu, q = s["n_stu"], s["q"]
+    n_sub = s.get("n_stu_sub", n_stu)
+    n_ack = s.get("n_ack", 0)
     sc, pc = s.get("student_coop", 0), s.get("parent_coop", 0)
-    if n_stu == 0:
-        return "窗口内学生/家长均无发言，暂无法判断，需先确认学生状态。"
+    if n_sub == 0:
+        if n_stu == 0:
+            return "窗口内学生/家长均无发言，暂无法判断，需先确认学生状态。"
+        return f"窗口内学生/家长仅 {n_ack} 条礼节性回应（好的/收到/致谢，均无需回复），无实质互动，配合度暂无法判断。"
     stu_lv = {0: "学生本人几乎不露面", 1: "学生自驱偏低", 2: "学生自驱偏低",
               3: "学生自驱中等", 4: "学生自驱较强", 5: "学生自驱标杆级"}[sc]
     par_lv = {0: "无家长互动", 1: "家长参与较少", 2: "家长配合偏弱",
@@ -112,7 +116,7 @@ def main():
 
     ws = wb.active; ws.title = "学生群总览"
     cols = ["序号", "学生", "购课类型", "群名", "课程", "所属联席", "定档", "回复状态", "超时状态", "超时时长", "近窗起", "近窗止",
-            "可分析消息", "生/家长消息", "师消息", "语音条", "配合度结论",
+            "可分析消息", "生/家长消息", "礼节回应", "师消息", "语音条", "配合度结论",
             "出勤(后台)", "是否需关注", "请假备注(聊天)", "高频知识点", "近期未解疑问"]
     ws.append(cols)
     for c in range(1, len(cols) + 1):
@@ -124,7 +128,7 @@ def main():
             grade(s, timeout, unreply),
             "未回复" if unreply else "已回复",
             "超时" if timeout else "正常", g.get("timeoutDuration", "") if timeout else "",
-            (s["oldest"] or "")[:10], (s["newest"] or "")[:10], s["n_text"], s["n_stu"], s["n_tea"], s["voice"],
+            (s["oldest"] or "")[:10], (s["newest"] or "")[:10], s["n_text"], s["n_stu"], s.get("n_ack", 0), s["n_tea"], s["voice"],
             coop_conclusion(s),
             att_txt, att_flag, " / ".join(s.get("leave", [])),
             "、".join(s["top_topics"]), "是" if s["unresolved"] else "否",
@@ -134,8 +138,8 @@ def main():
             ws.cell(r, c).border = border; ws.cell(r, c).alignment = wrap
     ws.freeze_panes = "A2"
     widths = {"A": 5, "B": 13, "C": 10, "D": 30, "E": 24, "F": 12, "G": 7, "H": 9, "I": 9, "J": 11,
-              "K": 11, "L": 11, "M": 9, "N": 11, "O": 8, "P": 8, "Q": 34,
-              "R": 16, "S": 16, "T": 32, "U": 20, "V": 10}
+              "K": 11, "L": 11, "M": 9, "N": 11, "O": 9, "P": 8, "Q": 8, "R": 34,
+              "S": 16, "T": 16, "U": 32, "V": 20, "W": 10}
     for k, v in widths.items():
         ws.column_dimensions[k].width = v
 

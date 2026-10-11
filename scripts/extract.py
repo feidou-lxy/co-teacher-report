@@ -33,6 +33,24 @@ STU_SELF = ["我自己", "我这道题", "我算", "我听", "我做", "我提�
             "我忘", "我这次", "我自己做", "我理解", "我懂", "我试", "我写", "我的作业", "我来看"]
 PARENT = ["妈妈", "爸爸", "家长", "我帮", "我替", "帮他", "替他", "已交", "帮交", "孩子", "我家",
           "他作业", "他今天", "他这个", "他没", "他不会", "他那个", "他有点", "他最近"]
+
+# —— 「无需回复」消息（礼节性收尾：确认/致谢/应承）——
+# 这类消息不构成待回应提问，也不计入实质互动；统一在未闭环判定与配合度统计中剔除。
+ACK_SET = {
+    "好的", "好", "好的好的", "好的呢", "好嘞", "好滴", "好勒", "好", "行", "可以", "没问题", "没事",
+    "没事的", "收到", "收到啦", "收到谢谢", "谢谢", "谢谢啦", "谢谢老师", "谢谢您", "感谢", "感谢老师",
+    "多谢", "老师辛苦", "老师辛苦了", "辛苦", "辛苦了", "麻烦您", "麻烦你", "麻烦了", "您辛苦",
+    "明白", "明白了", "了解", "了解了", "知道了", "知道啦", "晓得", "晓得了", "懂了", "嗯", "嗯嗯",
+    "嗯呢", "ok", "okay", "ok啦", "不客气", "谢谢老师啦", "好的晓得", "好滴谢谢",
+}
+# 组合词表：整条消息若可由这些词拼接而成（如「好的谢谢老师」「收到」「好嘞」），也判为礼节性
+ACK_TOKENS = ["好的好的", "好的", "好嘞", "好滴", "收到", "谢谢", "感谢", "多谢", "辛苦", "明白",
+              "了解", "知道", "晓得", "懂了", "麻烦您", "麻烦你", "没问题", "不客气",
+              "嗯", "ok", "okay", "好", "行", "可以", "没事", "老师", "您", "了", "的", "呢", "啦", "呀", "吧", "哦", "啊"]
+# 占位噪声（无正文、不可解析的消息类型），不参与任何分析
+NOISE_KEYS = ("图片", "语音", "视频", "文件", "该消息类型", "revoke", "撤回", "表情", "链接", "位置",
+              "动画", "名片", "小程序", "合并转发", "系统消息", "文件传输", "红包", "转账")
+
 TOPICS = {
     "立体几何/空间向量": ["立体几何", "空间向量", "法向量", "建系", "异面直线", "投影", "外接球", "二面角", "线面", "面面", "垂直", "平行", "坐标", "几何体"],
     "直线和圆": ["直线和圆", "圆", "圆心距", "切线", "直线"],
@@ -62,6 +80,39 @@ def hits(text, kws):
     return sum(text.count(k) for k in kws)
 
 
+def norm_text(t):
+    """归一化：去掉空白与中英文标点，便于判定礼节短句。"""
+    return re.sub(r"[\s，。！!~、,.;；:：?？/\\\-—…·\"'“”‘’（）()\[\]【】]+", "", t or "")
+
+
+def is_ack(t):
+    """判断是否为「无需回复」的礼节性收尾消息（确认/致谢/应承）。"""
+    s = norm_text(t)
+    if not s:
+        return False
+    # 纯呼名（「老师」「老师在吗」）属于请求响应，不算礼节性收尾
+    if s in ("老师", "老师们", "在吗", "在么", "老师在吗", "老师在么"):
+        return False
+    if s.lower() in ACK_SET:
+        return True
+    if len(s) > 16:
+        return False
+    r = s.lower()
+    for tok in sorted((x.lower() for x in ACK_TOKENS), key=len, reverse=True):
+        r = r.replace(tok, "")
+    return r == ""
+
+
+def is_noise(t):
+    """判断是否为占位噪声消息（[图片]/[revoke]/[该消息类型暂不能展示] 等）。"""
+    s = (t or "").strip()
+    if not s:
+        return True
+    if re.fullmatch(r"[\[【（(][^\[\]【】（）()]{0,24}[\]】）)]", s):
+        return any(k in s for k in NOISE_KEYS)
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
@@ -82,14 +133,15 @@ def main():
         msgs = [m for m in blk["messages"] if (m.get("msgTime") or "") >= CUT]
         msgs.sort(key=lambda m: m.get("msgTime") or "")
         triples_all = [((m.get("msgTime") or ""), m.get("role"), get_text(m)) for m in msgs]
-        triples = [x for x in triples_all if x[2]]
+        # 剔除「空文本」与「占位噪声」（[图片]/[revoke]/[该消息类型暂不能展示] 等，无正文不参与分析）
+        triples = [x for x in triples_all if x[2] and not is_noise(x[2])]
         texts = [(r, t) for _, r, t in triples]
         if not texts:
             empty_todos = ([("低", "暂无可分析互动，主动联系家长了解学生近况与续报意愿", "窗口内无聊天")]
                            if is_edu else
                            [("低", "维持常规跟进，关注后续作业与提问", "窗口内无聊天")])
             students[stu] = {
-                "group": g, "n_text": 0, "n_stu": 0, "n_tea": 0, "voice": 0,
+                "group": g, "n_text": 0, "n_stu": 0, "n_stu_sub": 0, "n_ack": 0, "n_tea": 0, "voice": 0,
                 "newest": None, "oldest": None, "att": 0, "hw": 0, "q": 0,
                 "pos": 0, "neg": 0, "hw_neg": 0, "att_leave": 0,
                 "student_coop": 0, "parent_coop": 0, "top_topics": [],
@@ -99,10 +151,15 @@ def main():
                 "todos": empty_todos,
             }
             continue
-        stu_txt = [t for r, t in texts if r == 2]
-        tea_txt = [t for r, t in texts if r == 1]
         all_txt = " ".join(t for _, t in texts)
-        n_stu = len(stu_txt)
+        stu_all = [t for r, t in texts if r == 2]
+        tea_txt = [t for r, t in texts if r == 1]
+        # 学生/家长消息一分为二：礼节性收尾（好的/收到/谢谢老师＝无需回复）vs 实质消息（提问/反馈/交作业等）
+        ack_stu = [t for t in stu_all if is_ack(t)]
+        sub_stu = [t for t in stu_all if not is_ack(t)]
+        n_stu = len(stu_all)
+        n_ack = len(ack_stu)
+        n_stu_sub = len(sub_stu)
         n_tea = len(tea_txt)
         voice = sum(1 for m in msgs if m.get("msgType") == "voice")
         times = [m.get("msgTime") for m in msgs if m.get("msgTime")]
@@ -110,15 +167,17 @@ def main():
         oldest = times[0] if times else None
         att = hits(all_txt, ATT)
         hw = hits(all_txt, HW)
-        q = sum(hits(t, Q) for t in stu_txt)
-        pos = hits(all_txt, POS)
+        # 疑问/自驱/家长信号只统计「实质消息」，避免「好的/收到」等无意义刷量
+        q = sum(hits(t, Q) for t in sub_stu)
+        pos = hits(" ".join(stu_all), POS)          # 致谢/礼貌用语（学生/家长侧）
         neg = hits(all_txt, NEG)
-        stu_self = q + hits(stu_txt, STU_SELF)
-        parent = hits(stu_txt, PARENT)
+        stu_self = q + hits(" ".join(sub_stu), STU_SELF)
+        parent = hits(" ".join(sub_stu), PARENT)
         hw_neg = hits(all_txt, ["没写", "没做", "不会做", "漏交"])
         att_leave = hits(all_txt, ["请假", "回放", "没来", "缺课"])
-        student_coop = 0 if n_stu == 0 else 1 + min(4, stu_self // 4)
-        parent_coop = 0 if n_stu == 0 else 1 + min(4, (parent + pos) // 2)
+        # 配合度：仅用实质消息判定；致谢最多计 4 分，避免「收到/谢谢」把配合度刷满
+        student_coop = 0 if n_stu_sub == 0 else 1 + min(4, stu_self // 4)
+        parent_coop = 0 if n_stu_sub == 0 else 1 + min(4, (parent + min(pos, 4)) // 2)
         tc = Counter()
         for name, kws in TOPICS.items():
             c = hits(all_txt, kws)
@@ -128,6 +187,7 @@ def main():
         # —— 未闭环判定：只看「会话尾部」（最新 12 条，triples_all 已升序、含图片/文件等非文本消息）——
         # 规则：若「最后一条老师消息之后」仍有学生/家长的实质提问，才视为未获回应；
         # 一旦老师在其后有过任意回复（文本答疑、发图片/讲义/视频、催看等），即视为已闭环。
+        # 重要：「好的 / 收到 / 谢谢老师 / OK」等无需回复的礼节性收尾，不作为待回应提问。
         tail = triples_all[-12:]
         last_tea_idx = max([i for i, (_, r, _) in enumerate(tail) if r == 1], default=-1)
         unresolved = False
@@ -135,7 +195,7 @@ def main():
         unresolved_q = ""
         for i in range(last_tea_idx + 1, len(tail)):
             ts, r, t = tail[i]
-            if r == 2 and hits(t, Q_ASK):
+            if r == 2 and t and not is_ack(t) and hits(t, Q_ASK):
                 unresolved = True
                 unresolved_at = (ts or "")[:10]
                 unresolved_q = re.sub(r"\s+", " ", t)[:24]
@@ -143,7 +203,7 @@ def main():
             unres_evi = f"{unresolved_at} 学生提问「{unresolved_q}…」，其后群内无老师回复"
         else:
             unres_evi = "会话尾部无未获回应提问"
-        parts = [f"近窗覆盖 {oldest[:10]} ~ {newest[:10]}（共 {len(texts)} 条可分析消息；学生/家长 {n_stu} 条、老师 {n_tea} 条）。"]
+        parts = [f"近窗覆盖 {oldest[:10]} ~ {newest[:10]}（共 {len(texts)} 条可分析消息；学生/家长 {n_stu} 条＝实质 {n_stu_sub} + 礼节 {n_ack}；老师 {n_tea} 条）。"]
         parts.append(f"高频问题集中在：{ '、'.join(top_topics) }。" if top_topics else "未提取到明确知识点主题。")
         if att:
             parts.append(f"出勤/健康方面出现 {att} 次相关提及（请假、回放、身体等）。")
@@ -152,7 +212,7 @@ def main():
         if neg:
             parts.append(f"负面情绪/压力信号 {neg} 处，需关注沟通态度。")
         elif pos:
-            parts.append(f"正向反馈 {pos} 处（致谢/配合），关系良好。")
+            parts.append(f"正向反馈 {pos} 处（致谢等礼貌用语，无需回复），关系良好。")
         summary = "".join(parts)
         todos = []
         is_timeout = (str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True)
@@ -198,7 +258,8 @@ def main():
             if not todos:
                 todos.append(("低", "维持常规跟进，关注下次作业与提问", "无明显风险信号"))
         students[stu] = {
-            "group": g, "n_text": len(texts), "n_stu": n_stu, "n_tea": n_tea,
+            "group": g, "n_text": len(texts), "n_stu": n_stu, "n_stu_sub": n_stu_sub, "n_ack": n_ack,
+            "n_tea": n_tea,
             "voice": voice, "newest": newest, "oldest": oldest,
             "att": att, "hw": hw, "q": q, "pos": pos, "neg": neg,
             "hw_neg": hw_neg, "att_leave": att_leave,
