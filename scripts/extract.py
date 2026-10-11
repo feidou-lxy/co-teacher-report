@@ -180,7 +180,7 @@ def main():
                            [("低", "维持常规跟进，关注后续作业与提问", "窗口内无聊天")])
             students[stu] = {
                 "group": g, "n_text": 0, "n_stu": 0, "n_stu_sub": 0, "n_ack": 0, "n_tea": 0, "voice": 0,
-                "newest": None, "oldest": None, "att": 0, "hw": 0, "q": 0,
+                "newest": None, "oldest": None, "att_n": 0, "hw": 0, "q": 0,
                 "pos": 0, "neg": 0, "hw_neg": 0, "att_leave": 0,
                 "student_coop": 0, "parent_coop": 0, "top_topics": [],
                 "unresolved": False, "unresolved_at": "", "unresolved_q": "",
@@ -299,7 +299,8 @@ def main():
             "group": g, "n_text": len(texts), "n_stu": n_stu, "n_stu_sub": n_stu_sub, "n_ack": n_ack,
             "n_tea": n_tea,
             "voice": voice, "newest": newest, "oldest": oldest,
-            "att": att, "hw": hw, "q": q, "pos": pos, "neg": neg,
+            # att_n = 聊天中「请假/回放/没来/缺课」的提及次数（与 merge.py 的后台出勤字段 att 区分，避免覆盖）
+            "att_n": att, "hw": hw, "q": q, "pos": pos, "neg": neg,
             "hw_neg": hw_neg, "att_leave": att_leave,
             "student_coop": student_coop, "parent_coop": parent_coop,
             "top_topics": top_topics, "unresolved": unresolved,

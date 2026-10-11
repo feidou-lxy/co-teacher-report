@@ -67,8 +67,8 @@ def coop_conclusion(s):
     elif sc <= 2 and pc <= 2:
         typ = "双方配合均偏弱，需重点激活"
     else:
-        typ = "配合度中等，常规引导"
-    return f"{stu_lv}；{par_lv}；{typ}。"
+        typ = ""   # 常规情形：两级结论已说明，不再叠加套话
+    return f"{stu_lv}；{par_lv}；{typ}。" if typ else f"{stu_lv}；{par_lv}。"
 
 
 def att_short(a):

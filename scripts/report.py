@@ -65,10 +65,27 @@ def badge(text, cls):
     return f'<span class="badge {cls}">{text}</span>'
 
 
-def sents(txt):
-    """把总评按句断行，避免「配合度/统计/高频问题/出勤/作业/情绪」糊成一整段。"""
-    parts = [p.strip() for p in re.split(r"(?<=。)", txt or "") if p.strip()]
-    return "<br>".join(parts)
+def signal_strip(s):
+    """速览卡信号条：只保留值得一眼看到的量化信号，压成一行 chips。
+
+    原先这里的 5 句长总评与别处重复、且淹没有效信息，现拆分去重：
+      · 「近窗覆盖 / 条数统计」→ 卡片头 cmeta 已有；
+      · 「高频问题集中在…」→ 第③块「知识掌握与薄弱点」已有 chips；
+      · 仅保留 上面两处没有的 风险/状态信号（情绪、出勤、作业、礼貌回应）。
+    无任何信号时给一句兜底，不再堆砌文字。
+    """
+    items = []
+    if s.get("neg"):
+        items.append((f"情绪/压力 {s['neg']} 处", "bad"))
+    if s.get("att_n"):
+        items.append((f"出勤/请假 {s['att_n']} 次", "warn"))
+    if s.get("hw"):
+        items.append((f"作业提及 {s['hw']} 次", ""))
+    if s.get("pos"):
+        items.append((f"礼貌回应 {s['pos']} 次", "ok"))
+    if not items:
+        return '<span class="si none">窗口内无明显风险信号</span>'
+    return "".join(f'<span class="si {c}">{t}</span>' for t, c in items)
 
 
 def coop_conclusion(s):
@@ -94,7 +111,7 @@ def coop_conclusion(s):
     elif sc <= 2 and pc <= 2:
         typ = "学生与家长配合均偏弱——需重点激活，先确认学习意愿与到课状态。"
     else:
-        typ = "配合度中等——维持常规引导即可。"
+        typ = ""   # 常规情形：两级结论已说明，不再叠加「配合度中等」类套话
     ev = f"（窗口内本人主动提问 {q} 处）" if q >= 5 else ""
     return f"{stu_lv}{ev}；{par_lv}。{typ}"
 
@@ -197,7 +214,7 @@ def card_html(r, edu=False):
       <div class="blk"><div class="blk-h">① 速览卡</div>
         <div class="coop"><b>配合度</b>{coop}</div>
         <div class="watch"><div class="watch-h">最该盯<span class="watch-b">依据：{top_basis}</span></div><div class="watch-act">{top_todo}</div></div>
-        <div class="summary">{sents(s['summary'])}</div>
+        <div class="sig">{signal_strip(s)}</div>
       </div>
       {att_block(r)}
       <div class="blk"><div class="blk-h">③ 知识掌握与薄弱点</div>
@@ -245,7 +262,12 @@ th{color:#8a9099;font-weight:600}
 .cmeta{font-size:12px;color:#8a9099;margin:6px 0}
 .chips{margin:6px 0}
 .chip{display:inline-block;background:#eef2ff;color:#3a5bdb;font-size:11px;padding:2px 8px;border-radius:10px;margin:2px 4px 2px 0}
-.summary{font-size:13.5px;line-height:1.7;margin:8px 0}
+.sig{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+.si{font-size:11.5px;line-height:1.6;padding:2px 9px;border-radius:10px;background:#eef2f5;color:#6b7280}
+.si.bad{background:#fdecec;color:#e54545}
+.si.warn{background:#fff3e0;color:#ff8f1f}
+.si.ok{background:#e8f7f0;color:#2ba471}
+.si.none{background:#f2f4f7;color:#8a9099}
 .todos ul{margin:0;padding-left:18px}
 .todos li{font-size:13px;line-height:1.7}
 .pri{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:8px;margin-right:6px}
