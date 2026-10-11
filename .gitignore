@@ -1,0 +1,23 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 本地凭据（后台 x-token 等，绝不入库）
+token.txt
+*.token
+.env
+
+# 本地工作目录 / 临时产物（同事跑 run_all 时生成的中间文件与报告）
+workdir/
+_skilltest/
+*.html
+*.xlsx
+
+# 操作系统 / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
