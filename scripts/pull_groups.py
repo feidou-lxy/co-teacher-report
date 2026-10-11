@@ -6,7 +6,8 @@
   - 用 students.json 里的学生姓名做交集，得到本联席的群。
 
 输出 <workdir>/groups.json ：[{roomId, studentName, groupName, isTimeout,
-isReplied, timeoutDuration, coTeacherName, classTeacherName}]
+timeoutDuration, coTeacherName, classTeacherName}]
+（注：「是否回复」不再采用后台 isReplied —— 该列实测存在误差；改为聊天记录分析结论，故此处不拉取该字段）
 """
 import argparse
 import datetime
@@ -96,7 +97,6 @@ def main():
                 "studentName": g.get("studentName"),
                 "groupName": g.get("groupName"),
                 "isTimeout": g.get("isTimeout"),
-                "isReplied": g.get("isReplied"),
                 "timeoutDuration": g.get("timeoutDuration"),
                 "coTeacherName": co_of.get(sn, ""),
                 "classTeacherName": edu_of.get(sn, ""),

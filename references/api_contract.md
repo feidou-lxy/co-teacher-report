@@ -56,7 +56,8 @@
 - `roomId` 群 ID（拉聊天用）
 - `studentName` 学生姓名（与花名册 join）
 - `groupName` 群名（报告里解析课程）
-- `isTimeout` / `isReplied` / `timeoutDuration` 响应时效标记（监管维度，计入定档）
+- `isTimeout` / `timeoutDuration` 响应时效标记（监管维度，计入定档）
+- `isReplied`（是否回复）：**已弃用**——该列实测存在误差，技能不再拉取；「是否需回复」改由聊天分析结论 `unresolved` 驱动
 
 ---
 

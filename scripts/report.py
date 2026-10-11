@@ -167,7 +167,7 @@ def card_html(r, edu=False):
     if r["timeout"]:
         status += badge(f'超时 {g.get("timeoutDuration")}', "red")
     if r["unreply"]:
-        status += badge("未回复", "red")
+        status += badge("需回复", "red")
     if not r["timeout"] and not r["unreply"]:
         status += badge("正常", "green")
     if s["unresolved"]:
@@ -357,7 +357,8 @@ def main():
     for stu, s in A.items():
         g = s["group"]
         timeout = str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True
-        unreply = str(g.get("isReplied")) == "0" or g.get("isReplied") is False
+        # 「是否需回复」不再依赖后台 isReplied（实测存在误差），改为聊天分析结论：会话尾部仍有未获回应提问
+        unreply = bool(s.get("unresolved"))
         course, course_raw = course_of(g.get("groupName", ""))
         co = g.get("coTeacherName") or "未分配联席"
         score = (1 if timeout else 0, 1 if s["unresolved"] else 0, s["n_text"])
@@ -368,7 +369,6 @@ def main():
 
     total_msgs = sum(r["s"]["n_text"] for r in rows)
     timeout_n = sum(1 for r in rows if r["timeout"])
-    unreply_n = sum(1 for r in rows if r["unreply"])
     unres_n = sum(1 for r in rows if r["s"]["unresolved"])
     glob_topic = Counter()
     for r in rows:
@@ -455,8 +455,7 @@ def main():
   <div class="kpi"><div class="n">{len(rows)}</div><div class="l">负责学生（全量）</div></div>
   <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
   <div class="kpi red"><div class="n">{timeout_n}</div><div class="l">超时群</div></div>
-  <div class="kpi red"><div class="n">{unreply_n}</div><div class="l">未回复群</div></div>
-  <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">未解疑问群</div></div>
+  <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
 </div>
 <div class="searchbar">
   <input id="stuSearch" class="searchinp" type="text" placeholder="🔍 输入学生姓名搜索（当前维度内实时筛选）" oninput="doSearch(this.value)">
@@ -475,7 +474,8 @@ def main():
 • 请假备注：仅摘录学生在群内自述的请假/看回放缘由，后台无请假原因字段，具体以教务记录为准。<br>
 • 报告结构（{role_cn}视角）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 知识掌握与薄弱点；④ {role_cn} To-Do（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ''}<br>
 • 配合度（结论式）：依据 学生本人发言密度/主动提问 与 家长代交/代沟通措辞 综合判定类型（如“家长推着走”型 / 放手培养型），数据源未区分发言者 ID，为启发式估算，供跟进策略参考。<br>
-• 定档规则：🔴 红=后台标记超时或未回复，或聊天有未闭环关键疑问/负面情绪；🟡 黄=有未解疑问、作业负面信号、出勤异常或负面情绪；🟢 绿=其余正常推进。响应时效（超时/未回复）按监管维度计入定档。<br>
+• 定档规则：🔴 红=后台标记响应超时，或聊天分析存在未闭环疑问/负面情绪；🟡 黄=有未解疑问、作业负面信号、出勤异常或负面情绪；🟢 绿=其余正常推进。响应时效（超时）按监管维度计入定档。<br>
+• 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
 </p></div>
 </div>
 <script>

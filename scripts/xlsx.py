@@ -103,7 +103,8 @@ def main():
     for stu, s in A.items():
         g = s["group"]
         timeout = str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True
-        unreply = str(g.get("isReplied")) == "0" or g.get("isReplied") is False
+        # 「是否需回复」不再依赖后台 isReplied，改为聊天分析结论（会话尾部未获回应提问）
+        unreply = bool(s["unresolved"])
         rows.append(((1 if timeout else 0, 1 if s["unresolved"] else 0, s["n_text"]), stu, s, g, timeout, unreply))
     rows.sort(key=lambda x: (-x[0][0], -x[0][1], -x[0][2]))
 
@@ -115,7 +116,7 @@ def main():
     wrap = Alignment(wrap_text=True, vertical="top")
 
     ws = wb.active; ws.title = "学生群总览"
-    cols = ["序号", "学生", "购课类型", "群名", "课程", "所属联席", "定档", "回复状态", "超时状态", "超时时长", "近窗起", "近窗止",
+    cols = ["序号", "学生", "购课类型", "群名", "课程", "所属联席", "定档", "是否需回复", "超时状态", "超时时长", "近窗起", "近窗止",
             "可分析消息", "生/家长消息", "礼节回应", "师消息", "语音条", "配合度结论",
             "出勤(后台)", "是否需关注", "请假备注(聊天)", "高频知识点", "近期未解疑问"]
     ws.append(cols)
@@ -126,7 +127,7 @@ def main():
         ws.append([
             i, stu, s.get("buy_type", ""), g.get("groupName", ""), course_of(g.get("groupName", "")), g.get("coTeacherName", ""),
             grade(s, timeout, unreply),
-            "未回复" if unreply else "已回复",
+            "需回复" if unreply else "无需回复",
             "超时" if timeout else "正常", g.get("timeoutDuration", "") if timeout else "",
             (s["oldest"] or "")[:10], (s["newest"] or "")[:10], s["n_text"], s["n_stu"], s.get("n_ack", 0), s["n_tea"], s["voice"],
             coop_conclusion(s),
