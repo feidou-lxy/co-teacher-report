@@ -16,6 +16,9 @@ _skilltest/
 *.html
 *.xlsx
 
+# 例外：仓库自带的同事操作手册（说明文档，需要随仓库分发）
+!同事操作手册.html
+
 # 操作系统 / 编辑器
 .DS_Store
 Thumbs.db

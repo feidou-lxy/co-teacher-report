@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>联席学情报告 · 同事操作手册</title>
+<style>
+  :root{ --blue:#3a5bdb; --blue2:#5b78ff; --ink:#1f2329; --sub:#6b7280; --line:#e6e8eb; --ok:#2ba471; --warn:#ff8f1f; --bg:#f5f6f8; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;line-height:1.65;}
+  .page{max-width:860px;margin:22px auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(20,30,60,.08);}
+  .head{background:linear-gradient(120deg,var(--blue),var(--blue2));color:#fff;padding:26px 34px;}
+  .head h1{margin:0;font-size:23px;font-weight:800;letter-spacing:.5px;}
+  .head p{margin:8px 0 0;font-size:13.5px;opacity:.92;}
+  .head .tag{display:inline-block;margin-top:12px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);font-size:12px;padding:3px 12px;border-radius:20px;margin-right:6px;}
+  .body{padding:24px 34px 30px;}
+  .lead{background:#eef2ff;border-left:4px solid var(--blue);border-radius:8px;padding:13px 16px;font-size:14px;color:#33415c;margin-bottom:20px;}
+  .lead b{color:var(--blue);}
+  .step{padding:18px 0;border-top:1px dashed var(--line);}
+  .step:first-of-type{border-top:none;}
+  .step .h{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
+  .num{flex:0 0 40px;height:40px;border-radius:11px;background:var(--blue);color:#fff;font-weight:800;font-size:18px;display:flex;align-items:center;justify-content:center;}
+  .step .h h3{margin:0;font-size:16.5px;color:var(--ink);}
+  .step .h .when{margin-left:auto;font-size:12px;color:var(--sub);background:#f3f4f6;border:1px solid var(--line);padding:3px 10px;border-radius:14px;}
+  .step p{margin:0 0 10px;font-size:13.5px;color:var(--sub);}
+  .say{background:#f0f7ff;border:1px solid #cfe0ff;border-radius:10px;padding:11px 15px;margin:8px 0;position:relative;}
+  .say .lbl{font-size:11px;color:var(--blue);font-weight:700;margin-bottom:3px;}
+  .say .txt{font-size:14px;color:#1f2329;font-weight:600;}
+  .say .txt code{background:none;border:none;padding:0;color:var(--blue);font-size:13.5px;}
+  .tip{font-size:12.5px;color:#475569;background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:9px 13px;margin-top:8px;}
+  .tip b{color:var(--ok);}
+  pre{background:#1f2329;color:#e6e8eb;border-radius:10px;padding:13px 15px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.7;overflow-x:auto;margin:6px 0 2px;}
+  .note{margin-top:20px;background:#fff7ec;border-left:4px solid var(--warn);border-radius:8px;padding:13px 16px;font-size:13px;color:#7a5a1f;}
+  .note b{color:var(--warn);}
+  .note li{margin:4px 0;}
+  .out{margin-top:18px;background:#eafaf1;border-left:4px solid var(--ok);border-radius:8px;padding:12px 16px;font-size:13.5px;color:#235c41;}
+  .out b{color:var(--ok);}
+  .foot{margin-top:24px;padding-top:14px;border-top:1px solid var(--line);font-size:11.5px;color:#9aa3b2;text-align:center;}
+  @media print{ body{background:#fff;} .page{margin:0;box-shadow:none;border-radius:0;max-width:100%;} @page{size:A4;margin:12mm;} .step,.note,.out,.lead{page-break-inside:avoid;} }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <h1>联席学情报告 · 同事操作手册</h1>
+    <p>3 步出报告，全程只用跟 WorkBuddy 说话，不用写代码</p>
+    <span class="tag">🗣️ 对话驱动</span>
+    <span class="tag">🔑 自动登录取凭证</span>
+    <span class="tag">📊 出 HTML + Excel</span>
+  </div>
+
+  <div class="body">
+    <div class="lead">
+      你只需要做三件事：<b>让 WorkBuddy 登录后台 → 让它装技能 → 告诉它查谁、查哪个月</b>。
+      所有取数、分析、排版都由技能自动完成。请使用<b>你自己的后台账号</b>，不要和他人共用。
+    </div>
+
+    <!-- 第 0 步 -->
+    <div class="step">
+      <div class="h">
+        <div class="num">0</div>
+        <h3>准备后台凭证（让 WorkBuddy 帮你登录）</h3>
+        <span class="when">仅首次 / token 过期时</span>
+      </div>
+      <p>报告数据来自「学生管理后台」，需要你的登录凭证（x-token）。不用你自己找，让 WorkBuddy 代你登录并自动保存。</p>
+      <div class="say">
+        <div class="lbl">你对 WorkBuddy 说：</div>
+        <div class="txt">帮我登录学生管理后台 stadminv2.xqmsx.cn 取 token</div>
+      </div>
+      <div class="tip">
+        WorkBuddy 会打开登录页面 → <b>你输入自己的账号密码 + 图形验证码</b> → 它自动把 token 存好（有效期约 24 小时）。
+        这一步只需在第一次用、或第二天再跑时重复做一次。
+      </div>
+    </div>
+
+    <!-- 第 1 步 -->
+    <div class="step">
+      <div class="h">
+        <div class="num">1</div>
+        <h3>安装技能（只做一次）</h3>
+        <span class="when">仅首次</span>
+      </div>
+      <p>把下面这条命令发给 WorkBuddy，让它帮你运行一次，技能就装好了。</p>
+      <div class="say">
+        <div class="lbl">你对 WorkBuddy 说：</div>
+        <div class="txt">帮我运行这条安装命令：<code>bash &lt;(curl -sL https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/main/install.sh)</code></div>
+      </div>
+      <div class="tip">
+        看到 <b>「✅ 技能已安装到 ~/.workbuddy/skills/co-teacher-report」</b> 就成功了。
+        装完之后，<b>请重新开一个对话</b>再走下一步（刚装的技能需要在新会话里才会生效）。
+      </div>
+    </div>
+
+    <!-- 第 2 步 -->
+    <div class="step">
+      <div class="h">
+        <div class="num">2</div>
+        <h3>生成报告（查谁、查哪个月）</h3>
+        <span class="when">每次出报告</span>
+      </div>
+      <p>在<strong>新对话</strong>里，把联席姓名和月份告诉 WorkBuddy 即可。</p>
+      <div class="say">
+        <div class="lbl">你对 WorkBuddy 说：</div>
+        <div class="txt">用 co-teacher-report 技能，生成 <b>张巍</b> <b>2026年9月</b> 的学情报告</div>
+      </div>
+      <div class="tip">
+        换人 / 换月：只改名字和月份，其它不变。例如查「李娜 2026年10月」就照说。
+        技能会自动拉群聊 + 出勤，几分钟后给你两份文件。
+      </div>
+      <div class="out">
+        <b>你会拿到：</b><br>
+        • <b>&lt;联席&gt;_学情分析报告.html</b> —— 彩色报告，可切换课程查看（速览 / 出勤 / 薄弱点 / 跟进动作）<br>
+        • <b>&lt;联席&gt;_学生待办清单.xlsx</b> —— 总览 + 待办 + 出勤明细，可直接下发
+      </div>
+    </div>
+
+    <div class="note">
+      <b>⚠️ 三点提醒</b>
+      <ul style="margin:8px 0 0;padding-left:20px;">
+        <li><b>token 约 24 小时过期</b>：第二天再出报告，先重说第 0 步「帮我登录后台取 token」。</li>
+        <li><b>装完技能要新开对话</b>：否则 WorkBuddy 可能没加载到刚装的技能。</li>
+        <li><b>各用各账号</b>：凭证只自己用，不要发给别人，也不互传 token。</li>
+      </ul>
+    </div>
+
+    <div class="foot">联席学情报告技能 · 同事操作手册 ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
+  </div>
+</div>
+</body>
+</html>
