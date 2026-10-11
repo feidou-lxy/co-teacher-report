@@ -65,6 +65,12 @@ def badge(text, cls):
     return f'<span class="badge {cls}">{text}</span>'
 
 
+def sents(txt):
+    """把总评按句断行，避免「配合度/统计/高频问题/出勤/作业/情绪」糊成一整段。"""
+    parts = [p.strip() for p in re.split(r"(?<=。)", txt or "") if p.strip()]
+    return "<br>".join(parts)
+
+
 def coop_conclusion(s):
     n_stu, q = s["n_stu"], s["q"]
     n_sub = s.get("n_stu_sub", n_stu)
@@ -168,6 +174,7 @@ def card_html(r, edu=False):
         status += badge("有未解疑问", "orange")
     coop = coop_conclusion(s)
     top_todo = s["todos"][0][1] if s["todos"] else ("常规家长沟通" if edu else "维持常规跟进")
+    top_basis = s["todos"][0][2] if s["todos"] else ""
     todos_html = "".join(
         f'<li><span class="pri pri-{p}">{p}</span> {a} <span class="basis">«{b}»</span></li>'
         for p, a, b in s["todos"]
@@ -189,8 +196,8 @@ def card_html(r, edu=False):
       <div class="cmeta">近窗 {s['oldest'][:10]} ~ {s['newest'][:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']}，其中礼节 {s.get('n_ack', 0)} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
       <div class="blk"><div class="blk-h">① 速览卡</div>
         <div class="coop"><b>配合度</b>{coop}</div>
-        <div class="watch">最该盯：{top_todo}</div>
-        <div class="summary">{s['summary']}</div>
+        <div class="watch"><div class="watch-h">最该盯<span class="watch-b">依据：{top_basis}</span></div><div class="watch-act">{top_todo}</div></div>
+        <div class="summary">{sents(s['summary'])}</div>
       </div>
       {att_block(r)}
       <div class="blk"><div class="blk-h">③ 知识掌握与薄弱点</div>
@@ -246,9 +253,12 @@ th{color:#8a9099;font-weight:600}
 .basis{color:#8a9099;font-size:12px}
 .blk{border-top:1px dashed #eef0f3;padding-top:10px;margin-top:10px}
 .blk-h{font-size:13px;font-weight:700;color:#3a5bdb;margin-bottom:6px}
-.coop{font-size:13px;color:#1f2329;margin:2px 0 6px;line-height:1.7}
+.coop{font-size:13px;color:#1f2329;margin:2px 0 10px;line-height:1.7}
 .coop b{color:#3a5bdb;margin-right:6px}
-.watch{font-size:13px;background:#fff7ec;border-left:3px solid #ff8f1f;padding:6px 10px;border-radius:4px;margin:4px 0 8px}
+.watch{font-size:13px;background:#fff7ec;border-left:3px solid #ff8f1f;padding:7px 10px;border-radius:4px;margin:0 0 10px}
+.watch-h{font-weight:700;color:#b45309;margin-bottom:3px}
+.watch-h .watch-b{font-weight:400;color:#8a9099;font-size:12px;margin-left:8px}
+.watch-act{color:#1f2329;line-height:1.65}
 .kv{display:flex;gap:10px;font-size:13px;line-height:1.7;margin:4px 0;align-items:flex-start}
 .kv .k{flex:0 0 64px;color:#8a9099;font-weight:600}
 .kv .v{flex:1}
