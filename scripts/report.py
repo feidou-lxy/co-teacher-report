@@ -140,6 +140,9 @@ def card_html(r, edu=False):
     s, g = r["s"], r["g"]
     co = g.get("coTeacherName") or "未分配联席"
     co_tag = (f'<span class="ctag">联席：{co}</span>') if edu else ""
+    bt = (s.get("buy_type") or "").strip()
+    bt_cls = {"直播": "live", "回放": "replay"}.get(bt, "other")
+    bt_tag = f'<span class="btag {bt_cls}">{bt}</span>' if bt else ""
     topics = "".join(f'<span class="chip">{t}</span>' for t in s["top_topics"]) or '<span class="chip">—</span>'
     errs = [ERR_MAP[t] for t in s["top_topics"] if t in ERR_MAP]
     err_html = "、".join(errs) if errs else "—"
@@ -174,7 +177,7 @@ def card_html(r, edu=False):
     return f"""
     <div class="card" data-co="{co}" data-name="{r['stu']}">
       <div class="chead">
-        <div class="cname">{r['stu']}</div>
+        <div class="cname">{r['stu']}{bt_tag}</div>
         <div class="cgroup">{r['course_raw']}{co_tag}</div>
         <div class="cstatus">{gdbadge}{status}</div>
       </div>
@@ -222,6 +225,10 @@ th{color:#8a9099;font-weight:600}
 .cname{font-size:17px;font-weight:700}
 .cgroup{font-size:12px;color:#8a9099}
 .ctag{display:inline-block;font-size:11px;color:#3a5bdb;background:#eef2ff;padding:1px 7px;border-radius:8px;margin-left:6px}
+.btag{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:8px;margin-left:6px;vertical-align:middle}
+.btag.live{background:#e8f7f0;color:#2ba471}
+.btag.replay{background:#fff3e0;color:#ff8f1f}
+.btag.other{background:#eef2f5;color:#6b7280}
 .cstatus{margin-left:auto}
 .cmeta{font-size:12px;color:#8a9099;margin:6px 0}
 .chips{margin:6px 0}

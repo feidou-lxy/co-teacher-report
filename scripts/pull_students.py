@@ -58,6 +58,7 @@ def main():
             "schoolName": x.get("schoolName"),
             "grade": x.get("grade"),
             "coTeacherName": x.get("coTeacherName"),
+            "cIncomeProductType": x.get("cIncomeProductType"),
         })
     json.dump(out, open(f"{wd}/students.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
@@ -66,6 +67,8 @@ def main():
     c = Counter((x.get("productName") or "") for x in out)
     for k, v in c.most_common():
         print(f"   {v:>3}  {k}")
+    bt = Counter(common.buy_type_label(x.get("cIncomeProductType")) or "未标注" for x in out)
+    print("   购课类型：" + " ｜ ".join(f"{k} {v}人" for k, v in bt.most_common()))
     if role == "edu":
         cc = Counter((x.get("coTeacherName") or "-") for x in out)
         print(f"   涉及联席 {len(cc)} 人：")

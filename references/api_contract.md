@@ -34,6 +34,10 @@
 - `coTeacherName` **联席姓名**（联席视角按此字段过滤得到某联席的学生）
 - `classTeacherName` **教务姓名**（教务视角按此字段过滤，得到该教务管辖的全部学生，跨多个下属联席；响应时效页的「教务」列即此字段）
 - `teacherName` 主讲
+- `cIncomeProductType` **购课类型**（1=直播 2=回放 3=试听（插班）4=测试）——后台「我的学生」列表的「购课类型」列
+- `proBroadcastType` 课程播放类型（1=直播课 2=录播课）——对应「课程类型」列
+
+> 花名册与「我的学生」列表同源（一对一，一个学生一条记录）。购课类型/课程类型的**中文映射**见第 7 节字典接口。
 
 ---
 
@@ -92,6 +96,17 @@
 
 `GET /cStudentFile/findProductStats?productStudentId=<X>` → `data.classStats[]`（与出勤表同源）、
 `data.comms[]`（沟通记录，实测多为空）、`data.parentNeedsList[]`。
+
+---
+
+## 7. 数据字典（枚举中文映射）
+
+`GET /sysDictionary/findSysDictionary?type=<type>`
+→ `data.resysDictionary.sysDictionaryDetails[]`，每项 `{ value, label }`。
+
+技能用到的字典：
+- `type=productType` → **购课类型**：1=直播、2=回放、3=试听（插班）、4=测试（对应花名册 `cIncomeProductType`；映射已固化在 `common.BUY_TYPE_LABEL`）
+- `type=productBroadcastType` → **课程播放类型**：1=直播课、2=录播课（对应花名册 `proBroadcastType`）
 
 ---
 

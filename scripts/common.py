@@ -43,6 +43,23 @@ def post(path, body, token, timeout=60):
 ROLE_LABEL = {"co": "联席", "edu": "教务"}
 SCOPE_FIELD = {"co": "coTeacherName", "edu": "classTeacherName"}
 
+# 购课类型：花名册字段 cIncomeProductType（后台「我的学生」列表的「购课类型」列）。
+# 取值映射来自后台字典接口 GET /sysDictionary/findSysDictionary?type=productType。
+BUY_TYPE_LABEL = {0: "未标注", 1: "直播", 2: "回放", 3: "试听（插班）", 4: "测试"}
+
+
+def buy_type_label(v):
+    """把后台「购课类型」cIncomeProductType 数值转为中文标签；未知/空值回退为原值或空串。
+
+    1=直播 2=回放 3=试听（插班）4=测试（0=未标注）。
+    """
+    if v is None or v == "":
+        return ""
+    try:
+        return BUY_TYPE_LABEL.get(int(v), f"类型{int(v)}")
+    except (TypeError, ValueError):
+        return str(v)
+
 
 def resolve_scope(args):
     """解析查询角色：--co <联席名> 或 --edu <教务名>，二者只能选一。

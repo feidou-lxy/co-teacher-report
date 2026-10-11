@@ -111,7 +111,7 @@ def main():
     wrap = Alignment(wrap_text=True, vertical="top")
 
     ws = wb.active; ws.title = "学生群总览"
-    cols = ["序号", "学生", "群名", "课程", "所属联席", "定档", "回复状态", "超时状态", "超时时长", "近窗起", "近窗止",
+    cols = ["序号", "学生", "购课类型", "群名", "课程", "所属联席", "定档", "回复状态", "超时状态", "超时时长", "近窗起", "近窗止",
             "可分析消息", "生/家长消息", "师消息", "语音条", "配合度结论",
             "出勤(后台)", "是否需关注", "请假备注(聊天)", "高频知识点", "近期未解疑问"]
     ws.append(cols)
@@ -120,7 +120,7 @@ def main():
     for i, (_, stu, s, g, timeout, unreply) in enumerate(rows, 1):
         att_txt, att_flag = att_short(s.get("att"))
         ws.append([
-            i, stu, g.get("groupName", ""), course_of(g.get("groupName", "")), g.get("coTeacherName", ""),
+            i, stu, s.get("buy_type", ""), g.get("groupName", ""), course_of(g.get("groupName", "")), g.get("coTeacherName", ""),
             grade(s, timeout, unreply),
             "未回复" if unreply else "已回复",
             "超时" if timeout else "正常", g.get("timeoutDuration", "") if timeout else "",
@@ -133,9 +133,9 @@ def main():
         for c in range(1, len(cols) + 1):
             ws.cell(r, c).border = border; ws.cell(r, c).alignment = wrap
     ws.freeze_panes = "A2"
-    widths = {"A": 5, "B": 13, "C": 30, "D": 24, "E": 12, "F": 7, "G": 9, "H": 9, "I": 11,
-              "J": 11, "K": 11, "L": 9, "M": 11, "N": 8, "O": 8, "P": 34,
-              "Q": 16, "R": 16, "S": 32, "T": 20, "U": 10}
+    widths = {"A": 5, "B": 13, "C": 10, "D": 30, "E": 24, "F": 12, "G": 7, "H": 9, "I": 9, "J": 11,
+              "K": 11, "L": 11, "M": 9, "N": 11, "O": 8, "P": 8, "Q": 34,
+              "R": 16, "S": 16, "T": 32, "U": 20, "V": 10}
     for k, v in widths.items():
         ws.column_dimensions[k].width = v
 
