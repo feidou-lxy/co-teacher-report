@@ -53,7 +53,7 @@ def main():
     run("merge.py", ["--workdir", wd])
     run("report.py", base + ["--window", args.window])
     run("xlsx.py", base)
-    print(f"\n🎉 完成。报告：{wd}/{name}_学情分析报告.html ；待办：{wd}/{name}_学生待办清单.xlsx")
+    print(f"\n🎉 完成。分析：{wd}/{name}_学情分析.html ；待办：{wd}/{name}_学生待办清单.xlsx")
 
 
 if __name__ == "__main__":

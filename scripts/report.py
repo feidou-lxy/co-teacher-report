@@ -1,4 +1,4 @@
-"""步骤9：生成学情报告 HTML（4 块结构 + Tab 切换）。
+"""步骤9：生成学情分析 HTML（4 块结构 + Tab 切换）。
 
 支持三种查看视角：
   - 联席视角（--co）：仅按「课程」维度分组切换（默认行为）。
@@ -7,7 +7,7 @@
        ② 按联席维度：联席 Tab 切换下钻，学生卡标注所属联席。
        两种维度均可在报告顶部一键切换。
 
-读取 analysis_merged.json，输出 <workdir>/<姓名>_学情分析报告.html。
+读取 analysis_merged.json，输出 <workdir>/<姓名>_学情分析.html。
 
 报告结构（每张学生卡）：
   ① 速览卡（定档 + 配合度结论式 + 最该盯 1 件事 + 一句话总评）
@@ -480,10 +480,10 @@ def main():
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name}（{role_cn}）学生学情分析报告</title>
+<title>{name}（{role_cn}）学生学情分析</title>
 <style>{CSS}</style></head>
 <body><div class="wrap">
-<h1>{name}（{role_cn}）· 学生学情分析报告{ '（双维度：按课程 / 按联席）' if is_edu else '（按课程切换）' }</h1>
+<h1>{name}（{role_cn}）· 学生学情分析{ '（双维度：按课程 / 按联席）' if is_edu else '（按课程切换）' }</h1>
 <div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：高二数学 ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 <div class="kpis">
   <div class="kpi"><div class="n">{len(rows)}</div><div class="l">负责学生（全量）</div></div>
@@ -567,7 +567,7 @@ function doSearch(val){{
 }}
 </script>
 </body></html>"""
-    out = f"{wd}/{name}_学情分析报告.html"
+    out = f"{wd}/{name}_学情分析.html"
     open(out, "w", encoding="utf-8").write(html)
     if is_edu:
         print(f"✅ HTML 生成完成（教务双维度）｜ 课程数 {len(course_order)} · 联席数 {len(co_order)} ｜ {out}")

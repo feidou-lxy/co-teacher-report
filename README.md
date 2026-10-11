@@ -32,7 +32,7 @@ mv /tmp/co-teacher-report ~/.workbuddy/skills/co-teacher-report
    python ~/.workbuddy/skills/co-teacher-report/scripts/run_all.py \
      --co <联席名> --window 2026-09-01 --month 2026-09
    ```
-4. 产物：`<联席>_学情分析报告.html` ＋ `<联席>_学生待办清单.xlsx`
+4. 产物：`<联席>_学情分析.html` ＋ `<联席>_学生待办清单.xlsx`
 
 ## 版本与口径（v3.3）
 

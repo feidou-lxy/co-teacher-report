@@ -77,7 +77,7 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 6. `extract.py` — 信号提取（窗口过滤、薄弱点、配合度、未闭环疑问），**并按角色生成 To-Do**（联席=跟课辅导口径 / 教务=家长沟通口径）→ `analysis.json`
 7. `leave_notes.py` — 从聊天捞学生/家长自述的请假缘由 → `leave_notes.json`
 8. `merge.py` — 出勤 + 请假备注并入分析 → `analysis_merged.json`
-9. `report.py` — 生成 4 块式 HTML 报告（联席按课程切换 / 教务双维度：按课程可再筛联席 · 按联席下钻）→ `<姓名>_学情分析报告.html`
+9. `report.py` — 生成 4 块式 HTML 报告（联席按课程切换 / 教务双维度：按课程可再筛联席 · 按联席下钻）→ `<姓名>_学情分析.html`
 10. `xlsx.py` — 生成待办 Excel（总览/待办/出勤明细，含所属联席列）→ `<姓名>_学生待办清单.xlsx`
 
 `--co` 与 `--edu` 二选一，不可同用。
@@ -180,7 +180,7 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 ├── analysis.json            # 信号提取
 ├── leave_notes.json         # 请假备注
 ├── analysis_merged.json     # 合并最终分析
-├── <姓名>_学情分析报告.html    # ← 主交付（联席按课程切换 / 教务双维度：按课程+按联席）
+├── <姓名>_学情分析.html    # ← 主交付（联席按课程切换 / 教务双维度：按课程+按联席）
 └── <姓名>_学生待办清单.xlsx    # ← 主交付（联席=课程待办清单 / 教务=教务To-Do·按课程+按联席）
 ```
 
