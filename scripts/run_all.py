@@ -1,0 +1,57 @@
+"""端到端编排：登录取得 token 后，依次跑步骤 1~10。
+
+用法（在 workdir 内执行，token 已就位）：
+  python scripts/run_all.py --co 张巍 --window 2026-09-01
+
+前提：<workdir>/token.txt 已写入后台 x-token（见 SKILL.md 登录步骤）。
+各步骤脚本位于本目录，依赖：Python3 + openpyxl（xlsx 步骤需要）。
+"""
+import argparse
+import subprocess
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import ensure_openpyxl
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def run(py, extra):
+    cmd = [sys.executable, os.path.join(HERE, py)] + extra
+    print("\n>>>", " ".join(cmd))
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        sys.exit(f"{py} 失败（exit {r.returncode}），流程中断。")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--workdir", default=".")
+    ap.add_argument("--co", required=True)
+    ap.add_argument("--window", default="2026-09-01")
+    ap.add_argument("--month", default="2026-09")
+    args = ap.parse_args()
+
+    wd = args.workdir
+    co = args.co
+    ensure_openpyxl()
+    base = ["--workdir", wd, "--co", co]
+    if not os.path.exists(os.path.join(wd, "token.txt")):
+        sys.exit(f"未找到 {wd}/token.txt，请先登录后台并写入 x-token。")
+
+    run("pull_students.py", base)
+    run("pull_groups.py", base + ["--month", args.month])
+    run("pull_chats.py", base)
+    run("pull_attendance.py", base)
+    run("build_attendance.py", base)
+    run("extract.py", ["--workdir", wd, "--window", args.window])
+    run("leave_notes.py", ["--workdir", wd, "--window", args.window])
+    run("merge.py", ["--workdir", wd])
+    run("report.py", ["--workdir", wd, "--co", co, "--window", args.window])
+    run("xlsx.py", ["--workdir", wd, "--co", co])
+    print(f"\n🎉 完成。报告：{wd}/{co}_学情分析报告.html ；待办：{wd}/{co}_学生待办清单.xlsx")
+
+
+if __name__ == "__main__":
+    main()
