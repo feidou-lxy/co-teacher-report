@@ -56,12 +56,24 @@
 - `roomId` 群 ID（拉聊天用）
 - `studentName` 学生姓名（与花名册 join）
 - `groupName` 群名（报告里解析课程）
+- `subject` / `subjectName` 学科（如 `数学` / `物理` / `英语`）
+- `coTeacherName` 该群归属**联席**（群自带）
+- `classTeacherName` 该群归属**教务**（群自带）
 - `isTimeout` / `timeoutDuration`（后台响应时效标记）：**已弃用（v4）**——实测与聊天事实不符
   （学生 6 分钟即获回复的群被标「超时 19 小时 59 分」），技能不再拉取
 - `isReplied`（是否回复）：**已弃用（v3.2）**——该列实测存在误差，技能不再拉取
 > 「是否需回复」与「响应时效」现均由**聊天记录自行分析**：`unresolved`（会话尾部仍有未获回应提问）、
 > `resp_slow` / `resp_max_h`（学生提问 → 老师首次回复的最长等待，≥24h 且未说明缘由才判迟缓）。
 > 实现见 `extract.py` 的 `resp_wait_stats()`；`pull_groups.py` 已不再映射上述两个后台字段。
+
+**取群口径（v3.4，必须双条件）**：`pull_groups.py` 对群列表做双重过滤，缺一不可——
+1. 群内 `studentName` ∈ 该角色花名册（这名学生确实是本角色的学生）；
+2. 群的归属字段 == 本角色：**联席**看 `coTeacherName`、**教务**看 `classTeacherName`。
+
+> 为何必须加条件 2：一名学生可能同期报读多科，这些科的群由**别的联席/教务**负责。
+> 若只按学生名交集（旧口径），会把别的角色的群也拉进来——例如「张巍（只带数学）」
+> 曾被混入其学生的物理/化学/英语群（82 群 → 正确应为 57 群，全部数学）。
+> 归属字段为空时回退保留，避免因后台缺字段漏群。
 
 ---
 
@@ -119,7 +131,7 @@
 
 ```
 students.json (coTeacherName=联席)
-   ├─ stuName ──────────────► groups.json (studentName 交集) ──► chats.json
+   ├─ stuName ──────────────► groups.json (studentName 交集 ＋ 群归属 == 本角色) ──► chats.json
    └─ ProductId ────────────► attendance_raw.json (productId) ──► attendance_clean.json
                                                                           │
 chats.json ──► analysis.json ──► leave_notes.json ──┐                  │

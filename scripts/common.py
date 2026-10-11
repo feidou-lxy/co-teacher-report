@@ -104,6 +104,21 @@ def clean_course_name(product_name):
     return s or "未命名课程"
 
 
+SUBJECTS = ("数学", "物理", "化学", "英语", "语文", "生物", "历史", "地理", "政治", "科学", "信息", "编程")
+
+
+def subject_of(text):
+    """从课程名/群名/产品名里提取学科关键词（如「高二化学鲁科985层」→「化学」）。
+
+    用于「学科」等处的动态展示；提取不到时返回空串。
+    """
+    s = str(text or "")
+    for w in SUBJECTS:
+        if w in s:
+            return w
+    return ""
+
+
 def ensure_openpyxl():
     """依赖自检：若当前解释器没有 openpyxl，尝试用同解释器自动 pip 安装。
 

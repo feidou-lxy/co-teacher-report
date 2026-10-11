@@ -70,7 +70,7 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 `<skill>` 为本技能目录。该命令依次执行：
 
 1. `pull_students.py` — 拉花名册，按 `coTeacherName`（联席）或 `classTeacherName`（教务）过滤出目标学生 → `students.json`
-2. `pull_groups.py` — 拉群聊列表（月维度+日维度并集），按学生名交集，并携带 `coTeacherName`/`classTeacherName` → `groups.json`
+2. `pull_groups.py` — 拉群聊列表（月维度+日维度并集），**双条件过滤**：① 群内学生 ∈ 花名册；② 群归属 == 本角色（联席看群 `coTeacherName` / 教务看群 `classTeacherName`）。仅按学生名交集会误收该生其他学科、由别的角色负责的群 → `groups.json`
 3. `pull_chats.py` — 逐群拉聊天（文本+语音转写）→ `chats.json`
 4. `pull_attendance.py` — 拉逐节课出勤（按 ProductId），按 `students.json` 学生白名单过滤 → `attendance_raw.json`
 5. `build_attendance.py` — 去重清洗 → `attendance_clean.json`
@@ -111,6 +111,9 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 
 口径约定（已与用户确认）：
 
+- **取群范围（v3.4 变更，双条件过滤）**：报告纳入的群 = 「群内学生 ∈ 本角色花名册」**且**「群归属 == 本角色」
+  （联席看群 `coTeacherName`、教务看群 `classTeacherName`）。只按学生名交集会把该生**其他学科、由别的角色负责**的群误收进来
+  —— 例：张巍（只带数学）曾混入其学生的物理/化学/英语群（82 群 → 正确 57 群，全部数学）。
 - **定档**：🔴 红 = 聊天分析判定「响应迟缓」（学生提问后 ≥24 小时才见老师回复，且老师未说明缘由）或「需回复」
   （会话尾部仍有未获回应提问），或存在未闭环疑问/负面情绪；🟡 黄 = 有未解疑问、作业负面信号、出勤异常或负面情绪；
   🟢 绿 = 其余正常推进。

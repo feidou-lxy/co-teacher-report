@@ -401,6 +401,14 @@ def main():
                          co=co, att=s.get("att")))
     rows.sort(key=lambda x: (-x["score"][0], -x["score"][1], -x["score"][2]))
 
+    # 动态学科：从纳入的群中提取（角色只带某科时即显示该科，避免写死「高二数学」）
+    _subj = []
+    for r in rows:
+        sj = (r["g"].get("subjectName") or common.subject_of(r["g"].get("groupName", "")) or "").strip()
+        if sj and sj not in _subj:
+            _subj.append(sj)
+    subject_line = " / ".join(_subj) or "—"
+
     total_msgs = sum(r["s"]["n_text"] for r in rows)
     slow_n = sum(1 for r in rows if r["slow"])
     unres_n = sum(1 for r in rows if r["s"]["unresolved"])
@@ -484,7 +492,7 @@ def main():
 <style>{CSS}</style></head>
 <body><div class="wrap">
 <h1>{name}（{role_cn}）· 学生学情分析{ '（双维度：按课程 / 按联席）' if is_edu else '（按课程切换）' }</h1>
-<div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：高二数学 ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+<div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：{subject_line} ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 <div class="kpis">
   <div class="kpi"><div class="n">{len(rows)}</div><div class="l">负责学生（全量）</div></div>
   <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
