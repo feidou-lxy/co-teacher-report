@@ -56,8 +56,12 @@
 - `roomId` 群 ID（拉聊天用）
 - `studentName` 学生姓名（与花名册 join）
 - `groupName` 群名（报告里解析课程）
-- `isTimeout` / `timeoutDuration` 响应时效标记（监管维度，计入定档）
-- `isReplied`（是否回复）：**已弃用**——该列实测存在误差，技能不再拉取；「是否需回复」改由聊天分析结论 `unresolved` 驱动
+- `isTimeout` / `timeoutDuration`（后台响应时效标记）：**已弃用（v4）**——实测与聊天事实不符
+  （学生 6 分钟即获回复的群被标「超时 19 小时 59 分」），技能不再拉取
+- `isReplied`（是否回复）：**已弃用（v3.2）**——该列实测存在误差，技能不再拉取
+> 「是否需回复」与「响应时效」现均由**聊天记录自行分析**：`unresolved`（会话尾部仍有未获回应提问）、
+> `resp_slow` / `resp_max_h`（学生提问 → 老师首次回复的最长等待，≥24h 且未说明缘由才判迟缓）。
+> 实现见 `extract.py` 的 `resp_wait_stats()`；`pull_groups.py` 已不再映射上述两个后台字段。
 
 ---
 
@@ -126,7 +130,7 @@ chats.json ──► analysis.json ──► leave_notes.json ──┐         
                                                   report.py + xlsx.py
 ```
 
-### analysis.json 关键字段口径（v3）
+### analysis.json 关键字段口径（v4）
 
 | 字段 | 含义 |
 |---|---|
@@ -137,6 +141,12 @@ chats.json ──► analysis.json ──► leave_notes.json ──┐         
 | `student_coop` / `parent_coop` | 配合度 0–5，**仅用实质消息**；家长侧致谢最多计 4 分 |
 | `unresolved` | 是否未闭环：尾部最后一条老师消息**之后**仍有实质提问，**礼节语不算** |
 | `unres_evi` | 未闭环证据（日期 + 提问摘要），非未闭环时为「会话尾部无未获回应提问」 |
+| `resp_n` | 窗口内「学生实质提问 → 老师首次回复」的轮数 |
+| `resp_max_h` | 最长等待小时数（聊天自算，取代后台 `timeoutDuration`） |
+| `resp_slow` | 是否存在 ≥24h 且**老师未说明缘由**的等待 → 计入定档红 |
+| `resp_slow_cnt` | 上述迟缓轮数 |
+| `resp_pend_n` | 窗口末尾老师仍未回复的提问数（并入「需回复」） |
+| `resp_evi` | 响应时效证据/结论（如「2026-09-28 学生提问「…」后约 60 小时才见老师回复」或「老师已说明安排，不计迟缓」） |
 
 > 「无需回复」判定：`extract.py` 的 `is_ack()` / `is_noise()`。判定顺序：
 > ① 剥离 emoji/符号（`EMOJI_RE`：🍵👍🙏…）与微信文本表情代号（`ACK_EXPR_RE`：`[玫瑰][抱拳][捂脸]`）；

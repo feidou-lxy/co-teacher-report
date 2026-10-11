@@ -37,8 +37,30 @@ def course_of(group_name):
     return raw
 
 
-def grade(s, timeout, unreply):
-    if timeout or unreply:
+# 响应时效档位阈值（与 extract.py 保持一致）
+RESP_SLOW_H = 24.0
+RESP_WARN_H = 12.0
+
+
+def resp_tag(s):
+    """响应时效档位（聊天记录自算）：及时 / 偏慢(≥12h) / 偏慢·已说明(≥24h 但老师已解释) / 迟缓(≥24h)。"""
+    h = s.get("resp_max_h", 0.0)
+    if s.get("resp_slow"):
+        return "迟缓"
+    if h >= RESP_SLOW_H:
+        return "偏慢·已说明"
+    if h >= RESP_WARN_H:
+        return "偏慢"
+    return "及时"
+
+
+def resp_wait_txt(s):
+    h = s.get("resp_max_h", 0.0)
+    return f"{h:.1f} 小时" if h > 0 else "—"
+
+
+def grade(s, slow, unreply):
+    if slow or unreply:
         return "红"
     if s["unresolved"] or s["neg"] > 0 or s.get("hw_neg", 0) > 0 or s.get("att_leave", 0) > 0:
         return "黄"
@@ -102,10 +124,11 @@ def main():
     rows = []
     for stu, s in A.items():
         g = s["group"]
-        timeout = str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True
-        # 「是否需回复」不再依赖后台 isReplied，改为聊天分析结论（会话尾部未获回应提问）
+        # 「是否需回复」「响应时效」均不再依赖后台列（isReplied / isTimeout 实测与聊天事实不符），
+        # 改用聊天记录分析结论：unresolved=会话尾部仍有未获回应提问；resp_slow=提问后 ≥24h 才见回复
         unreply = bool(s["unresolved"])
-        rows.append(((1 if timeout else 0, 1 if s["unresolved"] else 0, s["n_text"]), stu, s, g, timeout, unreply))
+        slow = bool(s.get("resp_slow"))
+        rows.append(((1 if slow else 0, 1 if s["unresolved"] else 0, s["n_text"]), stu, s, g, slow, unreply))
     rows.sort(key=lambda x: (-x[0][0], -x[0][1], -x[0][2]))
 
     wb = Workbook()
@@ -116,19 +139,19 @@ def main():
     wrap = Alignment(wrap_text=True, vertical="top")
 
     ws = wb.active; ws.title = "学生群总览"
-    cols = ["序号", "学生", "购课类型", "群名", "课程", "所属联席", "定档", "是否需回复", "超时状态", "超时时长", "近窗起", "近窗止",
+    cols = ["序号", "学生", "购课类型", "群名", "课程", "所属联席", "定档", "是否需回复", "响应时效", "最长等待", "近窗起", "近窗止",
             "可分析消息", "生/家长消息", "礼节回应", "师消息", "语音条", "配合度结论",
             "出勤(后台)", "是否需关注", "请假备注(聊天)", "高频知识点", "近期未解疑问"]
     ws.append(cols)
     for c in range(1, len(cols) + 1):
         cell = ws.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
-    for i, (_, stu, s, g, timeout, unreply) in enumerate(rows, 1):
+    for i, (_, stu, s, g, slow, unreply) in enumerate(rows, 1):
         att_txt, att_flag = att_short(s.get("att"))
         ws.append([
             i, stu, s.get("buy_type", ""), g.get("groupName", ""), course_of(g.get("groupName", "")), g.get("coTeacherName", ""),
-            grade(s, timeout, unreply),
+            grade(s, slow, unreply),
             "需回复" if unreply else "无需回复",
-            "超时" if timeout else "正常", g.get("timeoutDuration", "") if timeout else "",
+            resp_tag(s), resp_wait_txt(s),
             (s["oldest"] or "")[:10], (s["newest"] or "")[:10], s["n_text"], s["n_stu"], s.get("n_ack", 0), s["n_tea"], s["voice"],
             coop_conclusion(s),
             att_txt, att_flag, " / ".join(s.get("leave", [])),
@@ -147,18 +170,18 @@ def main():
     def build_todo_sheet(sheet_title, group_fn, action_label="To-Do 动作"):
         """构造一个「待办清单」sheet，按 group_fn(g) 分组排序（课程/联席）。"""
         ws = wb.create_sheet(sheet_title)
-        cols2 = ["序号", "分组", "学生", "定档", "出勤(后台)", "是否需关注", "优先级", action_label, "依据", "群名", "超时时长"]
+        cols2 = ["序号", "分组", "学生", "定档", "出勤(后台)", "是否需关注", "优先级", action_label, "依据", "群名", "最长等待"]
         ws.append(cols2)
         for c in range(1, len(cols2) + 1):
             cell = ws.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
         pri_fill = {"高": PatternFill("solid", fgColor="FDECEC"), "中": PatternFill("solid", fgColor="FFF3E0"), "低": PatternFill("solid", fgColor="EEF2F5")}
         idx = 0
         todo_rows = []
-        for _, stu, s, g, timeout, unreply in rows:
+        for _, stu, s, g, slow, unreply in rows:
             att_txt, att_flag = att_short(s.get("att"))
             for p, a, b in s["todos"]:
                 todo_rows.append((group_fn(g), stu, p, a, b, g.get("groupName", ""),
-                                 g.get("timeoutDuration", "") if timeout else "", grade(s, timeout, unreply), att_txt, att_flag))
+                                  resp_wait_txt(s), grade(s, slow, unreply), att_txt, att_flag))
         todo_rows.sort(key=lambda x: (x[0], {"高": 0, "中": 1, "低": 2}.get(x[2], 3), x[1]))
         for grp, stu, p, a, b, gn, td, gd, att_txt, att_flag in todo_rows:
             idx += 1
@@ -187,7 +210,7 @@ def main():
     ws3.append(cols3)
     for c in range(1, len(cols3) + 1):
         cell = ws3.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
-    for _, stu, s, g, timeout, unreply in rows:
+    for _, stu, s, g, slow, unreply in rows:
         a = s.get("att")
         if not a:
             ws3.append([stu, "—", "—", "—", "—", "—", "无后台记录", "—"])

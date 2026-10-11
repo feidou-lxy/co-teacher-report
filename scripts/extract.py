@@ -11,6 +11,7 @@ To-Do 按角色生成（--co 联席 / --edu 教务）：
 输出 <workdir>/analysis.json ：{ studentName: {...} }
 """
 import argparse
+import datetime
 import json
 import re
 import sys
@@ -78,6 +79,15 @@ THANKS_WORDS = ("谢谢", "感谢", "多谢", "感恩", "辛苦", "麻烦您", "
 # 占位噪声（无正文、不可解析的消息类型），不参与任何分析
 NOISE_KEYS = ("图片", "语音", "视频", "文件", "该消息类型", "revoke", "撤回", "表情", "链接", "位置",
               "动画", "名片", "小程序", "合并转发", "系统消息", "文件传输", "红包", "转账")
+
+# —— 响应时效（v4：完全由聊天记录自行推算，不依赖后台「超时/是否回复」标记）——
+# 口径：一轮「学生/家长实质提问 → 由老师消息打断」记一次等待，取窗口内最大值。
+# 后台 isTimeout / isReplied 实测与聊天事实不符（例如 6 分钟即回复的群被标「超时 19小时」），故弃用。
+RESP_SLOW_H = 24.0     # ≥ 24 小时才未回应 → 判「响应迟缓」，计入定档红
+RESP_WARN_H = 12.0     # ≥ 12 小时 → 展示为「偏慢」提示（多为深夜提问次日回复），不计定档
+# 老师已在回复中说明缘由（假期/休息日/稍后细看）→ 属「已沟通的延迟」，不判迟缓、不计定档
+RESP_EXCUSE = ("休息", "放假", "假期", "节后", "调休", "这两天", "晚一点", "晚些", "晚些时候",
+               "尽快", "稍后", "抽时间", "回头", "出差", "忙完")
 
 TOPICS = {
     "立体几何/空间向量": ["立体几何", "空间向量", "法向量", "建系", "异面直线", "投影", "外接球", "二面角", "线面", "面面", "垂直", "平行", "坐标", "几何体"],
@@ -151,6 +161,39 @@ def is_noise(t):
     return False
 
 
+def parse_dt(ts):
+    """解析消息时间戳（YYYY-MM-DDTHH:MM:SS）为 datetime，失败返回 None。"""
+    try:
+        return datetime.datetime.strptime((ts or "")[:19], "%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return None
+
+
+def resp_wait_stats(triples_all):
+    """由聊天记录推算响应时效（不依赖后台标记）。
+
+    一轮 =「学生/家长的首条实质提问」→「其后第一条老师消息（含图片/讲义等，只要有动作即算已响应）」。
+    返回 (waits, pending)：waits=[(小时, 提问时间, 提问摘要, 老师回复正文)]，
+    pending=[(提问时间, 提问摘要)]（窗口末尾仍无老师消息）。
+    """
+    waits, pending = [], []
+    open_ts = open_q = None
+    for ts, r, t in triples_all:
+        if r == 1:                                   # 老师有任何动作 → 本轮闭环
+            if open_ts:
+                d1, d2 = parse_dt(open_ts), parse_dt(ts)
+                if d1 and d2 and d2 >= d1:
+                    waits.append(((d2 - d1).total_seconds() / 3600.0, open_ts, open_q, t or ""))
+                open_ts = open_q = None
+            continue
+        if r == 2 and t and not is_noise(t) and not is_ack(t) and hits(t, Q_ASK):
+            if open_ts is None:                      # 同一轮内多条连续提问只计一次（以首条起算）
+                open_ts, open_q = ts, re.sub(r"\s+", " ", t)
+    if open_ts:
+        pending.append((open_ts, open_q))
+    return waits, pending
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
@@ -185,6 +228,9 @@ def main():
                 "student_coop": 0, "parent_coop": 0, "top_topics": [],
                 "unresolved": False, "unresolved_at": "", "unresolved_q": "",
                 "unres_evi": "窗口内无聊天",
+                "resp_n": 0, "resp_max_h": 0.0, "resp_slow": False, "resp_slow_cnt": 0,
+                "resp_at": "", "resp_q": "", "resp_pend_n": 0,
+                "resp_evi": "窗口内无聊天",
                 "summary": f"{CUT} 起该群无可分析聊天记录（窗口内无互动）。",
                 "todos": empty_todos,
             }
@@ -241,6 +287,28 @@ def main():
             unres_evi = f"{unresolved_at} 学生提问「{unresolved_q}…」，其后群内无老师回复"
         else:
             unres_evi = "会话尾部无未获回应提问"
+        # —— 响应时效：完全由聊天记录自算（弃用后台 isTimeout/isReplied，实测不准）——
+        waits, pend = resp_wait_stats(triples_all)
+        resp_n = len(waits)
+        resp_max_h = round(max([w[0] for w in waits], default=0.0), 1)
+        # 长等待中剔除「老师已在回复里说明缘由」的情形（假期集中休息、稍后细看等）——属已沟通的延迟，
+        # 不判迟缓、不计定档，仅在卡片提示最长等待时长，避免把假期安排误报成服务问题。
+        long_all = [w for w in waits if w[0] >= RESP_SLOW_H]
+        long_real = [w for w in long_all if not any(k in (w[3] or "") for k in RESP_EXCUSE)]
+        resp_slow = bool(long_real)
+        resp_slow_cnt = len(long_real)
+        resp_at = resp_q = ""
+        if resp_slow:
+            _w = max(long_real, key=lambda x: x[0])
+            resp_at, resp_q = (_w[1] or "")[:10], (_w[2] or "")[:24]
+            resp_evi = f"{resp_at} 学生提问「{resp_q}…」后约 {_w[0]:.0f} 小时才见老师回复"
+        elif long_all:
+            _w = max(long_all, key=lambda x: x[0])
+            resp_evi = f"最长等待 {_w[0]:.0f} 小时（{(_w[1] or '')[:10]} 提问），老师已说明安排，不计迟缓"
+        elif resp_n:
+            resp_evi = f"窗口内 {resp_n} 次提问均获回复（最长等待 {resp_max_h:.1f} 小时）"
+        else:
+            resp_evi = "窗口内无学生实质提问"
         parts = [f"近窗覆盖 {oldest[:10]} ~ {newest[:10]}（共 {len(texts)} 条可分析消息；学生/家长 {n_stu} 条＝实质 {n_stu_sub} + 礼节 {n_ack}；老师 {n_tea} 条）。"]
         parts.append(f"高频问题集中在：{ '、'.join(top_topics) }。" if top_topics else "未提取到明确知识点主题。")
         if att:
@@ -253,7 +321,6 @@ def main():
             parts.append(f"正向反馈 {pos} 处（致谢等礼貌用语，无需回复），关系良好。")
         summary = "".join(parts)
         todos = []
-        is_timeout = (str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True)
         hw_bad = hits(all_txt, ["没写", "没做", "不会做", "漏交"])
         att_bad = hits(all_txt, ["请假", "回放", "没来", "缺课"])
         # 命中的具体关键词（用于把 To-Do 写「具体」，避免千人一面）
@@ -267,8 +334,8 @@ def main():
         neg_s = "、".join(neg_kws[:3]) if neg_kws else "情绪波动"
         if is_edu:
             # 教务视角：To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」，并注入该生具体信息
-            if is_timeout:
-                todos.append(("高", f"响应超时 {g.get('timeoutDuration')}：第一时间联系家长说明并致歉，避免满意度下滑", "后台响应时效标记"))
+            if resp_slow:
+                todos.append(("高", f"{resp_at} 该生提问后约 {resp_max_h:.0f} 小时才获回复：主动向家长说明并同步答疑进展，避免满意度下滑", resp_evi))
             if unresolved:
                 todos.append(("高", f"该生仍有未闭环疑问{tp_s}，把跟进进展反馈家长，让家长看到服务闭环", unres_evi))
             if hw_bad > 0:
@@ -283,8 +350,8 @@ def main():
                 todos.append(("低", "常规家长沟通：同步学习近况、维护关系、铺垫续报", "无明显风险信号"))
         else:
             # 联席视角：To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」，同样注入具体信息
-            if is_timeout:
-                todos.append(("高", f"跟进超时未回复咨询（后台标记超时 {g.get('timeoutDuration')}）", "后台响应时效标记"))
+            if resp_slow:
+                todos.append(("高", f"{resp_at} 该生提问后约 {resp_max_h:.0f} 小时才回复：补一句追问确认问题已解决，避免悬空", resp_evi))
             if unresolved:
                 todos.append(("高", f"回复学生未解答疑问{tp_s}（{unresolved_at} 提问）", unres_evi))
             if hw_bad > 0:
@@ -306,6 +373,10 @@ def main():
             "top_topics": top_topics, "unresolved": unresolved,
             "unresolved_at": unresolved_at, "unresolved_q": unresolved_q,
             "unres_evi": unres_evi,
+            # 响应时效（聊天记录自算，弃用后台 isTimeout/isReplied）
+            "resp_n": resp_n, "resp_max_h": resp_max_h, "resp_slow": resp_slow,
+            "resp_slow_cnt": resp_slow_cnt, "resp_at": resp_at, "resp_q": resp_q,
+            "resp_pend_n": len(pend), "resp_evi": resp_evi,
             "summary": summary, "todos": todos,
         }
 

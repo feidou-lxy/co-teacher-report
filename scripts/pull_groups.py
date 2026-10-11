@@ -1,13 +1,14 @@
-"""步骤2：拉取该联席名下学生的群聊列表（含 roomId 与响应时效标记）。
+"""步骤2：拉取该联席名下学生的群聊列表（仅群标识信息）。
 
 逻辑：
   - wxworkSessionStat/getList 月维度覆盖「整月所有有聊天的群」（需传当月第一天；
     当前月后台未聚合，故月维度取窗口起始月，再用日维度补当前月）。
   - 用 students.json 里的学生姓名做交集，得到本联席的群。
 
-输出 <workdir>/groups.json ：[{roomId, studentName, groupName, isTimeout,
-timeoutDuration, coTeacherName, classTeacherName}]
-（注：「是否回复」不再采用后台 isReplied —— 该列实测存在误差；改为聊天记录分析结论，故此处不拉取该字段）
+输出 <workdir>/groups.json ：[{roomId, studentName, groupName,
+coTeacherName, classTeacherName}]
+（注：「是否回复」与「响应超时」均不再采用后台列 —— 实测与聊天事实不符；
+  统一由 extract.py 依据聊天记录自行推算，故此处不再拉取 isReplied / isTimeout / timeoutDuration）
 """
 import argparse
 import datetime
@@ -96,8 +97,8 @@ def main():
                 "roomId": g.get("roomId"),
                 "studentName": g.get("studentName"),
                 "groupName": g.get("groupName"),
-                "isTimeout": g.get("isTimeout"),
-                "timeoutDuration": g.get("timeoutDuration"),
+                # 注：不再采信后台 isTimeout / isReplied（响应时效），实测与聊天事实不符，
+                # 统一由 extract.py 依据聊天记录自行推算（见 resp_wait_stats）。
                 "coTeacherName": co_of.get(sn, ""),
                 "classTeacherName": edu_of.get(sn, ""),
             })

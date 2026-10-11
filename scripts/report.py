@@ -26,6 +26,8 @@ sys.path.insert(0, sys.path[0])
 import common
 
 WINDOW_DEFAULT = "2026-09-01"
+# 响应时效提示阈值（与 extract.py 的 RESP_WARN_H 保持一致）：≥12h 在卡片提示「最长响应等待」，不计定档
+RESP_WARN_H = 12.0
 
 
 def course_of(group_name):
@@ -83,6 +85,14 @@ def signal_strip(s):
         items.append((f"作业提及 {s['hw']} 次", ""))
     if s.get("pos"):
         items.append((f"礼貌回应 {s['pos']} 次", "ok"))
+    # 响应时效（聊天记录自算）：迟缓置顶警示，偏慢次之
+    if s.get("resp_slow"):
+        items.insert(0, (f"响应迟缓 {s.get('resp_max_h', 0):.0f} 小时", "bad"))
+    elif s.get("resp_max_h", 0) >= RESP_WARN_H:
+        _t = f"最长响应等待 {s.get('resp_max_h', 0):.0f} 小时"
+        if "已说明" in (s.get("resp_evi") or ""):
+            _t += "（已说明安排）"
+        items.insert(0, (_t, "warn"))
     if not items:
         return '<span class="si none">窗口内无明显风险信号</span>'
     return "".join(f'<span class="si {c}">{t}</span>' for t, c in items)
@@ -118,7 +128,8 @@ def coop_conclusion(s):
 
 def grade(r):
     s = r["s"]
-    if r["timeout"] or r["unreply"]:
+    # 红：「响应迟缓」（聊天记录自算的等待时长 ≥ 24h）或「需回复」（会话尾部仍有未获回应提问）
+    if s.get("resp_slow") or r["unreply"]:
         return "红", "重点跟进"
     if s["unresolved"] or s["neg"] > 0 or s.get("hw_neg", 0) > 0 or s.get("att_leave", 0) > 0:
         return "黄", "需关注"
@@ -181,11 +192,11 @@ def card_html(r, edu=False):
     gd, gd_label = grade(r)
     gdbadge = badge(gd_label, "red" if gd == "红" else ("orange" if gd == "黄" else "green"))
     status = ""
-    if r["timeout"]:
-        status += badge(f'超时 {g.get("timeoutDuration")}', "red")
+    if s.get("resp_slow"):
+        status += badge(f'响应迟缓 {s.get("resp_max_h", 0):.0f}小时', "red")
     if r["unreply"]:
         status += badge("需回复", "red")
-    if not r["timeout"] and not r["unreply"]:
+    if not s.get("resp_slow") and not r["unreply"]:
         status += badge("正常", "green")
     if s["unresolved"]:
         status += badge("有未解疑问", "orange")
@@ -324,7 +335,7 @@ th{color:#8a9099;font-weight:600}
 def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, edu=False):
     """构造一个分组区块（grp）。show_filter=True 时渲染「筛选联席」下拉（仅教务·按课程维度用）。
     edu=True（教务视角）：学生卡第④块为「教务 To-Do」；否则为「联席跟进 Action」。"""
-    c_timeout = sum(1 for r in crows if r["timeout"])
+    c_slow = sum(1 for r in crows if r["s"].get("resp_slow"))
     c_unres = sum(1 for r in crows if r["s"]["unresolved"])
     c_msgs = sum(r["s"]["n_text"] for r in crows)
     c_absent = sum(1 for r in crows if r["att"] and r["att"]["absentCount"] > 0)
@@ -352,13 +363,13 @@ def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, ed
   <div class="ckpis">
     <div class="kpi"><div class="n">{len(crows)}</div><div class="l">学生数</div></div>
     <div class="kpi"><div class="n">{c_msgs}</div><div class="l">可分析消息</div></div>
-    <div class="kpi red"><div class="n">{c_timeout}</div><div class="l">超时群</div></div>
+    <div class="kpi red"><div class="n">{c_slow}</div><div class="l">响应迟缓群</div></div>
     <div class="kpi orange"><div class="n">{c_unres}</div><div class="l">未解疑问群</div></div>
     <div class="kpi orange"><div class="n">{c_absent}</div><div class="l">有缺勤(后台)</div></div>
   </div>
   <div class="section"><h3>高频知识点（{title}）</h3>
     <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{topic_rows}</table></div>
-  <div class="section"><h3>逐学生表现 &amp; {todo_head}（超时置顶）</h3>{cards}</div>
+  <div class="section"><h3>逐学生表现 &amp; {todo_head}（需关注置顶）</h3>{cards}</div>
 </div>'''
 
 
@@ -378,19 +389,20 @@ def main():
     rows = []
     for stu, s in A.items():
         g = s["group"]
-        timeout = str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True
-        # 「是否需回复」不再依赖后台 isReplied（实测存在误差），改为聊天分析结论：会话尾部仍有未获回应提问
+        # 「是否需回复」「响应时效」均不再依赖后台列（isReplied / isTimeout 实测与聊天事实不符），
+        # 统一改用聊天记录分析结论：unresolved=会话尾部仍有未获回应提问；resp_slow=提问后 ≥24h 才见回复
         unreply = bool(s.get("unresolved"))
+        slow = bool(s.get("resp_slow"))
         course, course_raw = course_of(g.get("groupName", ""))
         co = g.get("coTeacherName") or "未分配联席"
-        score = (1 if timeout else 0, 1 if s["unresolved"] else 0, s["n_text"])
-        rows.append(dict(score=score, stu=stu, s=s, g=g, timeout=timeout,
+        score = (1 if slow else 0, 1 if s["unresolved"] else 0, s["n_text"])
+        rows.append(dict(score=score, stu=stu, s=s, g=g, slow=slow,
                          unreply=unreply, course=course, course_raw=course_raw,
                          co=co, att=s.get("att")))
     rows.sort(key=lambda x: (-x["score"][0], -x["score"][1], -x["score"][2]))
 
     total_msgs = sum(r["s"]["n_text"] for r in rows)
-    timeout_n = sum(1 for r in rows if r["timeout"])
+    slow_n = sum(1 for r in rows if r["slow"])
     unres_n = sum(1 for r in rows if r["s"]["unresolved"])
     glob_topic = Counter()
     for r in rows:
@@ -424,13 +436,13 @@ def main():
         course_tabs = ['<button class="tab active" onclick="showTab(\'course\',\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(course_order):
             n = len(by_course[ck])
-            t = sum(1 for r in by_course[ck] if r["timeout"])
-            course_tabs.append(f'<button class="tab" onclick="showTab(\'course\',\'c\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
+            t = sum(1 for r in by_course[ck] if r["slow"])
+            course_tabs.append(f'<button class="tab" onclick="showTab(\'course\',\'c\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}迟缓" or ""}</span></button>')
         co_tabs = ['<button class="tab active" onclick="showTab(\'co\',\'co\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(co_order):
             n = len(by_co[ck])
-            t = sum(1 for r in by_co[ck] if r["timeout"])
-            co_tabs.append(f'<button class="tab" onclick="showTab(\'co\',\'co\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
+            t = sum(1 for r in by_co[ck] if r["slow"])
+            co_tabs.append(f'<button class="tab" onclick="showTab(\'co\',\'co\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}迟缓" or ""}</span></button>')
 
         dim_bar = '''<div class="dimswitch">
   <span class="dimlabel">查看维度：</span>
@@ -457,8 +469,8 @@ def main():
         course_tabs = ['<button class="tab active" onclick="showTab(\'course\',\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(course_order):
             n = sum(1 for r in rows if r["course"] == ck)
-            t = sum(1 for r in rows if r["course"] == ck and r["timeout"])
-            course_tabs.append(f'<button class="tab" onclick="showTab(\'course\',\'c\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
+            t = sum(1 for r in rows if r["course"] == ck and r["slow"])
+            course_tabs.append(f'<button class="tab" onclick="showTab(\'course\',\'c\',{ci})" title="{ck}"><span class="tname">{ck}</span><span class="tcount">{n}人{t and f" · {t}迟缓" or ""}</span></button>')
         panels = f'''<div class="dim-panel" id="dim-course">
   <div class="tabs">{''.join(course_tabs)}</div>
   {''.join(course_sections)}
@@ -476,7 +488,7 @@ def main():
 <div class="kpis">
   <div class="kpi"><div class="n">{len(rows)}</div><div class="l">负责学生（全量）</div></div>
   <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
-  <div class="kpi red"><div class="n">{timeout_n}</div><div class="l">超时群</div></div>
+  <div class="kpi red"><div class="n">{slow_n}</div><div class="l">响应迟缓群（聊天分析）</div></div>
   <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
 </div>
 <div class="searchbar">
@@ -496,8 +508,9 @@ def main():
 • 请假备注：仅摘录学生在群内自述的请假/看回放缘由，后台无请假原因字段，具体以教务记录为准。<br>
 • 报告结构（{role_cn}视角）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 知识掌握与薄弱点；④ {role_cn} To-Do（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ''}<br>
 • 配合度（结论式）：依据 学生本人发言密度/主动提问 与 家长代交/代沟通措辞 综合判定类型（如“家长推着走”型 / 放手培养型），数据源未区分发言者 ID，为启发式估算，供跟进策略参考。<br>
-• 定档规则：🔴 红=后台标记响应超时，或聊天分析存在未闭环疑问/负面情绪；🟡 黄=有未解疑问、作业负面信号、出勤异常或负面情绪；🟢 绿=其余正常推进。响应时效（超时）按监管维度计入定档。<br>
+• 定档规则：🔴 红=聊天分析判定「响应迟缓」（学生提问后 ≥24 小时才见老师回复）或「需回复」（会话尾部仍有未获回应提问），或存在未闭环疑问/负面情绪；🟡 黄=有未解疑问、作业负面信号、出勤异常或负面情绪；🟢 绿=其余正常推进。<br>
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
+• 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
 </p></div>
 </div>
 <script>
