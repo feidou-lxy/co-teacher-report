@@ -172,7 +172,7 @@ def card_html(r, edu=False):
     cadence_label = "沟通节奏" if edu else "追踪节奏"
     imp = IMPROVE.get(s["top_topics"][0], "该生相关薄弱点正确率提升、疑问闭环") if s["top_topics"] else "学生整体状态稳定"
     return f"""
-    <div class="card" data-co="{co}">
+    <div class="card" data-co="{co}" data-name="{r['stu']}">
       <div class="chead">
         <div class="cname">{r['stu']}</div>
         <div class="cgroup">{r['course_raw']}{co_tag}</div>
@@ -269,6 +269,11 @@ th{color:#8a9099;font-weight:600}
 .cofilterwrap{margin:4px 0 16px;font-size:13px;color:#3a5bdb;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .cofilter{font-size:13px;padding:6px 10px;border:1px solid #d8dce3;border-radius:8px;color:#1f2329;background:#fff;min-width:200px}
 .cofilterwrap .cnt{font-size:12px;color:#8a9099;font-weight:400}
+.searchbar{display:flex;gap:10px;align-items:center;margin:0 0 16px;background:#fff;border:1px solid #e6e8eb;border-radius:12px;padding:12px 16px}
+.searchinp{font-size:14px;padding:9px 14px;border:1px solid #d8dce3;border-radius:10px;min-width:300px;outline:none;color:#1f2329}
+.searchinp:focus{border-color:#3a5bdb;box-shadow:0 0 0 3px #eef2ff}
+.searchcnt{font-size:12px;color:#8a9099;font-weight:600}
+.searchclear{font-size:12px;color:#3a5bdb;cursor:pointer;border:none;background:none;padding:4px 8px}
 """
 
 
@@ -431,6 +436,11 @@ def main():
   <div class="kpi red"><div class="n">{unreply_n}</div><div class="l">未回复群</div></div>
   <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">未解疑问群</div></div>
 </div>
+<div class="searchbar">
+  <input id="stuSearch" class="searchinp" type="text" placeholder="🔍 输入学生姓名搜索（当前维度内实时筛选）" oninput="doSearch(this.value)">
+  <span class="searchcnt" id="searchCnt"></span>
+  <button class="searchclear" onclick="document.getElementById('stuSearch').value='';doSearch('')">清空</button>
+</div>
 {panels}
 <div class="section"><h2>三、整体画像：高频知识点（全量）</h2>
   <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{glob_topic_rows}</table></div>
@@ -454,7 +464,9 @@ function showDim(d){{
   var b=document.querySelector('.dimb[data-d="'+d+'"]'); if(b) b.classList.add('active');
   showTab(d, d==='co'?'co':'c', -1);
 }}
+var lastIdx={{course:-1, co:-1}};
 function showTab(panel, prefix, idx){{
+  lastIdx[panel]=idx;
   var pn=document.getElementById('dim-'+panel); if(!pn) return;
   pn.querySelectorAll('.grp').forEach(function(el){{el.style.display='none';}});
   pn.querySelectorAll('.tab').forEach(function(el){{el.classList.remove('active');}});
@@ -469,6 +481,32 @@ function coFilter(sel){{
   sec.querySelectorAll('.card').forEach(function(c){{
     c.style.display = (v==='__all__' || c.getAttribute('data-co')===v) ? 'block' : 'none';
   }});
+}}
+function doSearch(val){{
+  var q=(val||'').trim().toLowerCase();
+  var activeDim=document.querySelector('.dimb.active');
+  var dim=activeDim?activeDim.getAttribute('data-d'):'course';
+  var panel=document.getElementById('dim-'+dim); if(!panel) return;
+  var cnt=document.getElementById('searchCnt');
+  if(q===''){{
+    showTab(dim, dim==='co'?'co':'c', lastIdx[dim]);
+    if(cnt) cnt.textContent='';
+    return;
+  }}
+  // 搜索时展开该维度所有分组（跨 Tab），再按姓名过滤
+  panel.querySelectorAll('.grp').forEach(function(g){{ g.style.display='block'; }});
+  var n=0;
+  panel.querySelectorAll('.card').forEach(function(c){{
+    var nm=(c.getAttribute('data-name')||'').toLowerCase();
+    if(nm.indexOf(q)>=0){{ c.style.display='block'; n++; }}
+    else {{ c.style.display='none'; }}
+  }});
+  // 隐藏没有匹配学生的空分组
+  panel.querySelectorAll('.grp').forEach(function(g){{
+    var any=[].slice.call(g.querySelectorAll('.card')).some(function(c){{ return c.style.display!=='none'; }});
+    if(!any) g.style.display='none';
+  }});
+  if(cnt) cnt.textContent='匹配到 '+n+' 名学生（当前维度）';
 }}
 </script>
 </body></html>"""
