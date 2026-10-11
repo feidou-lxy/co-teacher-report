@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>联席学情报告 · 操作手册</title>
+<title>学生学情报告 · 操作手册</title>
 <style>
   :root{ --blue:#3a5bdb; --blue2:#5b78ff; --ink:#1f2329; --sub:#6b7280; --line:#e6e8eb; --ok:#2ba471; --warn:#ff8f1f; --bg:#f5f6f8; }
   *{box-sizing:border-box;}
@@ -42,8 +42,8 @@
 <body>
 <div class="page">
   <div class="head">
-    <h1>联席学情报告 · 操作手册</h1>
-    <p>3 步出报告，全程只用跟 WorkBuddy 说话，不用写代码</p>
+    <h1>学生学情报告 · 操作手册</h1>
+    <p>3 步出报告（联席 / 教务双视角），全程只用跟 WorkBuddy 说话，不用写代码</p>
     <span class="tag">🗣️ 对话驱动</span>
     <span class="tag">🔑 自动登录取凭证</span>
     <span class="tag">📊 出 HTML + Excel</span>
@@ -53,6 +53,7 @@
     <div class="lead">
       你只需要做三件事：<b>让 WorkBuddy 登录后台 → 让它装技能 → 告诉它查谁、查哪个月</b>。
       所有取数、分析、排版都由技能自动完成。请使用<b>你自己的后台账号</b>，不要和他人共用。
+      <br>可查<b>联席</b>（某联席名下学生，按课程切换）或<b>教务</b>（某教务管辖的全部学生，按下属联席下钻）。
     </div>
 
     <!-- 第 0 步 -->
@@ -98,19 +99,24 @@
         <h3>生成报告（查谁、查哪个月）</h3>
         <span class="when">每次出报告</span>
       </div>
-      <p>在<strong>新对话</strong>里，把联席姓名和月份告诉 WorkBuddy 即可。</p>
+      <p>在<strong>新对话</strong>里，把姓名、角色（联席 / 教务）和月份告诉 WorkBuddy 即可。</p>
       <div class="say">
-        <div class="lbl">你对 WorkBuddy 说：</div>
-        <div class="txt">用 co-teacher-report 技能，生成 <b>张巍</b> <b>2026年9月</b> 的学情报告</div>
+        <div class="lbl">你对 WorkBuddy 说（联席视角）：</div>
+        <div class="txt">用 co-teacher-report 技能，生成 <b>张巍</b>（联席） <b>2026年9月</b> 的学情报告</div>
+      </div>
+      <div class="say">
+        <div class="lbl">你对 WorkBuddy 说（教务视角）：</div>
+        <div class="txt">用 co-teacher-report 技能，生成 <b>罗绂燕</b>（教务） <b>2026年9月</b> 的学情报告</div>
       </div>
       <div class="tip">
-        换人 / 换月：只改名字和月份，其它不变。例如查「李娜 2026年10月」就照说。
-        技能会自动拉群聊 + 出勤，几分钟后给你两份文件。
+        换人 / 换月：只改名字和月份，其它不变。例如查「李娜（联席）2026年10月」就照说。
+        教务视角会一次性拉出该教务管辖的全部学生（跨多个下属联席），报告按联席分组下钻，便于横向对比各联席学情。
+        技能自动拉群聊 + 出勤，几分钟后给你两份文件。
       </div>
       <div class="out">
         <b>你会拿到：</b><br>
-        • <b>&lt;联席&gt;_学情分析报告.html</b> —— 彩色报告，可切换课程查看（速览 / 出勤 / 薄弱点 / 跟进动作）<br>
-        • <b>&lt;联席&gt;_学生待办清单.xlsx</b> —— 总览 + 待办 + 出勤明细，可直接下发
+        • <b>&lt;姓名&gt;_学情分析报告.html</b> —— 彩色报告（联席按课程切换 / 教务按下属联席下钻；速览 / 出勤 / 薄弱点 / 跟进动作）<br>
+        • <b>&lt;姓名&gt;_学生待办清单.xlsx</b> —— 总览 + 待办 + 出勤明细（含所属联席列），可直接下发
       </div>
     </div>
 
@@ -123,7 +129,7 @@
       </ul>
     </div>
 
-    <div class="foot">联席学情报告技能 · 操作手册 ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
+    <div class="foot">学生学情报告技能 · 操作手册 ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
   </div>
 </div>
 </body>

@@ -1,6 +1,10 @@
 """步骤10：生成待办清单 Excel（3 个 sheet：学生群总览 / 联席待办清单 / 出勤明细）。
 
-读取 analysis_merged.json，输出 <workdir>/<联席>_学生待办清单.xlsx。
+支持两种视角（--co 联席 / --edu 教务）：
+  - 总览 sheet 增加「所属联席」列；
+  - 待办清单 sheet 按视角分组：教务视角按「联席」分组排序，联席视角按「课程」分组排序。
+
+读取 analysis_merged.json，输出 <workdir>/<姓名>_学生待办清单.xlsx。
 依赖 openpyxl（在 WorkBuddy 受管 Python 的 venv 里安装：pip install openpyxl）。
 """
 import argparse
@@ -80,8 +84,12 @@ def att_short(a):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", required=True)
+    ap.add_argument("--co", default=None)
+    ap.add_argument("--edu", default=None)
     args = ap.parse_args()
+    role, name = common.resolve_scope(args)
+    is_edu = role == "edu"
+    role_cn = "教务" if is_edu else "联席"
     wd = common.workdir(args)
     A = json.load(open(f"{wd}/analysis_merged.json", encoding="utf-8"))
 
@@ -101,7 +109,7 @@ def main():
     wrap = Alignment(wrap_text=True, vertical="top")
 
     ws = wb.active; ws.title = "学生群总览"
-    cols = ["序号", "学生", "群名", "课程", "定档", "回复状态", "超时状态", "超时时长", "近窗起", "近窗止",
+    cols = ["序号", "学生", "群名", "课程", "所属联席", "定档", "回复状态", "超时状态", "超时时长", "近窗起", "近窗止",
             "可分析消息", "生/家长消息", "师消息", "语音条", "配合度结论",
             "出勤(后台)", "是否需关注", "请假备注(聊天)", "高频知识点", "近期未解疑问"]
     ws.append(cols)
@@ -110,7 +118,7 @@ def main():
     for i, (_, stu, s, g, timeout, unreply) in enumerate(rows, 1):
         att_txt, att_flag = att_short(s.get("att"))
         ws.append([
-            i, stu, g.get("groupName", ""), course_of(g.get("groupName", "")),
+            i, stu, g.get("groupName", ""), course_of(g.get("groupName", "")), g.get("coTeacherName", ""),
             grade(s, timeout, unreply),
             "未回复" if unreply else "已回复",
             "超时" if timeout else "正常", g.get("timeoutDuration", "") if timeout else "",
@@ -123,29 +131,33 @@ def main():
         for c in range(1, len(cols) + 1):
             ws.cell(r, c).border = border; ws.cell(r, c).alignment = wrap
     ws.freeze_panes = "A2"
-    widths = {"A": 5, "B": 13, "C": 30, "D": 24, "E": 7, "F": 9, "G": 9, "H": 11,
-              "I": 11, "J": 11, "K": 9, "L": 11, "M": 8, "N": 8, "O": 34,
-              "P": 16, "Q": 16, "R": 32, "S": 20, "T": 10}
+    widths = {"A": 5, "B": 13, "C": 30, "D": 24, "E": 12, "F": 7, "G": 9, "H": 9, "I": 11,
+              "J": 11, "K": 11, "L": 9, "M": 11, "N": 8, "O": 8, "P": 34,
+              "Q": 16, "R": 16, "S": 32, "T": 20, "U": 10}
     for k, v in widths.items():
         ws.column_dimensions[k].width = v
 
     ws2 = wb.create_sheet("联席待办清单")
-    cols2 = ["序号", "课程", "学生", "定档", "出勤(后台)", "是否需关注", "优先级", "To-Do 动作", "依据", "群名", "超时时长"]
+    cols2 = ["序号", ("联席" if is_edu else "课程"), "学生", "定档", "出勤(后台)", "是否需关注", "优先级", "To-Do 动作", "依据", "群名", "超时时长"]
     ws2.append(cols2)
     for c in range(1, len(cols2) + 1):
         cell = ws2.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
     pri_fill = {"高": PatternFill("solid", fgColor="FDECEC"), "中": PatternFill("solid", fgColor="FFF3E0"), "低": PatternFill("solid", fgColor="EEF2F5")}
     idx = 0
     todo_rows = []
+
+    def todo_group(g):
+        return (g.get("coTeacherName") or "未分配联席") if is_edu else course_of(g.get("groupName", ""))
+
     for _, stu, s, g, timeout, unreply in rows:
         att_txt, att_flag = att_short(s.get("att"))
         for p, a, b in s["todos"]:
-            todo_rows.append((course_of(g.get("groupName", "")), stu, p, a, b, g.get("groupName", ""),
+            todo_rows.append((todo_group(g), stu, p, a, b, g.get("groupName", ""),
                              g.get("timeoutDuration", "") if timeout else "", grade(s, timeout, unreply), att_txt, att_flag))
     todo_rows.sort(key=lambda x: (x[0], {"高": 0, "中": 1, "低": 2}.get(x[2], 3), x[1]))
-    for course, stu, p, a, b, gn, td, gd, att_txt, att_flag in todo_rows:
+    for grp, stu, p, a, b, gn, td, gd, att_txt, att_flag in todo_rows:
         idx += 1
-        ws2.append([idx, course, stu, gd, att_txt, att_flag, p, a, b, gn, td])
+        ws2.append([idx, grp, stu, gd, att_txt, att_flag, p, a, b, gn, td])
         r = ws2.max_row
         for c in range(1, len(cols2) + 1):
             ws2.cell(r, c).border = border; ws2.cell(r, c).alignment = wrap
@@ -175,9 +187,9 @@ def main():
     for k, v in w3.items():
         ws3.column_dimensions[k].width = v
 
-    out = f"{wd}/{args.co}_学生待办清单.xlsx"
+    out = f"{wd}/{name}_学生待办清单.xlsx"
     wb.save(out)
-    print(f"✅ XLSX 生成完成 ｜ 总览 {len(rows)} 行 ｜ 待办 {idx} 项 ｜ {out}")
+    print(f"✅ XLSX 生成完成（{role_cn}视角）｜ 总览 {len(rows)} 行 ｜ 待办 {idx} 项 ｜ {out}")
 
 
 if __name__ == "__main__":

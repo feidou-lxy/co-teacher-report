@@ -1,6 +1,10 @@
-"""步骤9：生成「联席视角」学情报告 HTML（4 块结构 + 按课程 Tab 切换）。
+"""步骤9：生成学情报告 HTML（4 块结构 + Tab 切换）。
 
-读取 analysis_merged.json，输出 <workdir>/<联席>_学情分析报告.html。
+支持两种视角：
+  - 联席视角（--co）：按「课程」分组切换（默认行为）。
+  - 教务视角（--edu）：按「联席」分组下钻，每 Tab 对应一名下属联席，学生卡标注所属联席。
+
+读取 analysis_merged.json，输出 <workdir>/<姓名>_学情分析报告.html。
 
 报告结构（每张学生卡）：
   ① 速览卡（定档 + 配合度结论式 + 最该盯 1 件事 + 一句话总评）
@@ -129,8 +133,10 @@ def att_block(r):
     </div>'''
 
 
-def card_html(r):
+def card_html(r, edu=False):
     s, g = r["s"], r["g"]
+    co_tag = (f'<span class="ctag">联席：{g.get("coTeacherName") or "—"}</span>'
+              if edu else "")
     topics = "".join(f'<span class="chip">{t}</span>' for t in s["top_topics"]) or '<span class="chip">—</span>'
     errs = [ERR_MAP[t] for t in s["top_topics"] if t in ERR_MAP]
     err_html = "、".join(errs) if errs else "—"
@@ -162,7 +168,7 @@ def card_html(r):
     <div class="card">
       <div class="chead">
         <div class="cname">{r['stu']}</div>
-        <div class="cgroup">{r['course_raw']}</div>
+        <div class="cgroup">{r['course_raw']}{co_tag}</div>
         <div class="cstatus">{gdbadge}{status}</div>
       </div>
       <div class="cmeta">近窗 {s['oldest'][:10]} ~ {s['newest'][:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
@@ -208,6 +214,7 @@ th{color:#8a9099;font-weight:600}
 .chead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .cname{font-size:17px;font-weight:700}
 .cgroup{font-size:12px;color:#8a9099}
+.ctag{display:inline-block;font-size:11px;color:#3a5bdb;background:#eef2ff;padding:1px 7px;border-radius:8px;margin-left:6px}
 .cstatus{margin-left:auto}
 .cmeta{font-size:12px;color:#8a9099;margin:6px 0}
 .chips{margin:6px 0}
@@ -253,9 +260,13 @@ th{color:#8a9099;font-weight:600}
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", required=True)
+    ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
+    ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
     ap.add_argument("--window", default=WINDOW_DEFAULT)
     args = ap.parse_args()
+    role, name = common.resolve_scope(args)
+    is_edu = role == "edu"
+    role_cn = "教务" if is_edu else "联席"
     wd = common.workdir(args)
     A = json.load(open(f"{wd}/analysis_merged.json", encoding="utf-8"))
 
@@ -265,12 +276,15 @@ def main():
         timeout = str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True
         unreply = str(g.get("isReplied")) == "0" or g.get("isReplied") is False
         course, course_raw = course_of(g.get("groupName", ""))
+        # 分组维度：教务视角按「联席」下钻；联席视角按「课程」切换
+        gkey = (g.get("coTeacherName") or "未分配联席") if is_edu else course
         score = (1 if timeout else 0, 1 if s["unresolved"] else 0, s["n_text"])
         rows.append(dict(score=score, stu=stu, s=s, g=g, timeout=timeout,
-                         unreply=unreply, course=course, course_raw=course_raw, att=s.get("att")))
+                         unreply=unreply, course=course, course_raw=course_raw,
+                         gkey=gkey, att=s.get("att")))
     rows.sort(key=lambda x: (-x["score"][0], -x["score"][1], -x["score"][2]))
-    course_counter = Counter(r["course"] for r in rows)
-    course_order = [c for c, _ in course_counter.most_common()]
+    group_counter = Counter(r["gkey"] for r in rows)
+    group_order = [k for k, _ in group_counter.most_common()]
 
     total_msgs = sum(r["s"]["n_text"] for r in rows)
     timeout_n = sum(1 for r in rows if r["timeout"])
@@ -281,9 +295,9 @@ def main():
         for t in r["s"]["top_topics"]:
             glob_topic[t] += 1
 
-    course_sections = []
-    for ci, course in enumerate(course_order):
-        crows = [r for r in rows if r["course"] == course]
+    group_sections = []
+    for ci, gkey in enumerate(group_order):
+        crows = [r for r in rows if r["gkey"] == gkey]
         c_timeout = sum(1 for r in crows if r["timeout"])
         c_unres = sum(1 for r in crows if r["s"]["unresolved"])
         c_msgs = sum(r["s"]["n_text"] for r in crows)
@@ -295,8 +309,9 @@ def main():
         topic_rows = "".join(
             f"<tr><td>{t}</td><td>{c}</td><td>{round(100*c/len(crows))}%</td></tr>"
             for t, c in c_topic.most_common())
-        cards = "".join(card_html(r) for r in crows)
-        course_sections.append(f"""
+        gtitle = f"联席：{gkey}" if is_edu else gkey
+        cards = "".join(card_html(r, edu=is_edu) for r in crows)
+        group_sections.append(f"""
     <div class="course-sec" id="course-{ci}" {'style="display:none"' if ci>0 else ''}>
       <div class="ckpis">
         <div class="kpi"><div class="n">{len(crows)}</div><div class="l">学生数</div></div>
@@ -305,16 +320,16 @@ def main():
         <div class="kpi orange"><div class="n">{c_unres}</div><div class="l">未解疑问群</div></div>
         <div class="kpi orange"><div class="n">{c_absent}</div><div class="l">有缺勤(后台)</div></div>
       </div>
-      <div class="section"><h3>高频知识点（本课程）</h3>
+      <div class="section"><h3>高频知识点（{gtitle}）</h3>
         <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{topic_rows}</table></div>
       <div class="section"><h3>逐学生表现 &amp; 联席 To-Do（超时置顶）</h3>{cards}</div>
     </div>""")
 
     tabs = ['<button class="tab active" onclick="showCourse(-1)">📊 全部（{0}）</button>'.format(len(rows))]
-    for ci, course in enumerate(course_order):
-        n = course_counter[course]
-        t = sum(1 for r in rows if r["course"] == course and r["timeout"])
-        tabs.append(f'<button class="tab" onclick="showCourse({ci})" title="{course}">{course}<br><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
+    for ci, gkey in enumerate(group_order):
+        n = group_counter[gkey]
+        t = sum(1 for r in rows if r["gkey"] == gkey and r["timeout"])
+        tabs.append(f'<button class="tab" onclick="showCourse({ci})" title="{gkey}">{gkey}<br><span class="tcount">{n}人{t and f" · {t}超时" or ""}</span></button>')
     tabs_html = "".join(tabs)
 
     glob_topic_rows = "".join(
@@ -324,11 +339,11 @@ def main():
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{args.co}（联席）学生学情分析报告 · 按课程</title>
+<title>{name}（{role_cn}）学生学情分析报告</title>
 <style>{CSS}</style></head>
 <body><div class="wrap">
-<h1>{args.co}（联席）· 学生学情分析报告（按课程切换）</h1>
-<div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：高二数学 ｜ 角色：联席 ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+<h1>{name}（{role_cn}）· 学生学情分析报告（按{'联席' if is_edu else '课程'}切换）</h1>
+<div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：高二数学 ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 <div class="kpis">
   <div class="kpi"><div class="n">{len(rows)}</div><div class="l">负责学生（全量）</div></div>
   <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
@@ -341,17 +356,17 @@ def main():
   <div class="section"><h2>一、整体画像：高频知识点</h2>
   <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{glob_topic_rows}</table></div>
   <div class="section"><h2>二、全部学生表现总结 &amp; 联席 To-Do（超时群置顶）</h2>
-  {''.join(card_html(r) for r in rows)}</div>
+  {''.join(card_html(r, edu=is_edu) for r in rows)}</div>
 </div>
-{''.join(course_sections)}
+{''.join(group_sections)}
 <div class="section"><h2>三、方法论与口径说明</h2>
 <p class="note">
-• 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该联席全部学生群；<code>wxworkChat/getChatList</code> 取每群最近消息（倒序，单群上限 500 条），文本与语音转写均纳入。<br>
+• 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}全部学生群；<code>wxworkChat/getChatList</code> 取每群最近消息（倒序，单群上限 500 条），文本与语音转写均纳入。<br>
 • 分析窗口：仅分析 <b>{args.window} 至今</b>的聊天内容。<br>
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
 • 出勤判定：「是否需关注」规则 —— 全缺 → 🔴 高风险建议电话；缺 ≥2 节 或 “缺了且未看回放” → 🔴 需关注；缺 1 节未看回放 → 🟡 轻关注；缺 1 节但已看回放 / 全勤 → 🟢 常规。<b>出勤为独立提示，不改变红黄绿定档。</b><br>
 • 请假备注：仅摘录学生在群内自述的请假/看回放缘由，后台无请假原因字段，具体以教务记录为准。<br>
-• 报告结构（联席视角）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 知识掌握与薄弱点；④ 联席跟进 Action（优先级动作＋追踪节奏＋改善信号）。<br>
+• 报告结构（{role_cn}视角）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 知识掌握与薄弱点；④ 联席跟进 Action（优先级动作＋追踪节奏＋改善信号）。{'教务视角下按「联席」分组下钻，每 Tab 对应一名下属联席，学生卡标注所属联席。' if is_edu else ''}<br>
 • 配合度（结论式）：依据 学生本人发言密度/主动提问 与 家长代交/代沟通措辞 综合判定类型（如“家长推着走”型 / 放手培养型），数据源未区分发言者 ID，为启发式估算，供跟进策略参考。<br>
 • 定档规则：🔴 红=后台标记超时或未回复，或聊天有未闭环关键疑问/负面情绪；🟡 黄=有未解疑问、作业负面信号、出勤异常或负面情绪；🟢 绿=其余正常推进。响应时效（超时/未回复）按监管维度计入定档。<br>
 </p></div>
@@ -368,9 +383,9 @@ function showCourse(idx){{
 }}
 </script>
 </body></html>"""
-    out = f"{wd}/{args.co}_学情分析报告.html"
+    out = f"{wd}/{name}_学情分析报告.html"
     open(out, "w", encoding="utf-8").write(html)
-    print(f"✅ HTML 生成完成 ｜ 课程数 {len(course_order)} ｜ {out}")
+    print(f"✅ HTML 生成完成 ｜ {'联席' if is_edu else '课程'}数 {len(group_order)} ｜ {out}")
 
 
 if __name__ == "__main__":

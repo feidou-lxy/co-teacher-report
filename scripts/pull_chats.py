@@ -31,11 +31,13 @@ def get_chat(token, room, ps=500):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", required=True)
+    ap.add_argument("--co", default=None)
+    ap.add_argument("--edu", default=None)
     args = ap.parse_args()
     wd = common.workdir(args)
     token = common.load_token(wd)
     groups = json.load(open(f"{wd}/groups.json", encoding="utf-8"))
+    scope = args.edu or args.co or "未指定"
 
     result = {}
     total = 0

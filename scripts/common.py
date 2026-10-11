@@ -40,6 +40,32 @@ def post(path, body, token, timeout=60):
     return api("POST", path, token, body, timeout=timeout)
 
 
+ROLE_LABEL = {"co": "联席", "edu": "教务"}
+SCOPE_FIELD = {"co": "coTeacherName", "edu": "classTeacherName"}
+
+
+def resolve_scope(args):
+    """解析查询角色：--co <联席名> 或 --edu <教务名>，二者只能选一。
+
+    返回 (role, name)，role ∈ {'co','edu'}。
+    后台把「教务」存在 classTeacherName 字段（响应时效页的「教务」列即此）。
+    """
+    co = (getattr(args, "co", None) or "").strip()
+    edu = (getattr(args, "edu", None) or "").strip()
+    if co and edu:
+        raise SystemExit("--co 与 --edu 只能二选一（联席视角 / 教务视角）。")
+    if edu:
+        return "edu", edu
+    if co:
+        return "co", co
+    raise SystemExit("必须指定 --co <联席名>（联席视角）或 --edu <教务名>（教务视角）。")
+
+
+def scope_field(role):
+    """该角色在学生花名册/出勤表里对应的过滤字段名。"""
+    return SCOPE_FIELD.get(role, "coTeacherName")
+
+
 def norm_name(s):
     """姓名归一化：去尾部数字后缀（如「曾忻怡3662」→「曾忻怡」），去空格。"""
     import re

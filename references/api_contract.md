@@ -31,8 +31,9 @@
 - `productName` 课程产品名（如 `2026Q-SX-高二数学985层进化班六D谢胡`）
 - `productStudentId` 产品-学生 ID（详情接口用）
 - `ProductId` 课程产品 ID（出勤接口用）
-- `coTeacherName` **联席姓名**（按此字段过滤得到某联席的学生）
-- `teacherName` / `classTeacherName` 主讲 / 班主
+- `coTeacherName` **联席姓名**（联席视角按此字段过滤得到某联席的学生）
+- `classTeacherName` **教务姓名**（教务视角按此字段过滤，得到该教务管辖的全部学生，跨多个下属联席；响应时效页的「教务」列即此字段）
+- `teacherName` 主讲
 
 ---
 

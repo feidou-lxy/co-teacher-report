@@ -19,7 +19,8 @@ import common
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", required=True)
+    ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
+    ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
     args = ap.parse_args()
     wd = common.workdir(args)
     token = common.load_token(wd)
@@ -30,7 +31,8 @@ def main():
         pid = x.get("ProductId")
         if pid and pid not in pids:
             pids.append(pid)
-    print(f"该联席涉及课程 ProductId {len(pids)} 个：{pids}")
+    scope = args.edu or args.co or "未指定"
+    print(f"{'教务' if args.edu else '联席'}「{scope}」涉及课程 ProductId {len(pids)} 个：{pids}")
 
     all_rows = []
     for pid in pids:
@@ -50,11 +52,13 @@ def main():
         print(f"  productId={pid} fetched={got}")
         time.sleep(0.1)
 
-    co = args.co.strip()
-    rows = [r for r in all_rows if (r.get("coTeacherName") or "").strip() == co]
+    # 按学生白名单过滤：students.json 已按角色（联席/教务）筛选，名字集合即本角色学生。
+    # 教务视角下学生跨多个联席，不能用单一 coTeacherName 过滤，按姓名集合过滤两种视角都正确。
+    names = set(common.norm_name(x["stuName"]) for x in students)
+    rows = [r for r in all_rows if common.norm_name(r.get("studentName")) in names]
     json.dump(rows, open(f"{wd}/attendance_raw.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
-    print(f"\n✅ 原始出勤行 {len(all_rows)} -> 本联席 {len(rows)} 行 -> attendance_raw.json")
+    print(f"\n✅ 原始出勤行 {len(all_rows)} -> 本角色 {len(rows)} 行 -> attendance_raw.json")
 
 
 if __name__ == "__main__":
