@@ -4,6 +4,10 @@
 提取：薄弱知识点、出勤/作业/提问/情绪信号、配合度（学生自驱 vs 家长支持，启发式）、
 未闭环疑问、总评与待办。配合度数据源未区分发言者 ID，为启发式估算。
 
+To-Do 按角色生成（--co 联席 / --edu 教务）：
+  - 联席：面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」；
+  - 教务：面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」。
+
 输出 <workdir>/analysis.json ：{ studentName: {...} }
 """
 import argparse
@@ -58,8 +62,12 @@ def hits(text, kws):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
+    ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
+    ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
     ap.add_argument("--window", default=WINDOW_DEFAULT, help="分析窗口起点 YYYY-MM-DD")
     args = ap.parse_args()
+    role = common.resolve_scope(args)[0]
+    is_edu = role == "edu"
     wd = common.workdir(args)
     CUT = args.window
     d = json.load(open(f"{wd}/chats.json", encoding="utf-8"))
@@ -71,6 +79,9 @@ def main():
         texts = [(m.get("role"), get_text(m)) for m in msgs]
         texts = [(r, t) for r, t in texts if t]
         if not texts:
+            empty_todos = ([("低", "暂无可分析互动，主动联系家长了解学生近况与续报意愿", "窗口内无聊天")]
+                           if is_edu else
+                           [("低", "维持常规跟进，关注后续作业与提问", "窗口内无聊天")])
             students[stu] = {
                 "group": g, "n_text": 0, "n_stu": 0, "n_tea": 0, "voice": 0,
                 "newest": None, "oldest": None, "att": 0, "hw": 0, "q": 0,
@@ -78,7 +89,7 @@ def main():
                 "student_coop": 0, "parent_coop": 0, "top_topics": [],
                 "unresolved": False,
                 "summary": f"{CUT} 起该群无可分析聊天记录（窗口内无互动）。",
-                "todos": [("低", "维持常规跟进，关注后续作业与提问", "窗口内无聊天")],
+                "todos": empty_todos,
             }
             continue
         stu_txt = [t for r, t in texts if r == 2]
@@ -125,18 +136,39 @@ def main():
             parts.append(f"正向反馈 {pos} 处（致谢/配合），关系良好。")
         summary = "".join(parts)
         todos = []
-        if str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True:
-            todos.append(("高", f"跟进超时未回复咨询（后台标记超时 {g.get('timeoutDuration')}）", "后台响应时效标记"))
-        if unresolved:
-            todos.append(("高", "回复学生近期提出的未解答疑问", "会话尾部存在未获回应提问"))
-        if hw and (hits(all_txt, ["没写", "没做", "不会做", "漏交"]) > 0):
-            todos.append(("中", "针对作业未完成/不会做进行辅导或订正跟进", "作业相关负面信号"))
-        if att and (hits(all_txt, ["请假", "回放", "没来", "缺课"]) > 0):
-            todos.append(("中", "确认出勤与请假情况，必要时补回放/补课", "出勤相关信号"))
-        if q >= 5:
-            todos.append(("中", "整理该生高频疑问，统一集中答疑一次", f"学生疑问密度高（{q} 处）"))
-        if not todos:
-            todos.append(("低", "维持常规跟进，关注下次作业与提问", "无明显风险信号"))
+        is_timeout = (str(g.get("isTimeout")) == "1" or g.get("isTimeout") is True)
+        hw_bad = hits(all_txt, ["没写", "没做", "不会做", "漏交"])
+        att_bad = hits(all_txt, ["请假", "回放", "没来", "缺课"])
+        if is_edu:
+            # 教务视角：To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」
+            if is_timeout:
+                todos.append(("高", f"响应超时：第一时间联系家长说明并致歉，避免满意度下滑（后台标记超时 {g.get('timeoutDuration')}）", "后台响应时效标记"))
+            if unresolved:
+                todos.append(("高", "将该生未解答疑问的跟进进展反馈家长，让家长看到服务闭环", "会话尾部存在未获回应提问"))
+            if hw and hw_bad > 0:
+                todos.append(("中", "就作业完成情况与家长沟通，商定家校督促方案", "作业相关负面信号"))
+            if att and att_bad > 0:
+                todos.append(("中", "就出勤/请假情况与家长确认，同步补课与回放安排", "出勤相关信号"))
+            if neg:
+                todos.append(("中", "学生出现情绪/压力信号，主动与家长沟通关怀、建立信任", "负面情绪信号"))
+            if q >= 5:
+                todos.append(("中", "向家长反馈该生薄弱点与提升建议，铺垫续报沟通", f"学生疑问密度高（{q} 处）"))
+            if not todos:
+                todos.append(("低", "常规家长沟通：同步学习近况、维护关系、铺垫续报", "无明显风险信号"))
+        else:
+            # 联席视角：To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」
+            if is_timeout:
+                todos.append(("高", f"跟进超时未回复咨询（后台标记超时 {g.get('timeoutDuration')}）", "后台响应时效标记"))
+            if unresolved:
+                todos.append(("高", "回复学生近期提出的未解答疑问", "会话尾部存在未获回应提问"))
+            if hw and hw_bad > 0:
+                todos.append(("中", "针对作业未完成/不会做进行辅导或订正跟进", "作业相关负面信号"))
+            if att and att_bad > 0:
+                todos.append(("中", "确认出勤与请假情况，必要时补回放/补课", "出勤相关信号"))
+            if q >= 5:
+                todos.append(("中", "整理该生高频疑问，统一集中答疑一次", f"学生疑问密度高（{q} 处）"))
+            if not todos:
+                todos.append(("低", "维持常规跟进，关注下次作业与提问", "无明显风险信号"))
         students[stu] = {
             "group": g, "n_text": len(texts), "n_stu": n_stu, "n_tea": n_tea,
             "voice": voice, "newest": newest, "oldest": oldest,

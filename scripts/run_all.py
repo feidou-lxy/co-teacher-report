@@ -48,7 +48,7 @@ def main():
     run("pull_chats.py", base)
     run("pull_attendance.py", base)
     run("build_attendance.py", base)
-    run("extract.py", ["--workdir", wd, "--window", args.window])
+    run("extract.py", base + ["--window", args.window])
     run("leave_notes.py", ["--workdir", wd, "--window", args.window])
     run("merge.py", ["--workdir", wd])
     run("report.py", base + ["--window", args.window])

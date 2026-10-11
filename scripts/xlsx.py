@@ -1,8 +1,10 @@
-"""步骤10：生成待办清单 Excel（3 个 sheet：学生群总览 / 联席待办清单 / 出勤明细）。
+"""步骤10：生成待办清单 Excel（总览 + 待办 + 出勤明细）。
 
 支持两种视角（--co 联席 / --edu 教务）：
   - 总览 sheet 增加「所属联席」列；
-  - 待办清单 sheet 按视角分组：教务视角按「联席」分组排序，联席视角按「课程」分组排序。
+  - 教务视角双维度待办：①「教务To-Do·按课程」按课程分组；②「教务To-Do·按联席」按联席分组；
+    （To-Do 内容面向教务职责：家长沟通 / 反馈学生问题 / 建立信任 / 推动续报）
+  - 联席视角：①「课程待办清单」按课程分组（To-Do 面向跟课辅导 / 答疑 / 作业订正）。
 
 读取 analysis_merged.json，输出 <workdir>/<姓名>_学生待办清单.xlsx。
 依赖 openpyxl（在 WorkBuddy 受管 Python 的 venv 里安装：pip install openpyxl）。
@@ -137,35 +139,43 @@ def main():
     for k, v in widths.items():
         ws.column_dimensions[k].width = v
 
-    ws2 = wb.create_sheet("联席待办清单")
-    cols2 = ["序号", ("联席" if is_edu else "课程"), "学生", "定档", "出勤(后台)", "是否需关注", "优先级", "To-Do 动作", "依据", "群名", "超时时长"]
-    ws2.append(cols2)
-    for c in range(1, len(cols2) + 1):
-        cell = ws2.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
-    pri_fill = {"高": PatternFill("solid", fgColor="FDECEC"), "中": PatternFill("solid", fgColor="FFF3E0"), "低": PatternFill("solid", fgColor="EEF2F5")}
-    idx = 0
-    todo_rows = []
-
-    def todo_group(g):
-        return (g.get("coTeacherName") or "未分配联席") if is_edu else course_of(g.get("groupName", ""))
-
-    for _, stu, s, g, timeout, unreply in rows:
-        att_txt, att_flag = att_short(s.get("att"))
-        for p, a, b in s["todos"]:
-            todo_rows.append((todo_group(g), stu, p, a, b, g.get("groupName", ""),
-                             g.get("timeoutDuration", "") if timeout else "", grade(s, timeout, unreply), att_txt, att_flag))
-    todo_rows.sort(key=lambda x: (x[0], {"高": 0, "中": 1, "低": 2}.get(x[2], 3), x[1]))
-    for grp, stu, p, a, b, gn, td, gd, att_txt, att_flag in todo_rows:
-        idx += 1
-        ws2.append([idx, grp, stu, gd, att_txt, att_flag, p, a, b, gn, td])
-        r = ws2.max_row
+    def build_todo_sheet(sheet_title, group_fn, action_label="To-Do 动作"):
+        """构造一个「待办清单」sheet，按 group_fn(g) 分组排序（课程/联席）。"""
+        ws = wb.create_sheet(sheet_title)
+        cols2 = ["序号", "分组", "学生", "定档", "出勤(后台)", "是否需关注", "优先级", action_label, "依据", "群名", "超时时长"]
+        ws.append(cols2)
         for c in range(1, len(cols2) + 1):
-            ws2.cell(r, c).border = border; ws2.cell(r, c).alignment = wrap
-        ws2.cell(r, 7).fill = pri_fill.get(p, pri_fill["低"])
-    ws2.freeze_panes = "A2"
-    w2 = {"A": 5, "B": 24, "C": 13, "D": 7, "E": 16, "F": 16, "G": 7, "H": 40, "I": 24, "J": 28, "K": 11}
-    for k, v in w2.items():
-        ws2.column_dimensions[k].width = v
+            cell = ws.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
+        pri_fill = {"高": PatternFill("solid", fgColor="FDECEC"), "中": PatternFill("solid", fgColor="FFF3E0"), "低": PatternFill("solid", fgColor="EEF2F5")}
+        idx = 0
+        todo_rows = []
+        for _, stu, s, g, timeout, unreply in rows:
+            att_txt, att_flag = att_short(s.get("att"))
+            for p, a, b in s["todos"]:
+                todo_rows.append((group_fn(g), stu, p, a, b, g.get("groupName", ""),
+                                 g.get("timeoutDuration", "") if timeout else "", grade(s, timeout, unreply), att_txt, att_flag))
+        todo_rows.sort(key=lambda x: (x[0], {"高": 0, "中": 1, "低": 2}.get(x[2], 3), x[1]))
+        for grp, stu, p, a, b, gn, td, gd, att_txt, att_flag in todo_rows:
+            idx += 1
+            ws.append([idx, grp, stu, gd, att_txt, att_flag, p, a, b, gn, td])
+            r = ws.max_row
+            for c in range(1, len(cols2) + 1):
+                ws.cell(r, c).border = border; ws.cell(r, c).alignment = wrap
+            ws.cell(r, 7).fill = pri_fill.get(p, pri_fill["低"])
+        ws.freeze_panes = "A2"
+        w2 = {"A": 5, "B": 24, "C": 13, "D": 7, "E": 16, "F": 16, "G": 7, "H": 40, "I": 24, "J": 28, "K": 11}
+        for k, v in w2.items():
+            ws.column_dimensions[k].width = v
+        return idx
+
+    if is_edu:
+        # 教务：双维度「教务 To-Do」（按课程 + 按联席分组）
+        n_course = build_todo_sheet("教务To-Do·按课程", lambda g: course_of(g.get("groupName", "")), "教务 To-Do")
+        n_co = build_todo_sheet("教务To-Do·按联席", lambda g: g.get("coTeacherName") or "未分配联席", "教务 To-Do")
+        idx = n_course + n_co
+    else:
+        # 联席：按课程分组的待办清单
+        idx = build_todo_sheet("课程待办清单", lambda g: course_of(g.get("groupName", "")), "联席 To-Do")
 
     ws3 = wb.create_sheet("出勤明细(后台)")
     cols3 = ["学生", "课程", "总节数", "出勤", "缺勤", "看回放", "逐节(✓出勤/回放/✗缺)", "是否需关注"]
@@ -189,7 +199,10 @@ def main():
 
     out = f"{wd}/{name}_学生待办清单.xlsx"
     wb.save(out)
-    print(f"✅ XLSX 生成完成（{role_cn}视角）｜ 总览 {len(rows)} 行 ｜ 待办 {idx} 项 ｜ {out}")
+    if is_edu:
+        print(f"✅ XLSX 生成完成（教务·双维度·教务To-Do）｜ 总览 {len(rows)} 行 ｜ 按课程 {n_course} 项 + 按联席 {n_co} 项 ｜ {out}")
+    else:
+        print(f"✅ XLSX 生成完成（{role_cn}视角）｜ 总览 {len(rows)} 行 ｜ 待办 {idx} 项 ｜ {out}")
 
 
 if __name__ == "__main__":
