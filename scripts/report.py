@@ -221,7 +221,7 @@ def card_html(r, edu=False):
         <div class="cgroup">{r['course_raw']}{co_tag}</div>
         <div class="cstatus">{gdbadge}{status}</div>
       </div>
-      <div class="cmeta">近窗 {s['oldest'][:10]} ~ {s['newest'][:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']}，其中礼节 {s.get('n_ack', 0)} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
+      <div class="cmeta">近窗 {(s['oldest'] or '—')[:10]} ~ {(s['newest'] or '—')[:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']}，其中礼节 {s.get('n_ack', 0)} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
       <div class="blk"><div class="blk-h">① 速览卡</div>
         <div class="coop"><b>配合度</b>{coop}</div>
         <div class="watch"><div class="watch-h">最该盯<span class="watch-b">依据：{top_basis}</span></div><div class="watch-act">{top_todo}</div></div>
