@@ -30,6 +30,17 @@ Q_ASK = ["?", "？", "不懂", "听不懂", "没听懂", "不理解", "没明白
          "怎么", "为什么", "为啥", "如何", "请教", "没思路", "卡住", "咋", "求助", "帮忙看", "对不对"]
 POS = ["谢谢", "感谢", "辛苦", "麻烦您", "麻烦你", "感激", "太好了", "棒"]
 NEG = ["焦虑", "着急", "担心", "烦躁", "抱怨", "不满意", "无奈", "心烦", "压力", "崩溃", "难受", "愁", "委屈"]
+# —— 联席四维关注（v3.7）：互动 / 催交作业 / 批改后订正 / 提问意愿 ——
+# 说明：这四维是「联席为学习效果负责」的直接抓手；出勤/请假归属教务关切，不进入联席的「最该盯」。
+URGE = ["交作业", "作业交", "交一下", "提交", "补交", "还没交", "没交", "催", "记得交", "别忘了",
+        "抓紧", "按时", "今天交", "尽快交", "别忘", "要交", "快交"]
+SUBMIT = ["交了", "已交", "提交了", "已经交", "交了作业", "发你了", "发了", "发了哦", "上传了",
+          "写完了", "做完了", "完成了", "拍照发了", "拍给你", "传了", "发了老师"]
+FIX_REQ = ["订正", "改正", "改一下", "改下", "重做", "重新写", "重新做", "改错", "错题",
+           "再算一遍", "再看一遍", "重新算", "更正", "纠正"]
+FIX_ACK = ["改好了", "订正了", "改正了", "改完", "重做了", "重新写了", "重新做了", "已改", "改过来了",
+           "改好了老师", "更正了", "改过了"]
+
 STU_SELF = ["我自己", "我这道题", "我算", "我听", "我做", "我提交", "我交了", "我错了", "我漏",
             "我忘", "我这次", "我自己做", "我理解", "我懂", "我试", "我写", "我的作业", "我来看"]
 PARENT = ["妈妈", "爸爸", "家长", "我帮", "我替", "帮他", "替他", "已交", "帮交", "孩子", "我家",
@@ -194,6 +205,40 @@ def resp_wait_stats(triples_all):
     return waits, pending
 
 
+def pair_after(triples, trig_kws, resp_kws, within_h=72.0):
+    """配对判定：老师在 t 时刻发出「要求」（催交作业 / 要求订正），其后 within_h 小时内
+    学生是否给出对应「响应」（交作业 / 已订正）。
+
+    联席四维里的「催作业→是否交」「批改后→是否改正」两条都靠它。
+    返回 (触发数, 已响应数, [(日期, 触发摘要), ...] 未响应明细)。
+    同一轮内的连续催交（相邻触发之间无学生响应）只计一次，避免刷量。
+    """
+    trig, ok, fail, last_trig = 0, 0, [], None
+    n = len(triples)
+    for i, (ts, r, t) in enumerate(triples):
+        if r != 1 or not t or not any(k in t for k in trig_kws):
+            continue
+        d0 = parse_dt(ts)
+        if last_trig and d0 and (d0 - last_trig).total_seconds() / 3600.0 <= 6.0:
+            continue                                    # 6 小时内的重复催 → 同一轮，只计一次
+        last_trig = d0
+        trig += 1
+        got = False
+        for j in range(i + 1, n):
+            ts2, r2, t2 = triples[j]
+            d1 = parse_dt(ts2)
+            if d0 and d1 and (d1 - d0).total_seconds() / 3600.0 > within_h:
+                break
+            if r2 == 2 and t2 and any(k in t2 for k in resp_kws):
+                got = True
+                break
+        if got:
+            ok += 1
+        else:
+            fail.append(((ts or "")[:10], re.sub(r"\s+", " ", t)[:24]))
+    return trig, ok, fail
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
@@ -234,6 +279,12 @@ def main():
                 "resp_evi": "窗口内无聊天",
                 "summary": f"{CUT} 起该群无可分析聊天记录（窗口内无互动）。",
                 "todos": empty_todos,
+                # 联席四维（v3.7）：无聊天 → 互动沉默、无催交/订正记录、提问为零
+                "interact": "沉默不回复", "interact_lv": "bad", "interact_evi": "窗口内无互动",
+                "gap_days": None,
+                "urge_n": 0, "urge_ok": 0, "urge_fail": [],
+                "fix_n": 0, "fix_ok": 0, "fix_fail": [],
+                "ask_lv": "无",
             }
             continue
         all_txt = " ".join(t for _, t in texts)
@@ -333,6 +384,32 @@ def main():
         att_s = "、".join(att_kws) if att_kws else "请假/缺课"
         hw_s = "、".join(hw_kws) if hw_kws else "未完成/不会做"
         neg_s = "、".join(neg_kws[:3]) if neg_kws else "情绪波动"
+        # —— 联席四维（v3.7）：互动状态 / 催交作业是否交 / 批改后是否订正 / 提问意愿 ——
+        # 四维是「联席为学习效果负责」的直接抓手；出勤/请假归教务关切，不进联席的「最该盯」。
+        stu_ts = [ts for ts, r, t in triples if r == 2]
+        last_stu = stu_ts[-1] if stu_ts else None
+        gap_days = None
+        d_ls, d_nw = parse_dt(last_stu), parse_dt(newest)
+        if d_ls and d_nw and d_nw >= d_ls:
+            gap_days = round((d_nw - d_ls).total_seconds() / 86400.0, 1)
+        if n_stu_sub == 0:
+            interact, interact_lv = "沉默不回复", "bad"
+            interact_evi = "窗口内学生/家长无实质发言"
+        elif gap_days is not None and gap_days >= 14:
+            interact, interact_lv = "近期沉默", "bad"
+            interact_evi = f"最近一次本人发言距窗口末尾 {gap_days:.0f} 天"
+        elif q >= 3 or n_stu_sub >= 12:
+            interact, interact_lv = "积极", "ok"
+            interact_evi = f"本人实质发言 {n_stu_sub} 条、主动提问 {q} 处"
+        elif n_stu_sub <= 3:
+            interact, interact_lv = "不积极", "warn"
+            interact_evi = f"本人实质发言仅 {n_stu_sub} 条"
+        else:
+            interact, interact_lv = "一般", "warn"
+            interact_evi = f"本人实质发言 {n_stu_sub} 条"
+        urge_n, urge_ok, urge_fail = pair_after(triples, URGE, SUBMIT)      # 催交 → 是否交
+        fix_n, fix_ok, fix_fail = pair_after(triples, FIX_REQ, FIX_ACK)     # 要求订正 → 是否改
+        ask_lv = "高" if q >= 8 else ("中" if q >= 3 else ("低" if q >= 1 else "无"))
         if is_edu:
             # 教务视角：To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」，并注入该生具体信息
             if resp_slow:
@@ -350,17 +427,30 @@ def main():
             if not todos:
                 todos.append(("低", "常规家长沟通：同步学习近况、维护关系、铺垫续报", "无明显风险信号"))
         else:
-            # 联席视角：To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」，同样注入具体信息
+            # 联席视角（v3.7）：To-Do 严格按「联席四维」优先级排 —— 互动状态 → 答疑闭环 → 催交作业
+            # → 批改后订正 → 提问意愿。出勤/请假属教务关切（教务为续报负责），不再进入联席 To-Do，
+            # 避免「确认出勤/补回放」这类教务动作抢走联席的「最该盯」。
+            if interact_lv == "bad":
+                todos.append(("高", f"学生互动{interact}（{interact_evi}）：主动发起一次一对一沟通，确认学习状态与真实卡点", interact_evi))
+            elif interact_lv == "warn":
+                todos.append(("中", f"学生互动{interact}（{interact_evi}）：课上多给一次点名提问 / 小黑板任务，把人调动起来", interact_evi))
             if resp_slow:
                 todos.append(("高", f"{resp_at} 该生提问后约 {resp_max_h:.0f} 小时才回复：补一句追问确认问题已解决，避免悬空", resp_evi))
             if unresolved:
                 todos.append(("高", f"回复学生未解答疑问{tp_s}（{unresolved_at} 提问）", unres_evi))
-            if hw_bad > 0:
-                todos.append(("中", f"针对作业问题「{hw_s}」进行辅导或订正跟进", f"作业负面信号 {hw_bad} 处"))
-            if att_bad > 0:
-                todos.append(("中", f"确认出勤/请假「{att_s}」，必要时补回放/补课", f"出勤相关信号 {att_bad} 处"))
-            if q >= 5:
-                todos.append(("中", f"整理该生高频疑问{tp_s}，统一集中答疑一次", f"学生疑问密度高（{q} 处）"))
+            if urge_n > urge_ok:
+                _n = urge_n - urge_ok
+                _ev = f"催交 {urge_n} 次、{_n} 次未见提交" + (f"（最近 {urge_fail[-1][0]} 提醒后仍未交）" if urge_fail else "")
+                todos.append(("中", f"催交作业未响应 {_n} 次：改「私信 + 明确截止时间」再盯一次作业提交", _ev))
+            if fix_n > fix_ok:
+                _n = fix_n - fix_ok
+                _ev = f"布置订正 {fix_n} 次、{_n} 次未见改正" + (f"（最近 {fix_fail[-1][0]}）" if fix_fail else "")
+                todos.append(("中", f"批改后未订正 {_n} 次：挑最近一次错题要求回批，盯到改正为止", _ev))
+            elif urge_n == 0 and hw_bad > 0:
+                todos.append(("中", f"学生自述作业「{hw_s}」：针对性辅导或订正跟进", f"作业负面信号 {hw_bad} 处"))
+            if ask_lv in ("低", "无") and interact_lv != "bad":
+                _w = "偏少" if ask_lv == "低" else "为零"
+                todos.append(("低", f"学生主动提问{_w}：课后抛一个「你觉得哪步最容易错」的引导题，把提问习惯带起来", f"窗口内主动提问 {q} 处"))
             if not todos:
                 todos.append(("低", "维持常规跟进，关注下次作业与提问", "无明显风险信号"))
         students[stu] = {
@@ -379,6 +469,12 @@ def main():
             "resp_slow_cnt": resp_slow_cnt, "resp_at": resp_at, "resp_q": resp_q,
             "resp_pend_n": len(pend), "resp_evi": resp_evi,
             "summary": summary, "todos": todos,
+            # 联席四维（v3.7）
+            "interact": interact, "interact_lv": interact_lv, "interact_evi": interact_evi,
+            "gap_days": gap_days,
+            "urge_n": urge_n, "urge_ok": urge_ok, "urge_fail": urge_fail,
+            "fix_n": fix_n, "fix_ok": fix_ok, "fix_fail": fix_fail,
+            "ask_lv": ask_lv,
         }
 
     json.dump(students, open(f"{wd}/analysis.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
