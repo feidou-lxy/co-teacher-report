@@ -141,7 +141,10 @@ def grade(r):
     return "绿", "正常推进"
 
 
-def att_block(r):
+def att_block(r, edu=False):
+    """② 出勤块：按角色调整权重。
+    - 教务（edu=True）：对续报负责，出勤是核心关切 → 逐节明细完整展开。
+    - 联席 / 课程（edu=False）：对学习效果负责，出勤仅作学习跟进参考 → 只给结论，逐节明细折叠。"""
     a = r["att"]
     lv2 = r["s"].get("leave")
     lvnote = (f'<div class="lvnote">聊天记录提及：{ " / ".join(lv2) }</div>') if lv2 else ""
@@ -171,9 +174,18 @@ def att_block(r):
     else:
         lv, txt = ("yellow", "缺 1 节且未看回放 —— 轻关注") if no_pb else ("green", "缺 1 节但已看回放 —— 常规")
     conc = f'共 {n} 节：出勤 {n-ab} · 缺 {ab} · 有回放 {pbc}。' + (f'缺席第 {"、".join(map(str,absent_seqs))} 节。' if absent_seqs else '')
+    chips_html = "".join(chips)
+    if edu:
+        # 教务：出勤＝续报关注重点，逐节明细全展开
+        body, sub = f'<div class="attbar">{chips_html}</div>', ' · 续报关注重点'
+    else:
+        # 联席 / 课程：出勤仅作学习跟进参考，逐节明细折叠，只保留结论
+        body = (f'<details class="attdet"><summary>逐节明细（共 {n} 节，展开查看）</summary>'
+                f'<div class="attbar">{chips_html}</div></details>')
+        sub = ' · 学习跟进参考'
     return f'''<div class="blk">
-      <div class="blk-h">② 出勤（后台权威）</div>
-      <div class="attbar">{''.join(chips)}</div>
+      <div class="blk-h">② 出勤（后台权威{sub}）</div>
+      {body}
       <div class="attconc">{conc}</div>
       <div class="attflag {lv}">是否需关注：{txt}</div>
       {lvnote}
@@ -199,40 +211,44 @@ def align_topic(t, std_keys):
 
 
 def board_block(sm):
-    """学生卡「学习情况」内的首要证据：小黑板逐轮读图结论（作答完整度＋正确/错误＋问题定位）。
-    它是判断学生优势 / 薄弱知识点的直接依据，故归在第③块「学习掌握与薄弱点」内，而非独立模块。
-    无小黑板数据时不报错，给一句兜底。"""
+    """学生卡第③块内的佐证子块：小黑板逐轮读图结论。
+    默认只给「作答概况 + 涉及知识点 + 实证薄弱 + 典型错误」四行结论；
+    逐轮明细折叠（≤2 轮自动展开），避免多轮学生（如 29 轮）把卡片撑得又长又啰嗦。"""
     if not sm:
         return ('<div class="sub-blk"><div class="sb-h">课堂小黑板表现（逐轮读图）</div>'
                 '<div class="noatt">该生暂无小黑板图片（未被收录 / 课程未提供）</div></div>')
+    from collections import Counter
+    ds = sm.get("details", []) or []
+    n = sm.get("rounds", 0) or len(ds)
     sc = sm.get("status_counts", {})
-    chips = "".join(f'<span class="chip">{k} {v}</span>' for k, v in sc.items()) or '<span class="chip">—</span>'
+    dist = " · ".join(f"{k} {v}" for k, v in sc.items()) or "—"
     kb = sm.get("kb_topics", []) or []
     kb_chips = "".join(f'<span class="chip">{t}</span>' for t in kb) or '<span class="chip">—</span>'
     et = sm.get("error_topics", []) or []
     et_chips = ("".join(f'<span class="chip kb">🖍 {t}</span>' for t in et)
                 or '<span class="chip">无（作答无明显错误）</span>')
-    errs = "、".join(sm.get("error_types", [])) or "—"
+    ec = Counter(e for d in ds for e in (d.get("errors") or []))
+    errs = "、".join(f"{k}×{v}" for k, v in ec.most_common(3)) or "—"
     trend = sm.get("trend", "—")
     rows = ""
-    for d in sm.get("details", []):
+    for d in ds:
         cls = {"完整作答": "ok", "部分作答": "pb", "空白": "no"}.get(d.get("status"), "")
-        correctness = d.get("correct", "")
         tk = d.get("topic_knowledge", "") or "—"
-        err = "；".join(d.get("errors", [])) or "—"
+        err = "；".join(d.get("errors") or []) or "—"
         stuck = d.get("stuck_at", "") or "—"
         rows += (f'<tr><td>{d.get("round","")}</td><td>{d.get("problem","")}</td>'
-                 f'<td class="bs {cls}">{d.get("status","")}</td><td>{correctness}</td>'
+                 f'<td class="bs {cls}">{d.get("status","")}</td><td>{d.get("correct","")}</td>'
                  f'<td>{tk}</td><td>{err}</td><td>{stuck}</td></tr>')
+    op = " open" if n <= 2 else ""
     return f'''<div class="sub-blk">
-      <div class="sb-h">课堂小黑板表现（逐轮读图 · 佐证依据）</div>
-      <div class="kv"><span class="k">轮次</span><span class="v">共 {sm.get("rounds",0)} 轮，已读图分析 {sm.get("analyzed",0)} 轮</span></div>
-      <div class="kv"><span class="k">作答分布</span><span class="chips">{chips}</span></div>
+      <div class="sb-h">课堂小黑板表现（佐证依据）</div>
+      <div class="kv"><span class="k">作答概况</span><span class="v">共 {n} 轮 ｜ {dist} ｜ 趋势：{trend}</span></div>
       <div class="kv"><span class="k">涉及知识点</span><span class="chips">{kb_chips}</span></div>
       <div class="kv"><span class="k">实证薄弱</span><span class="chips">{et_chips}</span></div>
       <div class="kv"><span class="k">典型错误</span><span class="v">{errs}</span></div>
-      <div class="kv"><span class="k">趋势</span><span class="v">{trend}</span></div>
-      <table><tr><th>轮次</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
+      <details class="bdet"{op}><summary>逐轮明细（{n} 轮，点击展开）</summary>
+        <table><tr><th>轮次</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
+      </details>
     </div>'''
 
 
@@ -325,7 +341,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         <div class="watch"><div class="watch-h">最该盯<span class="watch-b">依据：{top_basis}</span></div><div class="watch-act">{top_todo}</div></div>
         <div class="sig">{signal_strip(s)}</div>
       </div>
-      {att_block(r)}
+      {att_block(r, edu=edu)}
       <div class="blk"><div class="blk-h">③ 学习掌握与薄弱点</div>
         <div class="kv"><span class="k">薄弱知识点</span><span class="chips">{weak_chips}</span></div>
         <div class="kv"><span class="k">错误类型</span><span class="v">{err_html}</span></div>
@@ -390,6 +406,17 @@ th{color:#8a9099;font-weight:600}
 .chip.kb{background:#fff7e6;color:#d46b08;box-shadow:inset 0 0 0 1px #ffd591}
 .sub-blk{margin-top:8px;padding:8px 10px;background:#fafbfc;border:1px solid #eef0f3;border-radius:8px}
 .sb-h{font-size:12px;font-weight:700;color:#5a6472;margin-bottom:6px}
+details.bdet{margin-top:6px;border-top:1px dashed #eef0f3;padding-top:6px}
+details.bdet>summary{cursor:pointer;font-size:12px;font-weight:600;color:#3a5bdb;list-style:none;outline:none}
+details.bdet>summary::-webkit-details-marker{display:none}
+details.bdet>summary:before{content:"▸ "}
+details.bdet[open]>summary:before{content:"▾ "}
+details.bdet table{margin-top:6px}
+details.attdet{margin:4px 0}
+details.attdet>summary{cursor:pointer;font-size:12px;font-weight:600;color:#3a5bdb;list-style:none;outline:none}
+details.attdet>summary::-webkit-details-marker{display:none}
+details.attdet>summary:before{content:"▸ "}
+details.attdet[open]>summary:before{content:"▾ "}
 .coop{font-size:13px;color:#1f2329;margin:2px 0 10px;line-height:1.7}
 .coop b{color:#3a5bdb;margin-right:6px}
 .watch{font-size:13px;background:#fff7ec;border-left:3px solid #ff8f1f;padding:7px 10px;border-radius:4px;margin:0 0 10px}
