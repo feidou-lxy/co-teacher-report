@@ -139,7 +139,7 @@ chats.json ──► analysis.json ──► leave_notes.json ──┐         
                                                           │
                                                    analysis_merged.json
                                                           │
-                                                  report.py + xlsx.py
+                                                  report.py
 ```
 
 ### analysis.json 关键字段口径（v4）

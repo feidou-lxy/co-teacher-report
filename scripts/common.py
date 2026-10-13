@@ -124,25 +124,15 @@ def subject_of(text):
     return ""
 
 
-def ensure_openpyxl():
-    """依赖自检：若当前解释器没有 openpyxl，尝试用同解释器自动 pip 安装。
-
-    这样同事解压技能后用任意受管 Python 起手都能自愈，不必手动建 venv。
-    """
-    try:
-        import openpyxl  # noqa: F401
-        return
-    except ImportError:
-        import subprocess
-        print("⏳ 未检测到 openpyxl，正在用当前 Python 自动安装（仅首次）…")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "openpyxl>=3.1"])
-        print("✅ openpyxl 安装完成。")
+def ensure_py_deps():
+    """依赖自检：当前仅标准库即可跑通全流程（v3.9 起不再产出 Excel，无第三方依赖）。"""
+    return
 
 
 def learning_level(s, board):
     """学习情况分层（v3.8）：综合三类证据判档 —— ① 课堂小黑板作答 ② 作业闭环 ③ 老师反馈。
 
-    report.py 与 xlsx.py 共用同一份口径，避免两处漂移。
+    report.py 统一使用本口径，避免多处漂移。
     返回 (档位key, 档位中文, 依据列表[(来源, 文本)])
     档位：需重点关注 / 需关注 / 正常 / 良好
     """

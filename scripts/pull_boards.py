@@ -16,7 +16,7 @@
   - round = 第 2 层时间戳目录（一轮）
   - lesson = 第 1 层目录名（课次）；lesson_date = 从课次名里提取的日期 MM-DD
 
-后续 read_boards.py 读图分析并按「课次 → 轮次」聚合，再交给 report / xlsx 渲染。
+后续 read_boards.py 读图分析并按「课次 → 轮次」聚合，再交给 report.py 渲染。
 """
 import argparse
 import json

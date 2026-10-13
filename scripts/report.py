@@ -394,6 +394,10 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         status += badge("正常", "green")
     if s["unresolved"]:
         status += badge("有未解疑问", "orange")
+    # 近 3 天待回应（v3.9）：忘记回复 / 问题未解决 —— 头部红徽标 + ②配合度内置清单双重标记
+    rt_items = (s.get("recent3") or {}).get("items") or []
+    if rt_items:
+        status += badge(f'近3天待回应 {len(rt_items)}', "red")
     coop = coop_conclusion(s)
     # 联席/课程视角：把小黑板的「学习实证问题」并入 To-Do —— 聊天侧无「高」优先项时置顶，
     # 使「最该盯」优先落到学习问题上（而非「维持常规跟进」这类空结论）。
@@ -437,6 +441,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         {board_block(board)}
       </div>
       <div class="blk"><div class="blk-h">② 配合度</div>
+        {recent3_block(s)}
         <div class="coop">{coop}</div>
         {four_dims(s) if not edu else ""}
         {att_line(r, edu=edu)}
@@ -583,7 +588,61 @@ details.attdet[open]>summary:before{content:"▾ "}
 .searchinp:focus{border-color:#3a5bdb;box-shadow:0 0 0 3px #eef2ff}
 .searchcnt{font-size:12px;color:#8a9099;font-weight:600}
 .searchclear{font-size:12px;color:#3a5bdb;cursor:pointer;border:none;background:none;padding:4px 8px}
+.rtbanner{background:#fff;border:1px solid #f6cfcf;border-left:4px solid #e54545;border-radius:10px;padding:14px 16px;margin-bottom:16px}
+.rtbanner.ok{border-color:#cdeadd;border-left-color:#2ba471;background:#f4fbf7}
+.rtbanner h2{font-size:15px;margin:0 0 6px;color:#cf1322}
+.rtbanner.ok h2{color:#0f8a4d}
+.rtbanner .rtsub{font-size:12px;color:#8a9099;margin-bottom:8px}
+.rtbanner table{margin-top:2px}
+.rtk{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:8px;margin-right:6px;white-space:nowrap}
+.rtk.miss{background:#e54545;color:#fff}
+.rtk.open{background:#ff8f1f;color:#fff}
+.rtbox{background:#fdecec;border:1px solid #f6cfcf;border-left:3px solid #e54545;border-radius:8px;padding:8px 10px;margin:0 0 10px}
+.rt-h{font-size:13px;font-weight:700;color:#cf1322;margin-bottom:4px}
+.rtlist{margin:0;padding-left:16px}
+.rtlist li{font-size:12.5px;line-height:1.6;color:#4b5563;margin-bottom:4px}
+.rtlist .note{font-size:11.5px}
 """
+
+
+def recent3_block(s):
+    """学生卡内的「近 N 天待回应」提醒（v3.9）：联席忘记回复 / 学生问题未解决，重点标记。"""
+    rt = s.get("recent3") or {}
+    items = rt.get("items") or []
+    if not items:
+        return ""
+    lis = "".join(
+        f'<li><span class="rtk {"miss" if it["kind"] == "忘记回复" else "open"}">{it["kind"]}</span>'
+        f'<b>{it["at"]}</b> 提问「{it["q"]}…」<br><span class="note">{it["evi"]}</span></li>'
+        for it in items)
+    return (f'<div class="rtbox"><div class="rt-h">🚨 近 {rt.get("days", 3)} 天待回应 · {len(items)} 项'
+            f'（忘记回复 {rt.get("missed_n", 0)} ｜ 问题未解决 {rt.get("open_n", 0)}）</div>'
+            f'<ul class="rtlist">{lis}</ul></div>')
+
+
+def recent3_banner(rows, edu=False):
+    """报告顶部「近 N 天待回应」全局提醒（v3.9）：忘记回复 / 问题未解决逐条列出，无则显示绿色通过。"""
+    items = []
+    for r in rows:
+        for it in (r["s"].get("recent3") or {}).get("items") or []:
+            items.append((0 if it["kind"] == "忘记回复" else 1, it.get("at") or "", r["stu"], it))
+    items.sort(key=lambda x: (x[0], x[1]))
+    if not items:
+        return ('<div class="rtbanner ok"><h2>✅ 近 3 天待回应检查通过</h2>'
+                '<div class="rtsub">未发现「联席忘记回复」或「学生问题未解决」的情况。</div></div>')
+    n_miss = sum(1 for x in items if x[0] == 0)
+    trs = "".join(
+        f'<tr><td><b>{stu}</b></td><td>{it["at"]}</td>'
+        f'<td><span class="rtk {"miss" if it["kind"] == "忘记回复" else "open"}">{it["kind"]}</span></td>'
+        f'<td>{it["q"]}…</td><td class="note">{it["evi"]}</td>'
+        f'<td>{"今日内必须回应，先接住情绪再解题" if it["kind"] == "忘记回复" else "跟进到学生回复「懂了」为止，必要时换种讲法"}</td></tr>'
+        for _, _, stu, it in items)
+    who = "教务视角：以下需提醒联席当日闭环，并向家长同步进展" if edu else "联席视角：以下需当日处理"
+    return (f'<div class="rtbanner"><h2>🚨 近 3 天待回应提醒 · {len(items)} 项'
+            f'（忘记回复 {n_miss} ｜ 问题未解决 {len(items) - n_miss}）</h2>'
+            f'<div class="rtsub">{who}；口径：以窗口内最新一条消息为基准往前 3 天，'
+            f'学生/家长实质提问后无老师动作 = 忘记回复；老师应允（稍后/晚点…）后无下文或 24 小时内学生再次追问 = 问题未解决。</div>'
+            f'<table><tr><th>学生</th><th>日期</th><th>类型</th><th>提问内容</th><th>依据</th><th>建议动作</th></tr>{trs}</table></div>')
 
 
 def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, edu=False, show_co_tag=False, boards_map=None):
@@ -688,6 +747,11 @@ def main():
     total_msgs = sum(r["s"]["n_text"] for r in rows)
     slow_n = sum(1 for r in rows if r["slow"])
     unres_n = sum(1 for r in rows if r["s"]["unresolved"])
+    # 近 3 天待回应（v3.9）：忘记回复 / 问题未解决的全局提醒（顶部横幅 + KPI）
+    rt_stu = [r for r in rows if (r["s"].get("recent3") or {}).get("items")]
+    rt_n_stu = len(rt_stu)
+    rt_n_items = sum(len(r["s"]["recent3"]["items"]) for r in rt_stu)
+    rt_banner = recent3_banner(rows, edu=is_edu)
     glob_topic = Counter()
     for r in rows:
         for t in r["s"]["top_topics"]:
@@ -784,7 +848,9 @@ def main():
   <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
   <div class="kpi red"><div class="n">{slow_n}</div><div class="l">响应迟缓群（聊天分析）</div></div>
   <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
+  <div class="kpi {'red' if rt_n_stu else 'green'}"><div class="n">{rt_n_stu}</div><div class="l">近3天待回应（{rt_n_items} 项）</div></div>
 </div>
+{rt_banner}
 <div class="searchbar">
   <input id="stuSearch" class="searchinp" type="text" placeholder="🔍 输入学生姓名搜索（当前维度内实时筛选）" oninput="doSearch(this.value)">
   <span class="searchcnt" id="searchCnt"></span>
@@ -806,6 +872,7 @@ def main():
 • 定档规则：🔴 红=聊天分析判定「响应迟缓」（学生提问后 ≥24 小时才见老师回复）或「需回复」（会话尾部仍有未获回应提问）；🟡 黄=有未解疑问、作业负面信号、负面情绪{'、出勤异常（仅教务）' if is_edu else ''}；🟢 绿=其余正常推进。<br>
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
 • 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
+• <b>近 3 天待回应（v3.9 新增，重点标记）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。结果在<b>报告顶部红色横幅</b>逐条列出（学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时横幅显示绿色「检查通过」。<br>
 </p></div>
 </div>
 <script>

@@ -18,7 +18,7 @@
   { 姓名: { rounds, analyzed, status_counts, error_types, kb_topics, error_topics, trend, details } }
   - kb_topics：小黑板涉及到的全部大知识点
   - error_topics：有错误 / 卡点轮次所关联的大知识点（＝小黑板实证的薄弱点）
-report.py 第③块「学习掌握与薄弱点」与 xlsx「小黑板分析」sheet 直接消费此文件。
+report.py ①「学习情况」块直接消费此文件（小黑板佐证）。
 """
 import argparse
 import json

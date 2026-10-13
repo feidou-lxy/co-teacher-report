@@ -2,7 +2,8 @@
 
 仅分析 --window 起点之后的聊天（默认 2026-09-01）。
 提取：薄弱知识点、出勤/作业/提问/情绪信号、配合度（学生自驱 vs 家长支持，启发式）、
-未闭环疑问、总评与待办。配合度数据源未区分发言者 ID，为启发式估算。
+未闭环疑问、**近 N 天待回应（联席忘记回复 / 学生问题未解决，v3.9）**、总评与待办。
+配合度数据源未区分发言者 ID，为启发式估算。
 
 To-Do 按角色生成（--co 联席 / --edu 教务）：
   - 联席：面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」；
@@ -176,9 +177,15 @@ def is_noise(t):
 
 
 def parse_dt(ts):
-    """解析消息时间戳（YYYY-MM-DDTHH:MM:SS）为 datetime，失败返回 None。"""
+    """解析消息时间戳为 datetime，失败返回 None。
+
+    兼容两种分隔符：`YYYY-MM-DDTHH:MM:SS`（后台接口）与 `YYYY-MM-DD HH:MM:SS`（导出/演示数据）。
+    """
+    s = (ts or "")[:19].strip()
+    if not s:
+        return None
     try:
-        return datetime.datetime.strptime((ts or "")[:19], "%Y-%m-%dT%H:%M:%S")
+        return datetime.datetime.strptime(s.replace(" ", "T"), "%Y-%m-%dT%H:%M:%S")
     except Exception:
         return None
 
@@ -206,6 +213,79 @@ def resp_wait_stats(triples_all):
     if open_ts:
         pending.append((open_ts, open_q))
     return waits, pending
+
+
+# —— 近 N 天待回应（v3.9）：联席忘记回复 / 学生问题仍未解决 ——
+# 用户口径：结合近 3 天聊天，若「联席忘记回复」或「学生问题未解决」，必须重点标记提醒。
+RECENT_DAYS = 3
+# 老师回复里出现这些「延宕 / 应允」词 → 该提问仍算未解决（说了会答但没有答）
+DEFER_KWS = ["稍后", "稍等", "晚点", "晚些", "一会儿", "等下", "等会", "待会", "过会儿", "明天", "下次",
+             "回头", "有时间", "再想想", "再讲", "到时候", "随后", "改天", "之后说", "后头", "这两天"]
+
+
+def _short(t, n=30):
+    return re.sub(r"\s+", " ", (t or "")).strip()[:n]
+
+
+def recent_pending(triples_all, anchor_ts, days=RECENT_DAYS):
+    """近 N 天「待回应」清单（v3.9）：以窗口内最新一条消息为基准往前推 N 天。
+
+    两类问题（都要重点标记提醒）：
+      ① 忘记回复 —— 近 N 天内学生/家长实质提问，其后（截至窗口末尾）再无任何老师消息；
+      ② 问题未解决 —— 老师确有回复，但回复命中延宕词（应允未答），
+                      或老师在回复后 24 小时内学生就同类疑问再次追问（没讲透）。
+
+    同一轮内（老师回复前的）连续多条提问只按首条计，避免刷量。
+    返回 {"days","since","anchor","items":[{at,q,kind,evi}],"missed_n","open_n"}。
+    """
+    d_anchor = parse_dt(anchor_ts)
+    if not d_anchor:
+        return {"days": days, "since": "", "anchor": "", "items": [], "missed_n": 0, "open_n": 0}
+    since_dt = d_anchor - datetime.timedelta(days=days)
+    since = since_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    items, n = [], len(triples_all)
+    i = 0
+    while i < n:
+        ts, r, t = triples_all[i]
+        d_q = parse_dt(ts)
+        # 只看近 N 天内的学生/家长实质提问（用 datetime 比较：msgTime 可能是空格或 T 分隔）
+        if (r != 2 or not t or is_noise(t) or is_ack(t) or not hits(t, Q_ASK)
+                or not d_q or d_q < since_dt):
+            i += 1
+            continue
+        j = i + 1                                   # 同一轮内老师的回复前的其它学生消息直接跳过
+        while j < n and triples_all[j][1] == 2:
+            j += 1
+        kind = evi = ""
+        if j >= n:                                  # 直到窗口末尾都没有老师动作 → 忘记回复
+            kind = "忘记回复"
+            evi = f"{ts[:10]} 学生/家长提问「{_short(t)}」，至今群内无老师回复"
+        else:
+            ts_t, _, t_t = triples_all[j]
+            if t_t and any(k in t_t for k in DEFER_KWS):
+                kind = "问题未解决"
+                evi = f"{ts[:10]} 提问「{_short(t)}」，老师 {ts_t[:10]} 应允「{_short(t_t, 18)}」后仍无下文"
+            else:
+                d_rep = parse_dt(ts_t)
+                reask = False
+                for k in range(j + 1, n):           # 老师回复后的第一条学生提问：24h 内再问 = 没讲透
+                    ts2, r2, t2 = triples_all[k]
+                    if r2 != 2 or not t2 or is_noise(t2) or is_ack(t2) or not hits(t2, Q_ASK):
+                        continue
+                    d2 = parse_dt(ts2)
+                    if d_rep and d2 and d2 > d_rep and (d2 - d_rep).total_seconds() <= 24 * 3600:
+                        reask = True
+                    break
+                if reask:
+                    kind = "问题未解决"
+                    evi = f"{ts[:10]} 提问「{_short(t)}」，老师已回复但 24 小时内学生再次追问，疑未讲透"
+        if kind:
+            items.append({"at": (ts or "")[:10], "q": _short(t, 22), "kind": kind, "evi": evi})
+        i = j + 1 if j < n else n
+    return {"days": days, "since": since_dt.strftime("%Y-%m-%d"), "anchor": (anchor_ts or "")[:10],
+            "items": items[:8],
+            "missed_n": sum(1 for x in items if x["kind"] == "忘记回复"),
+            "open_n": sum(1 for x in items if x["kind"] == "问题未解决")}
 
 
 def pair_after(triples, trig_kws, resp_kws, within_h=72.0):
@@ -288,6 +368,8 @@ def main():
                 "urge_n": 0, "urge_ok": 0, "urge_fail": [],
                 "fix_n": 0, "fix_ok": 0, "fix_fail": [],
                 "ask_lv": "无", "tea_pos": 0, "tea_neg": 0,
+                "recent3": {"days": RECENT_DAYS, "since": "", "anchor": "",
+                            "items": [], "missed_n": 0, "open_n": 0},
             }
             continue
         all_txt = " ".join(t for _, t in texts)
@@ -342,6 +424,8 @@ def main():
             unres_evi = f"{unresolved_at} 学生提问「{unresolved_q}…」，其后群内无老师回复"
         else:
             unres_evi = "会话尾部无未获回应提问"
+        # —— 近 3 天待回应（v3.9）：联席忘记回复 / 学生问题仍未解决，需重点标记提醒 ——
+        rt = recent_pending(triples_all, newest)
         # —— 响应时效：完全由聊天记录自算（弃用后台 isTimeout/isReplied，实测不准）——
         waits, pend = resp_wait_stats(triples_all)
         resp_n = len(waits)
@@ -362,6 +446,8 @@ def main():
             resp_evi = f"最长等待 {_w[0]:.0f} 小时（{(_w[1] or '')[:10]} 提问），老师已说明安排，不计迟缓"
         elif resp_n:
             resp_evi = f"窗口内 {resp_n} 次提问均获回复（最长等待 {resp_max_h:.1f} 小时）"
+        elif pend:
+            resp_evi = f"窗口末尾仍有 {len(pend)} 条学生/家长提问未获老师回应"
         else:
             resp_evi = "窗口内无学生实质提问"
         parts = [f"近窗覆盖 {oldest[:10]} ~ {newest[:10]}（共 {len(texts)} 条可分析消息；学生/家长 {n_stu} 条＝实质 {n_stu_sub} + 礼节 {n_ack}；老师 {n_tea} 条）。"]
@@ -418,9 +504,15 @@ def main():
         tea_neg = sum(hits(t, TEA_NEG) for t in tea_txt)
         if is_edu:
             # 教务视角：To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」，并注入该生具体信息
+            # 近 3 天待回应（v3.9）：联席忘记回复 / 问题未解决 —— 教务要盯闭环并向家长同步
+            for _it in rt["items"][:3]:
+                if _it["kind"] == "忘记回复":
+                    todos.append(("高", f"{_it['at']} 联席未回复学生提问「{_it['q']}」：提醒联席当日回应，必要时先向家长说明", _it["evi"]))
+                else:
+                    todos.append(("高", f"{_it['at']} 提问「{_it['q']}」仍未解决：盯联席闭环，并把进展同步家长", _it["evi"]))
             if resp_slow:
                 todos.append(("高", f"{resp_at} 该生提问后约 {resp_max_h:.0f} 小时才获回复：主动向家长说明并同步答疑进展，避免满意度下滑", resp_evi))
-            if unresolved:
+            if unresolved and not rt["items"]:
                 todos.append(("高", f"该生仍有未闭环疑问{tp_s}，把跟进进展反馈家长，让家长看到服务闭环", unres_evi))
             if hw_bad > 0:
                 todos.append(("中", f"该生作业出现「{hw_s}」，与家长沟通并商定家校督促方案", f"作业负面信号 {hw_bad} 处"))
@@ -436,13 +528,19 @@ def main():
             # 联席视角（v3.7）：To-Do 严格按「联席四维」优先级排 —— 互动状态 → 答疑闭环 → 催交作业
             # → 批改后订正 → 提问意愿。出勤/请假属教务关切（教务为续报负责），不再进入联席 To-Do，
             # 避免「确认出勤/补回放」这类教务动作抢走联席的「最该盯」。
+            # 近 3 天待回应（v3.9）优先级最高：忘记回复 / 问题未解决必须当天处理
+            for _it in rt["items"][:3]:
+                if _it["kind"] == "忘记回复":
+                    todos.append(("高", f"{_it['at']} 学生提问「{_it['q']}」至今未回复：今天内必须回应，先接住情绪再解题", _it["evi"]))
+                else:
+                    todos.append(("高", f"{_it['at']} 提问「{_it['q']}」老师应允后仍未解决：跟进到学生回复「懂了」为止", _it["evi"]))
             if interact_lv == "bad":
                 todos.append(("高", f"学生互动{interact}（{interact_evi}）：主动发起一次一对一沟通，确认学习状态与真实卡点", interact_evi))
             elif interact_lv == "warn":
                 todos.append(("中", f"学生互动{interact}（{interact_evi}）：课上多给一次点名提问 / 小黑板任务，把人调动起来", interact_evi))
             if resp_slow:
                 todos.append(("高", f"{resp_at} 该生提问后约 {resp_max_h:.0f} 小时才回复：补一句追问确认问题已解决，避免悬空", resp_evi))
-            if unresolved:
+            if unresolved and not rt["items"]:
                 todos.append(("高", f"回复学生未解答疑问{tp_s}（{unresolved_at} 提问）", unres_evi))
             if urge_n > urge_ok:
                 _n = urge_n - urge_ok
@@ -482,11 +580,17 @@ def main():
             "fix_n": fix_n, "fix_ok": fix_ok, "fix_fail": fix_fail,
             "ask_lv": ask_lv,
             "tea_pos": tea_pos, "tea_neg": tea_neg,   # 老师反馈（学习分层第三类证据）
+            # 近 3 天待回应（v3.9）：忘记回复 / 问题未解决，报告与待办共同消费
+            "recent3": rt,
         }
 
     json.dump(students, open(f"{wd}/analysis.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     n_unres = sum(1 for v in students.values() if v["unresolved"])
-    print(f"✅ 学生数 {len(students)} -> analysis.json（未闭环疑问 {n_unres} 人）")
+    n_miss = sum(v["recent3"]["missed_n"] for v in students.values())
+    n_open = sum(v["recent3"]["open_n"] for v in students.values())
+    n_stu_rt = sum(1 for v in students.values() if v["recent3"]["items"])
+    print(f"✅ 学生数 {len(students)} -> analysis.json（未闭环疑问 {n_unres} 人；"
+          f"近 {RECENT_DAYS} 天待回应 {n_stu_rt} 人：忘记回复 {n_miss} 项 / 问题未解决 {n_open} 项）")
 
 
 if __name__ == "__main__":
