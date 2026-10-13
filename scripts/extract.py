@@ -197,8 +197,9 @@ def resp_wait_stats(triples_all):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
+    ap.add_argument("--co", default=None, help="联席姓名（联席视角 / 课程内子筛选）")
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
+    ap.add_argument("--course", default=None, help="课程名（课程维度）")
     ap.add_argument("--window", default=WINDOW_DEFAULT, help="分析窗口起点 YYYY-MM-DD")
     args = ap.parse_args()
     role = common.resolve_scope(args)[0]

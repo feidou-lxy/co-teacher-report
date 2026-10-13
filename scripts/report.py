@@ -17,6 +17,7 @@
 """
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -175,10 +176,39 @@ def att_block(r):
     </div>'''
 
 
-def card_html(r, edu=False):
+def board_block(sm):
+    """学生卡第⑤块：小黑板逐轮读图结论（作答完整度＋正确/错误＋问题定位）。
+    无小黑板数据时不报错，给一句兜底。"""
+    if not sm:
+        return ('<div class="blk"><div class="blk-h">⑤ 小黑板作答</div>'
+                '<div class="noatt">该生暂无小黑板图片（未被收录 / 课程未提供）</div></div>')
+    sc = sm.get("status_counts", {})
+    chips = "".join(f'<span class="chip">{k} {v}</span>' for k, v in sc.items()) or '<span class="chip">—</span>'
+    errs = "、".join(sm.get("error_types", [])) or "—"
+    trend = sm.get("trend", "—")
+    rows = ""
+    for d in sm.get("details", []):
+        cls = {"完整作答": "ok", "部分作答": "pb", "空白": "no"}.get(d.get("status"), "")
+        correctness = d.get("correct", "")
+        err = "；".join(d.get("errors", [])) or "—"
+        stuck = d.get("stuck_at", "") or "—"
+        rows += (f'<tr><td>{d.get("round","")}</td><td>{d.get("problem","")}</td>'
+                 f'<td class="bs {cls}">{d.get("status","")}</td><td>{correctness}</td>'
+                 f'<td>{err}</td><td>{stuck}</td></tr>')
+    return f'''<div class="blk">
+      <div class="blk-h">⑤ 小黑板作答（逐轮读图）</div>
+      <div class="kv"><span class="k">轮次</span><span class="v">共 {sm.get("rounds",0)} 轮，已读图分析 {sm.get("analyzed",0)} 轮</span></div>
+      <div class="kv"><span class="k">作答分布</span><span class="chips">{chips}</span></div>
+      <div class="kv"><span class="k">典型错误</span><span class="v">{errs}</span></div>
+      <div class="kv"><span class="k">趋势</span><span class="v">{trend}</span></div>
+      <table><tr><th>轮次</th><th>题目</th><th>作答</th><th>正确性</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
+    </div>'''
+
+
+def card_html(r, edu=False, show_co_tag=False, board=None):
     s, g = r["s"], r["g"]
     co = g.get("coTeacherName") or "未分配联席"
-    co_tag = (f'<span class="ctag">联席：{co}</span>') if edu else ""
+    co_tag = (f'<span class="ctag">联席：{co}</span>') if (edu or show_co_tag) else ""
     bt = (s.get("buy_type") or "").strip()
     bt_cls = {"直播": "live", "回放": "replay"}.get(bt, "other")
     bt_tag = f'<span class="btag {bt_cls}">{bt}</span>' if bt else ""
@@ -238,6 +268,7 @@ def card_html(r, edu=False):
         <div class="kv"><span class="k">{cadence_label}</span><span class="v">{cadence}</span></div>
         <div class="kv"><span class="k">改善信号</span><span class="v">{imp}</span></div>
       </div>
+      {board_block(board)}
     </div>"""
 
 
@@ -309,6 +340,8 @@ th{color:#8a9099;font-weight:600}
 .attflag.green{background:#e8f7f0;color:#2ba471}
 .lvnote{font-size:12px;color:#8a9099;margin-top:6px;line-height:1.6}
 .noatt{font-size:13px;color:#8a9099}
+.bs{font-weight:600}
+.bs.ok{color:#2ba471} .bs.pb{color:#ff8f1f} .bs.no{color:#e54545}
 .tabs{position:sticky;top:52px;z-index:20;background:#f5f6f8;padding:10px 0;display:flex;gap:8px;flex-wrap:wrap;border-bottom:2px solid #e6e8eb;margin-bottom:18px;max-height:212px;overflow-y:auto}
 .tab{border:1px solid #d8dce3;background:#fff;color:#3a5bdb;font-size:13px;font-weight:600;padding:7px 12px;border-radius:10px;cursor:pointer;line-height:1.3;text-align:left;transition:.15s;max-width:232px}
 .tab .tname{display:block;max-width:206px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -332,9 +365,10 @@ th{color:#8a9099;font-weight:600}
 """
 
 
-def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, edu=False):
-    """构造一个分组区块（grp）。show_filter=True 时渲染「筛选联席」下拉（仅教务·按课程维度用）。
-    edu=True（教务视角）：学生卡第④块为「教务 To-Do」；否则为「联席跟进 Action」。"""
+def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, edu=False, show_co_tag=False, boards_map=None):
+    """构造一个分组区块（grp）。show_filter=True 时渲染「筛选联席」下拉（教务·按课程维度 / 课程维度用）。
+    edu=True（教务视角）：学生卡第④块为「教务 To-Do」；否则为「联席跟进 Action」。
+    show_co_tag=True（课程维度）：学生卡标注所属联席，便于一门课跨多个联席时区分归属。"""
     c_slow = sum(1 for r in crows if r["s"].get("resp_slow"))
     c_unres = sum(1 for r in crows if r["s"]["unresolved"])
     c_msgs = sum(r["s"]["n_text"] for r in crows)
@@ -354,7 +388,8 @@ def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, ed
                     f'<span class="cnt">该课程下共 {len(co_opts)} 名联席</span></div>')
     else:
         cofilter = ""
-    cards = "".join(card_html(r, edu=edu) for r in crows)
+    cards = "".join(card_html(r, edu=edu, show_co_tag=show_co_tag,
+                              board=(boards_map or {}).get(common.norm_name(r["stu"]))) for r in crows)
     todo_head = "教务 To-Do" if edu else "联席 To-Do"
     disp = 'style="display:block"' if is_all else 'style="display:none"'
     return f'''
@@ -376,15 +411,24 @@ def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, ed
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
+    ap.add_argument("--co", default=None, help="联席姓名（联席视角 / 课程内子筛选）")
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
+    ap.add_argument("--course", default=None, help="课程名（课程维度），如 高二数学清北层日E邵")
     ap.add_argument("--window", default=WINDOW_DEFAULT)
     args = ap.parse_args()
     role, name = common.resolve_scope(args)
     is_edu = role == "edu"
-    role_cn = "教务" if is_edu else "联席"
+    is_course = role == "course"
+    role_cn = "教务" if is_edu else ("课程" if is_course else "联席")
+    view_cn = "教务双维度" if is_edu else ("课程维度" if is_course else "联席")
+    blk4_cn = "教务" if is_edu else "联席"
+    scope_label = "该课程" if is_course else ("下属" if is_edu else "负责")
     wd = common.workdir(args)
     A = json.load(open(f"{wd}/analysis_merged.json", encoding="utf-8"))
+
+    # 小黑板逐轮读图结论（可选）：boards_summary.json 由 pull_boards + read_boards 产出，按「姓名」索引
+    boards_path = os.path.join(wd, "boards_summary.json")
+    boards_map = json.load(open(boards_path, encoding="utf-8")) if os.path.exists(boards_path) else {}
 
     rows = []
     for stu, s in A.items():
@@ -431,15 +475,15 @@ def main():
         co_order = [k for k, _ in Counter(r["co"] for r in rows).most_common()]
         co_all = Counter(r["co"] for r in rows)
 
-        course_sections = [build_section("c", "c-all", rows, "全部课程（按课程维度）", True, co_all, True, True)]
+        course_sections = [build_section("c", "c-all", rows, "全部课程（按课程维度）", True, co_all, True, True, boards_map=boards_map)]
         for ci, ck in enumerate(course_order):
             cr = by_course[ck]
             course_sections.append(build_section("c", f"c-{ci}", cr, ck, True,
-                                                 Counter(r["co"] for r in cr), False, True))
-        co_sections = [build_section("co", "co-all", rows, "全部联席（按联席维度）", False, None, True, True)]
+                                                 Counter(r["co"] for r in cr), False, True, boards_map=boards_map))
+        co_sections = [build_section("co", "co-all", rows, "全部联席（按联席维度）", False, None, True, True, boards_map=boards_map)]
         for ci, ck in enumerate(co_order):
             cr = by_co[ck]
-            co_sections.append(build_section("co", f"co-{ci}", cr, ck, False, None, False, True))
+            co_sections.append(build_section("co", f"co-{ci}", cr, ck, False, None, False, True, boards_map=boards_map))
 
         course_tabs = ['<button class="tab active" onclick="showTab(\'course\',\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(course_order):
@@ -467,13 +511,23 @@ def main():
   {''.join(co_sections)}
 </div>'''
         edu_note = "教务视角支持「双维度」：顶部可切换「按课程维度」（课程 Tab 下再筛联席）或「按联席维度」（按下属联席下钻，学生卡标注所属联席）。"
+    elif is_course:
+        # ===== 课程维度：单一课程，按「所属联席」下钻 =====
+        co_all = Counter(r["co"] for r in rows)
+        course_sections = [build_section("c", "c-all", rows, name, True, co_all, True, False, show_co_tag=True, boards_map=boards_map)]
+        course_tabs = ['<button class="tab active" onclick="showTab(\'course\',\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
+        panels = f'''<div class="dim-panel" id="dim-course">
+  <div class="tabs">{''.join(course_tabs)}</div>
+  {''.join(course_sections)}
+</div>'''
+        edu_note = "课程维度：单一课程下跨多个联席，顶部「筛选联席」可下钻到具体联席，学生卡标注所属联席；第④块为联席跟进 Action。"
     else:
         # ===== 联席视角（仅按课程） =====
         course_order = [k for k, _ in Counter(r["course"] for r in rows).most_common()]
-        course_sections = [build_section("c", "c-all", rows, "全部课程", False, None, True, False)]
+        course_sections = [build_section("c", "c-all", rows, "全部课程", False, None, True, False, boards_map=boards_map)]
         for ci, ck in enumerate(course_order):
             cr = [r for r in rows if r["course"] == ck]
-            course_sections.append(build_section("c", f"c-{ci}", cr, ck, False, None, False, False))
+            course_sections.append(build_section("c", f"c-{ci}", cr, ck, False, None, False, False, boards_map=boards_map))
         course_tabs = ['<button class="tab active" onclick="showTab(\'course\',\'c\',-1)">📊 全部（{0}）</button>'.format(len(rows))]
         for ci, ck in enumerate(course_order):
             n = sum(1 for r in rows if r["course"] == ck)
@@ -491,10 +545,10 @@ def main():
 <title>{name}（{role_cn}）学生学情分析</title>
 <style>{CSS}</style></head>
 <body><div class="wrap">
-<h1>{name}（{role_cn}）· 学生学情分析{ '（双维度：按课程 / 按联席）' if is_edu else '（按课程切换）' }</h1>
+<h1>{name}（{role_cn}）· 学生学情分析{ '（双维度：按课程 / 按联席）' if is_edu else ('（课程维度 · 按联席下钻）' if is_course else '（按课程切换）') }</h1>
 <div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：{subject_line} ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 <div class="kpis">
-  <div class="kpi"><div class="n">{len(rows)}</div><div class="l">负责学生（全量）</div></div>
+  <div class="kpi"><div class="n">{len(rows)}</div><div class="l">{scope_label}学生（全量）</div></div>
   <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
   <div class="kpi red"><div class="n">{slow_n}</div><div class="l">响应迟缓群（聊天分析）</div></div>
   <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
@@ -509,12 +563,12 @@ def main():
   <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{glob_topic_rows}</table></div>
 <div class="section"><h2>四、方法论与口径说明</h2>
 <p class="note">
-• 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}全部学生群；<code>wxworkChat/getChatList</code> 取每群最近消息（倒序，单群上限 500 条），文本与语音转写均纳入。<br>
+• 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 取每群最近消息（倒序，单群上限 500 条），文本与语音转写均纳入。<br>
 • 分析窗口：仅分析 <b>{args.window} 至今</b>的聊天内容。<br>
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
 • 出勤判定：「是否需关注」规则 —— 全缺 → 🔴 高风险建议电话；缺 ≥2 节 或 “缺了且未看回放” → 🔴 需关注；缺 1 节未看回放 → 🟡 轻关注；缺 1 节但已看回放 / 全勤 → 🟢 常规。<b>出勤为独立提示，不改变红黄绿定档。</b><br>
 • 请假备注：仅摘录学生在群内自述的请假/看回放缘由，后台无请假原因字段，具体以教务记录为准。<br>
-• 报告结构（{role_cn}视角）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 知识掌握与薄弱点；④ {role_cn} To-Do（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ''}<br>
+• 报告结构（{view_cn}）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 知识掌握与薄弱点；④ {blk4_cn} To-Do（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）；⑤ 小黑板作答（逐轮读图结论：作答完整度＋正确/错误＋问题定位）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ''}<br>
 • 配合度（结论式）：依据 学生本人发言密度/主动提问 与 家长代交/代沟通措辞 综合判定类型（如“家长推着走”型 / 放手培养型），数据源未区分发言者 ID，为启发式估算，供跟进策略参考。<br>
 • 定档规则：🔴 红=聊天分析判定「响应迟缓」（学生提问后 ≥24 小时才见老师回复）或「需回复」（会话尾部仍有未获回应提问），或存在未闭环疑问/负面情绪；🟡 黄=有未解疑问、作业负面信号、出勤异常或负面情绪；🟢 绿=其余正常推进。<br>
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
@@ -579,6 +633,8 @@ function doSearch(val){{
     open(out, "w", encoding="utf-8").write(html)
     if is_edu:
         print(f"✅ HTML 生成完成（教务双维度）｜ 课程数 {len(course_order)} · 联席数 {len(co_order)} ｜ {out}")
+    elif is_course:
+        print(f"✅ HTML 生成完成（课程维度）｜ 课程：{name} · 联席数 {len(co_all)} · 学生 {len(rows)} ｜ {out}")
     else:
         print(f"✅ HTML 生成完成（联席·课程维度）｜ 课程数 {len(course_order)} ｜ {out}")
 

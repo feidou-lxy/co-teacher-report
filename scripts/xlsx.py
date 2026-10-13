@@ -114,10 +114,12 @@ def main():
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--co", default=None)
     ap.add_argument("--edu", default=None)
+    ap.add_argument("--course", default=None)
     args = ap.parse_args()
     role, name = common.resolve_scope(args)
     is_edu = role == "edu"
-    role_cn = "教务" if is_edu else "联席"
+    is_course = role == "course"
+    role_cn = "教务" if is_edu else ("课程" if is_course else "联席")
     wd = common.workdir(args)
     A = json.load(open(f"{wd}/analysis_merged.json", encoding="utf-8"))
 
@@ -201,6 +203,9 @@ def main():
         n_course = build_todo_sheet("教务To-Do·按课程", lambda g: course_of(g.get("groupName", "")), "教务 To-Do")
         n_co = build_todo_sheet("教务To-Do·按联席", lambda g: g.get("coTeacherName") or "未分配联席", "教务 To-Do")
         idx = n_course + n_co
+    elif is_course:
+        # 课程维度：单一课程，按「所属联席」分组（联席跟进 Action）
+        idx = build_todo_sheet("课程待办·按联席", lambda g: g.get("coTeacherName") or "未分配联席", "联席 To-Do")
     else:
         # 联席：按课程分组的待办清单
         idx = build_todo_sheet("课程待办清单", lambda g: course_of(g.get("groupName", "")), "联席 To-Do")
@@ -225,12 +230,42 @@ def main():
     for k, v in w3.items():
         ws3.column_dimensions[k].width = v
 
+    # 小黑板逐轮读图分析（可选，来自 boards_summary.json）
+    boards_path = os.path.join(wd, "boards_summary.json")
+    boards_map = json.load(open(boards_path, encoding="utf-8")) if os.path.exists(boards_path) else {}
+    if boards_map:
+        ws4 = wb.create_sheet("小黑板分析(读图)")
+        cols4 = ["学生", "轮次总数", "已读图", "作答分布", "典型错误", "趋势", "逐轮明细"]
+        ws4.append(cols4)
+        for c in range(1, len(cols4) + 1):
+            cell = ws4.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
+        for _, stu, s, g, slow, unreply in rows:
+            sm = boards_map.get(common.norm_name(stu))
+            if not sm:
+                continue
+            sc = sm.get("status_counts", {})
+            dist = " / ".join(f"{k}{v}" for k, v in sc.items()) or "—"
+            details = " | ".join(
+                f"{d.get('round','')}:{d.get('problem','')}({d.get('status','')}/{'正确' if d.get('correct')=='正确' else '有错'})"
+                for d in sm.get("details", []))
+            ws4.append([stu, sm.get("rounds", 0), sm.get("analyzed", 0), dist,
+                        "、".join(sm.get("error_types", [])) or "—", sm.get("trend", "—"), details])
+            for c in range(1, len(cols4) + 1):
+                ws4.cell(ws4.max_row, c).border = border; ws4.cell(ws4.max_row, c).alignment = wrap
+        ws4.freeze_panes = "A2"
+        w4 = {"A": 13, "B": 9, "C": 8, "D": 20, "E": 22, "F": 12, "G": 70}
+        for k, v in w4.items():
+            ws4.column_dimensions[k].width = v
+
     out = f"{wd}/{name}_学生待办清单.xlsx"
     wb.save(out)
+    board_note = f" ｜ 小黑板 {len(boards_map)} 生" if boards_map else ""
     if is_edu:
         print(f"✅ XLSX 生成完成（教务·双维度·教务To-Do）｜ 总览 {len(rows)} 行 ｜ 按课程 {n_course} 项 + 按联席 {n_co} 项 ｜ {out}")
+    elif is_course:
+        print(f"✅ XLSX 生成完成（课程维度·按联席）｜ 总览 {len(rows)} 行 ｜ 待办 {idx} 项{board_note} ｜ {out}")
     else:
-        print(f"✅ XLSX 生成完成（{role_cn}视角）｜ 总览 {len(rows)} 行 ｜ 待办 {idx} 项 ｜ {out}")
+        print(f"✅ XLSX 生成完成（{role_cn}视角）｜ 总览 {len(rows)} 行 ｜ 待办 {idx} 项{board_note} ｜ {out}")
 
 
 if __name__ == "__main__":

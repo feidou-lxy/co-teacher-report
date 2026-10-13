@@ -1,6 +1,6 @@
 ---
 name: co-teacher-report
-description: 生成「联席 / 教务」双视角学生学情报告。从学生管理后台（stadminv2.xqmsx.cn）拉取某联席（coTeacherName）或某教务（classTeacherName）名下学生的群聊记录与逐节课出勤，逆向分析薄弱知识点、配合度（学生自驱 vs 家长支持）、响应时效与风险，输出 4 块式 HTML 报告（联席按课程切换 / 教务按下属联席下钻）+ 待办清单 Excel。This skill should be used when a 教育机构联席/教务/班主任/学管想要快速掌握名下学生的学情、出勤与跟进动作，或需要批量生成可下发的学情报告。
+description: 生成「联席 / 教务 / 课程」三视角学生学情报告。从学生管理后台（stadminv2.xqmsx.cn）拉取某联席（coTeacherName）、某教务（classTeacherName）或某课程（课程名，跨多个联席）名下学生的群聊记录与逐节课出勤，逆向分析薄弱知识点、配合度（学生自驱 vs 家长支持）、响应时效与风险；并可选叠加「小黑板」手写作答图片的逐轮读图分析（作答完整度 / 正确错误 / 问题定位），输出 HTML 报告 + 待办清单 Excel。This skill should be used when a 教育机构联席/教务/班主任/学管想要快速掌握名下或某课程学生的学情、出勤与跟进动作，或需要批量生成可下发的学情报告。
 agent_created: true
 ---
 
@@ -11,9 +11,10 @@ agent_created: true
 把分散在「企微群聊」和「学生管理后台」里的学情信号，汇成一份**一眼能看**的报告：
 谁该重点盯、配合度如何、出勤有没有问题、薄弱点是什么、下一步怎么跟进。
 
-支持两种视角：
+支持三种视角：
 
 - **联席视角**（`--co 张巍`）：输入一个**联席姓名**，输出该联席名下全部学生的学情报告 + 待办清单（按课程切换）。
+- **课程视角**（`--course 高二数学211层六C肖`，v3.6 新增）：输入一个**课程名**，输出该课程下**全部学生**（一门课跨多个联席）。报告为**单课程**结构，顶部「筛选联席」下拉可下钻到具体联席，学生卡标注所属联席；待办 Excel 按「所属联席」分组。可加 `--co <联席名>` 做课程内子筛选（只看该联席负责的部分）。
 - **教务视角**（`--edu 罗绂燕`）：输入一个**教务姓名**，输出该教务管辖的全部学生（跨多个下属联席）。报告支持**双维度切换**（顶部一键切）：
   - **按课程维度**（默认）：课程 Tab 切换，每个课程下可再「筛选联席」，课程 → 联席两级下钻；
   - **按联席维度**：按下属联席分组下钻，每 Tab 一名联席，学生卡标注所属联席。
@@ -27,7 +28,9 @@ agent_created: true
 
 - 用户说「帮张巍（或某联席）出一份学情报告 / 学情分析 / 跟进清单」
 - 用户说「帮罗绂燕（或某教务）出一份管辖学生的学情报告」——即教务视角，看其名下所有联席的整体与分组情况
+- 用户说「分析某课程（如 高二数学211层六C肖）下的所有学生」——即课程视角
 - 用户想要「按课程看学生表现」「按联席看下属学情」「看谁出勤异常 / 谁配合度低 / 谁有未解疑问」
+- 用户提供了一批**小黑板手写作答图片**，想把「课堂作答对错 / 卡点」也纳入学生分析
 - 用户要把群聊和出勤数据汇成可下发的报告给联席 / 教务团队
 
 ## 前置条件
@@ -65,22 +68,30 @@ agent_created: true
 python <skill>/scripts/run_all.py --co 张巍 --window 2026-09-01 --month 2026-09
 # 教务视角（按下属联席下钻）
 python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 2026-09
+# 课程视角（单课程 + 按联席下钻）；可带小黑板图片目录一起分析
+python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 2026-09-01 --boards ~/Desktop/邵清北课上小黑板
 ```
 
 `<skill>` 为本技能目录。该命令依次执行：
 
-1. `pull_students.py` — 拉花名册，按 `coTeacherName`（联席）或 `classTeacherName`（教务）过滤出目标学生 → `students.json`
-2. `pull_groups.py` — 拉群聊列表（月维度+日维度并集），**双条件过滤**：① 群内学生 ∈ 花名册；② 群归属 == 本角色（联席看群 `coTeacherName` / 教务看群 `classTeacherName`）。仅按学生名交集会误收该生其他学科、由别的角色负责的群 → `groups.json`
-3. `pull_chats.py` — 逐群拉聊天（文本+语音转写）→ `chats.json`
+1. `pull_students.py` — 拉花名册，按 `coTeacherName`（联席）/ `classTeacherName`（教务）过滤；课程视角按课程名匹配 `productName` 拉该课程全部学生 → `students.json`
+2. `pull_groups.py` — 拉群聊列表（月维度+日维度并集），**双条件过滤**：① 群内学生 ∈ 花名册；② 群归属 == 本角色（联席看群 `coTeacherName` / 教务看群 `classTeacherName`）。仅按学生名交集会误收该生其他学科、由别的角色负责的群。课程视角按群名含课程名筛选、跳过 owner 过滤（课程跨联席）→ `groups.json`
+3. `pull_chats.py` — 逐群拉聊天（文本+语音转写，**分页拉满，不再截断**）→ `chats.json`
 4. `pull_attendance.py` — 拉逐节课出勤（按 ProductId），按 `students.json` 学生白名单过滤 → `attendance_raw.json`
 5. `build_attendance.py` — 去重清洗 → `attendance_clean.json`
 6. `extract.py` — 信号提取（窗口过滤、薄弱点、配合度、未闭环疑问），**并按角色生成 To-Do**（联席=跟课辅导口径 / 教务=家长沟通口径）→ `analysis.json`
 7. `leave_notes.py` — 从聊天捞学生/家长自述的请假缘由 → `leave_notes.json`
 8. `merge.py` — 出勤 + 请假备注并入分析 → `analysis_merged.json`
-9. `report.py` — 生成 4 块式 HTML 报告（联席按课程切换 / 教务双维度：按课程可再筛联席 · 按联席下钻）→ `<姓名>_学情分析.html`
+9. `report.py` — 生成 4 块式 HTML 报告（联席按课程切换 / 课程单课程按联席下钻 / 教务双维度）→ `<姓名>_学情分析.html`
 10. `xlsx.py` — 生成待办 Excel（总览/待办/出勤明细，含所属联席列）→ `<姓名>_学生待办清单.xlsx`
 
-`--co` 与 `--edu` 二选一，不可同用。
+**提供 `--boards <小黑板目录>` 时，追加两步：**
+
+11. `pull_boards.py` — 扫描小黑板图片目录，建立「学生 → 逐轮」索引 → `boards.json`
+12. `read_boards.py` — 逐张读图做结构化分析（作答完整度 / 正确错误 / 问题定位）→ `board_analysis.json` → 聚合 `boards_summary.json`
+    （未配置视觉模型时，先生成 `board_analysis_template.json` 待填清单，人工/代理回填后再跑本步聚合；详见「小黑板读图」小节）
+
+`--co` / `--edu` / `--course` 三选一为主维度，不可同用（课程视角可另加 `--co` 做课程内子筛选）。
 
 若需分步调试，可单独调用各脚本（均支持 `--workdir` / `--co` / `--edu` / `--window` 等参数，
 详见各脚本 `--help`）。
@@ -97,7 +108,7 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 
 学生卡标题（学生姓名）后展示**购课类型**小标签（`直播` / `回放` / `试听（插班）` / `测试`）——取自后台「我的学生」列表的「购课类型」列（花名册字段 `cIncomeProductType`）。联席与教务两种视角均展示。
 
-每张学生卡 4 块：
+每张学生卡 4 块（提供小黑板时追加第 5 块）：
 
 1. **速览卡** — 定档（红/黄/绿）+ 配合度**结论式**（去星级）+ 最该盯 1 件事 + **信号条**。
    **排版**：配合度、「最该盯」（标签＋依据小字＋行动）、信号条**各自独立成行**。
@@ -108,6 +119,7 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 2. **出勤（后台权威）** — 逐节 `✓/回放/✗` + 日期 → `出勤X/N·缺Y·回放Z` → **是否需关注**（红黄绿）+ 请假备注
 3. **知识掌握与薄弱点** — 薄弱 / 错误类型 / 优势
 4. **联席跟进 Action / 教务 To-Do** — 按角色（联席=跟课辅导；教务=家长沟通）；优先级动作 + 追踪/沟通节奏 + 改善信号
+5. **小黑板作答（逐轮读图，v3.6 新增，仅当提供 `--boards`）** — 轮次统计 + 作答分布 + 典型错误 + 趋势 + 逐轮明细表（题目 / 作答完整度 / 正确性 / 错误类型 / 卡点）。报告**内嵌文字结论、不嵌图片**。
 
 口径约定（已与用户确认）：
 
@@ -170,6 +182,27 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 - **To-Do 按角色定制**：第④块动作随视角不同——联席视角为「跟课辅导 / 答疑 / 作业订正 / 出勤补课」；教务视角为「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」。教务视角的兜底项为「常规家长沟通…」。
 - **购课类型**：展示在学生姓名之后（`直播` / `回放` / `试听（插班）` / `测试`）。来源为花名册字段 `cIncomeProductType`（后台「我的学生」列表的「购课类型」列）；取值映射来自字典接口 `GET /sysDictionary/findSysDictionary?type=productType`（1=直播 2=回放 3=试听（插班）4=测试）。总览 Excel 同步新增「购课类型」列。
 
+### 课程维度（v3.6 新增）
+
+- **取数**：`--course <课程名>`（如 `高二数学211层六C肖`）。花名册按 `productName` 含课程名筛出该课程**全部学生**（跨多个联席，各自 `coTeacherName`）；群列表按群名含课程名筛选（**不做 owner 过滤**，因为课程跨联席）。可加 `--co <联席名>` 只保留该联席负责的部分。
+- **报告**：单课程结构（无课程 Tab）。顶部「筛选联席」下拉按 `coTeacherName` 下钻，学生卡标注「联席：XXX」；第④块为「联席跟进 Action」（教学跟进口径）。
+- **待办 Excel**：`课程待办·按联席`（按所属联席分组）+ 总览/出勤明细。
+- 课程名解析：群名形如 `学生名-高二数学211层六C肖-XXX`，取第 2 段作课程原始名；展示名由 `course_of()` 收敛为 `高二数学·211层·六C班（肖老师）`。
+
+### 小黑板读图（v3.6 新增，可选）
+
+- **图片目录结构**：按「日期 / 时间戳」分层，每个时间戳目录 = 一次抓拍/一题；文件名 `序号_[W/Z]-姓名[数字].png`。
+  - ⚠️ **序号每轮会变**，匹配必须用**姓名**（`norm_name` 去尾部数字后缀）；**W/Z 只是分批上传标记，无教学含义，不当过关/未过关**。
+  - 无 W/Z 的（如 `1_邵文剑`）＝空白模板/老师版。
+- **索引**：`pull_boards.py --boards <目录>` → `boards.json`（`{归一化姓名: [{round, date, path, flag}]}`）。
+- **读图分析**：`read_boards.py`
+  - 配置视觉模型时全自动：在 `<workdir>/boards_llm.json` 写 `{"base_url","api_key","model"}`（OpenAI 兼容多模态），
+    或设环境变量 `BOARDS_LLM_BASE_URL / BOARDS_LLM_API_KEY / BOARDS_LLM_MODEL`；逐张输出
+    `problem / topic / status(完整作答|部分作答|空白未提交) / correct(正确|有错|待判) / errors[] / stuck_at / note`。
+  - 未配置模型时：生成 `board_analysis_template.json` 待填清单，人工/代理逐张读图回填 `board_analysis.json` 后再跑本步聚合。
+  - 聚合产物 `boards_summary.json`（`{姓名: {rounds, analyzed, status_counts, error_types, trend, details}}`），供 report / xlsx 消费。
+- **呈现**：报告第⑤块与 Excel「小黑板分析(读图)」sheet；**只出文字结论，不嵌图片**。
+
 ## 目录与产物
 
 ```
@@ -183,14 +216,17 @@ python <skill>/scripts/run_all.py --edu 罗绂燕 --window 2026-09-01 --month 20
 ├── analysis.json            # 信号提取
 ├── leave_notes.json         # 请假备注
 ├── analysis_merged.json     # 合并最终分析
-├── <姓名>_学情分析.html    # ← 主交付（联席按课程切换 / 教务双维度：按课程+按联席）
-└── <姓名>_学生待办清单.xlsx    # ← 主交付（联席=课程待办清单 / 教务=教务To-Do·按课程+按联席）
+├── boards.json              # （可选）小黑板图片索引（提供 --boards 时）
+├── board_analysis.json      # （可选）逐张读图结构化结论
+├── boards_summary.json      # （可选）小黑板逐生聚合结论（第⑤块 / Excel sheet 消费）
+├── <姓名|课程名>_学情分析.html    # ← 主交付（联席按课程切换 / 课程按联席下钻 / 教务双维度）
+└── <姓名|课程名>_学生待办清单.xlsx  # ← 主交付（含小黑板分析 sheet）
 ```
 
 ## 注意事项
 
 - token 约 24 小时过期，过期后重登并覆盖 `token.txt` 再重跑。
-- 群聊单群上限 500 条；超活跃群可能截断，属已知限制。
+- 群聊**分页拉满不再截断**（v3.5 起固化；此前单群 500 条上限已取消），活跃群也能取全窗口消息。
 - 当前脚本针对「高二数学」课程命名规则解析课程标签；其他学科接入时微调
   `common.clean_course_name` 与 `report.py` / `xlsx.py` 里的 `course_of` 正则即可。
 - 接口为逆向所得，若后台升级改字段，优先核对 `references/api_contract.md` 并相应调整脚本。

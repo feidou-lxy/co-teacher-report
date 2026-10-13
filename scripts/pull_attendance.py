@@ -21,6 +21,7 @@ def main():
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
+    ap.add_argument("--course", default=None, help="课程名（课程维度）")
     args = ap.parse_args()
     wd = common.workdir(args)
     token = common.load_token(wd)

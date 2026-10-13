@@ -1,15 +1,14 @@
-"""步骤2：拉取该角色「名下学生 + 归属该角色」的群聊列表（仅群标识信息）。
+"""步骤2：拉取该角色/课程下的群聊列表（仅群标识信息）。
 
-逻辑：
-  - wxworkSessionStat/getList 月维度覆盖「整月所有有聊天的群」（需传当月第一天；
-    当前月后台未聚合，故月维度取窗口起始月，再用日维度补当前月）。
-  - **双条件过滤**（缺一不可）：
-      ① 群内学生名 ∈ students.json 名单（这名学生确实是本角色的学生）；
-      ② 群自带的归属字段 == 本角色 —— 联席看 coTeacherName、教务看 classTeacherName。
-    仅有 ① 是不够的：一名学生可能同期报了多科，这些科的群由**别的联席/教务**负责，
-    若只按学生名交集会把别的角色的群也拉进来（如「张巍（数学联席）」被混入学生的
-    物理/化学/英语群）。② 保证只保留真正归本角色管的群。
-    若后台某群归属字段为空，则回退保留（避免漏群）。
+接口 wxworkSessionStat/getList 为**机构级**（不带 co/edu 过滤），月维度覆盖整月、
+再用日维度补当前月，按 roomId 去重。三种视角在此之上做不同过滤：
+
+  - 联席/教务视角（双条件，缺一不可）：
+      ① 群内学生名 ∈ students.json 名单；② 群归属字段 == 本角色（联席看 coTeacherName、
+         教务看 classTeacherName）。② 避免把学生别的科目群（由别的角色负责）混入。
+  - **课程维度（--course）**：群名 groupName 包含课程串即收（如「高二数学清北层日E邵」），
+     无需学生名/归属过滤——课程天然跨多个联席，正是要一次性取出该课全部群；
+     另传 --co <联席名> 可作课程内子筛选（只保留该联席负责的部分）。
 
 输出 <workdir>/groups.json ：[{roomId, studentName, groupName,
 coTeacherName, classTeacherName, subjectName}]
@@ -72,15 +71,61 @@ def owner_matches(owner, target):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
+    ap.add_argument("--co", default=None, help="联席姓名（联席视角 / 课程内子筛选）")
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
+    ap.add_argument("--course", default=None, help="课程名（课程维度），如 高二数学清北层日E邵")
     ap.add_argument("--month", default="2026-09", help="窗口起始月 YYYY-MM（月维度取该月第一天）")
     ap.add_argument("--year", default="4")
     ap.add_argument("--term", default="3")
     args = ap.parse_args()
-
+    role, name = common.resolve_scope(args)
     wd = common.workdir(args)
     token = common.load_token(wd)
+
+    # 月维度：窗口起始月第一天
+    month_first = f"{args.month}-01"
+    rows = pull_dimension(token, "month", month_first, args.year, args.term)
+    # 日维度：补当前月（当天）
+    today = datetime.date.today().isoformat()
+    rows += pull_dimension(token, "day", today, args.year, args.term)
+
+    # 按 roomId 去重（co/edu/课程 三视角共用机构级群列表）
+    by_room = {}
+    for g in rows:
+        rid = g.get("roomId")
+        if rid:
+            by_room[rid] = g
+    print(f"机构级群列表去重后 {len(by_room)} 个")
+
+    if role == "course":
+        # —— 课程维度：群名含课程串即收（课程天然跨多个联席，一次性取出该课全部群）——
+        course = name
+        sub_co = (getattr(args, "co", None) or "").strip()
+        out = []
+        for g in by_room.values():
+            gn = g.get("groupName") or ""
+            if course not in gn:
+                continue
+            # 课程内可选子筛选：只保留指定联席负责的部分
+            if sub_co and not owner_matches(g.get("coTeacherName"), sub_co):
+                continue
+            out.append({
+                "roomId": g.get("roomId"),
+                "studentName": g.get("studentName"),
+                "groupName": g.get("groupName"),
+                # 课程维度直接用群自带的归属/学科（无需学生名映射）
+                "coTeacherName": g.get("coTeacherName") or "",
+                "classTeacherName": g.get("classTeacherName") or "",
+                "ownerName": g.get("coTeacherName") or "",
+                "subjectName": g.get("subjectName") or "",
+            })
+        json.dump(out, open(f"{wd}/groups.json", "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=1)
+        print(f"\n✅ 课程「{course}」命中群 {len(out)} 个 -> groups.json"
+              + (f"（已按联席「{sub_co}」子筛选）" if sub_co else ""))
+        return
+
+    # —— 联席/教务视角（双条件过滤）——
     students = json.load(open(f"{wd}/students.json", encoding="utf-8"))
     names = set(common.norm_name(x["stuName"]) for x in students)
     # 学生 -> 所属联席/教务 映射，供下游按联席分组与标注
@@ -94,21 +139,6 @@ def main():
     # 本角色的群归属字段：联席看群自带 coTeacherName，教务看群自带 classTeacherName
     owner_field = "classTeacherName" if args.edu else "coTeacherName"
     print(f"{label}「{scope}」学生姓名（归一化）{len(names)} 个")
-
-    # 月维度：窗口起始月第一天
-    month_first = f"{args.month}-01"
-    rows = pull_dimension(token, "month", month_first, args.year, args.term)
-    # 日维度：补当前月（当天）
-    today = datetime.date.today().isoformat()
-    rows += pull_dimension(token, "day", today, args.year, args.term)
-
-    # 按 roomId 去重
-    by_room = {}
-    for g in rows:
-        rid = g.get("roomId")
-        if rid:
-            by_room[rid] = g
-    print(f"群列表去重后 {len(by_room)} 个")
 
     out = []
     skipped_other_owner = 0

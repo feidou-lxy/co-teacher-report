@@ -29,8 +29,10 @@ def run(py, extra):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
-    ap.add_argument("--co", default=None, help="联席姓名（联席视角）")
+    ap.add_argument("--co", default=None, help="联席姓名（联席视角 / 课程内子筛选）")
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
+    ap.add_argument("--course", default=None, help="课程名（课程维度），如 高二数学清北层日E邵")
+    ap.add_argument("--boards", default=None, help="小黑板图片根目录（提供后追加小黑板读图分析）")
     ap.add_argument("--window", default="2026-09-01")
     ap.add_argument("--month", default="2026-09")
     args = ap.parse_args()
@@ -39,7 +41,14 @@ def main():
     role, name = resolve_scope(args)
     ensure_openpyxl()
     base = ["--workdir", wd]
-    base += (["--edu", name] if role == "edu" else ["--co", name])
+    if role == "course":
+        base += ["--course", name]
+        if args.co:                       # 课程内按联席子筛选（可选）
+            base += ["--co", args.co]
+    elif role == "edu":
+        base += ["--edu", name]
+    else:
+        base += ["--co", name]
     if not os.path.exists(os.path.join(wd, "token.txt")):
         sys.exit(f"未找到 {wd}/token.txt，请先登录后台并写入 x-token。")
 
@@ -53,7 +62,13 @@ def main():
     run("merge.py", ["--workdir", wd])
     run("report.py", base + ["--window", args.window])
     run("xlsx.py", base)
-    print(f"\n🎉 完成。分析：{wd}/{name}_学情分析.html ；待办：{wd}/{name}_学生待办清单.xlsx")
+    if args.boards:
+        run("pull_boards.py", base + ["--boards", args.boards])
+        run("read_boards.py", base + ["--boards", args.boards])
+        print(f"\n🎉 完成。分析：{wd}/{name}_学情分析.html ；待办：{wd}/{name}_学生待办清单.xlsx")
+        print(f"   小黑板：boards_summary.json（读图结论）。若未配置视觉模型，请按 board_analysis_template.json 人工回填。")
+    else:
+        print(f"\n🎉 完成。分析：{wd}/{name}_学情分析.html ；待办：{wd}/{name}_学生待办清单.xlsx")
 
 
 if __name__ == "__main__":

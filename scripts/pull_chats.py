@@ -59,6 +59,7 @@ def main():
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--co", default=None)
     ap.add_argument("--edu", default=None)
+    ap.add_argument("--course", default=None)
     args = ap.parse_args()
     wd = common.workdir(args)
     token = common.load_token(wd)

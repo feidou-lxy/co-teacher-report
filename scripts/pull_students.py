@@ -1,6 +1,8 @@
-"""步骤1：拉取指定联席（--co）或教务（--edu）名下的学生花名册。
+"""步骤1：拉取指定联席（--co）/ 教务（--edu）/ 课程（--course）的学生花名册。
 
 后台字段对应：联席 = coTeacherName；教务 = classTeacherName（响应时效页的「教务」列）。
+课程维度（--course）：接口返回机构全员，按 productName 包含课程名筛选（如
+「高二数学清北层日E邵」），自动得到该课程的 ProductId / 联席 / 教务映射。
 
 输出 <workdir>/students.json ：[{stuName, stuSeq, productName, productStudentId,
 ProductId, teacherName, classTeacherName, schoolName, grade, coTeacherName}]
@@ -20,9 +22,9 @@ def main():
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--co", default=None, help="联席姓名，如 张巍（联席视角）")
     ap.add_argument("--edu", default=None, help="教务姓名，如 罗绂燕（教务视角）")
+    ap.add_argument("--course", default=None, help="课程名（课程维度），如 高二数学清北层日E邵")
     args = ap.parse_args()
     role, name = common.resolve_scope(args)
-    field = common.scope_field(role)
 
     wd = common.workdir(args)
     token = common.load_token(wd)
@@ -44,7 +46,15 @@ def main():
         page += 1
         time.sleep(0.15)
 
-    sel = [x for x in rows if (x.get(field) or "").strip() == name]
+    if role == "course":
+        # 课程维度：按 productName 含课程名筛选（机构全员 -> 课程子集）
+        course = name
+        sel = [x for x in rows if course and course in (x.get("productName") or "")]
+        label = "课程"
+    else:
+        field = common.scope_field(role)
+        sel = [x for x in rows if (x.get(field) or "").strip() == name]
+        label = common.ROLE_LABEL.get(role, "联席")
     out = []
     for x in sel:
         out.append({
@@ -69,7 +79,7 @@ def main():
         print(f"   {v:>3}  {k}")
     bt = Counter(common.buy_type_label(x.get("cIncomeProductType")) or "未标注" for x in out)
     print("   购课类型：" + " ｜ ".join(f"{k} {v}人" for k, v in bt.most_common()))
-    if role == "edu":
+    if role in ("edu", "course"):
         cc = Counter((x.get("coTeacherName") or "-") for x in out)
         print(f"   涉及联席 {len(cc)} 人：")
         for k, v in cc.most_common():

@@ -40,7 +40,7 @@ def post(path, body, token, timeout=60):
     return api("POST", path, token, body, timeout=timeout)
 
 
-ROLE_LABEL = {"co": "联席", "edu": "教务"}
+ROLE_LABEL = {"co": "联席", "edu": "教务", "course": "课程"}
 SCOPE_FIELD = {"co": "coTeacherName", "edu": "classTeacherName"}
 
 # 购课类型：花名册字段 cIncomeProductType（后台「我的学生」列表的「购课类型」列）。
@@ -62,20 +62,25 @@ def buy_type_label(v):
 
 
 def resolve_scope(args):
-    """解析查询角色：--co <联席名> 或 --edu <教务名>，二者只能选一。
+    """解析查询角色：--co <联席名> / --edu <教务名> / --course <课程名>，三者只能选一为主维度。
 
-    返回 (role, name)，role ∈ {'co','edu'}。
-    后台把「教务」存在 classTeacherName 字段（响应时效页的「教务」列即此）。
+    返回 (role, name)，role ∈ {'co','edu','course'}。
+    - 课程维度（--course）：分析该课程下全部学生；课程跨多个联席，可另传 --co <联席名>
+      作为课程内子筛选（仅保留该联席负责的部分），此子筛选不冲突。
+    - 后台把「教务」存在 classTeacherName 字段（响应时效页的「教务」列即此）。
     """
+    course = (getattr(args, "course", None) or "").strip()
     co = (getattr(args, "co", None) or "").strip()
     edu = (getattr(args, "edu", None) or "").strip()
-    if co and edu:
-        raise SystemExit("--co 与 --edu 只能二选一（联席视角 / 教务视角）。")
+    if edu and (co or course):
+        raise SystemExit("--edu 与 --co/--course 只能二选一（教务视角 / 联席视角 / 课程维度）。")
+    if course:
+        return "course", course
     if edu:
         return "edu", edu
     if co:
         return "co", co
-    raise SystemExit("必须指定 --co <联席名>（联席视角）或 --edu <教务名>（教务视角）。")
+    raise SystemExit("必须指定 --co <联席名>（联席视角）/ --edu <教务名>（教务视角）/ --course <课程名>（课程维度）之一。")
 
 
 def scope_field(role):

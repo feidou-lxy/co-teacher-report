@@ -22,6 +22,7 @@ def main():
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--co", default=None)
     ap.add_argument("--edu", default=None)
+    ap.add_argument("--course", default=None)
     args = ap.parse_args()
     wd = common.workdir(args)
     rows = json.load(open(f"{wd}/attendance_raw.json", encoding="utf-8"))

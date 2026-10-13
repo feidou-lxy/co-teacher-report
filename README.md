@@ -1,6 +1,6 @@
 # 联席学情报告技能 · co-teacher-report
 
-把企业微信班级群聊天 + 后台课节考勤，一键生成「联席 / 教务」双视角学情报告（HTML + 待办 Excel）。
+把企业微信班级群聊天 + 后台课节考勤（＋可选的小黑板手写作答图片读图），一键生成「联席 / 教务 / 课程」三视角学情报告（HTML + 待办 Excel）。
 
 ## 一键安装（推荐）
 
@@ -29,14 +29,24 @@ mv /tmp/co-teacher-report ~/.workbuddy/skills/co-teacher-report
    ```
 3. 生成报告（缺 `openpyxl` 会自动安装）：
    ```bash
+   # 联席视角
    python ~/.workbuddy/skills/co-teacher-report/scripts/run_all.py \
      --co <联席名> --window 2026-09-01 --month 2026-09
+   # 教务视角
+   python ~/.workbuddy/skills/co-teacher-report/scripts/run_all.py \
+     --edu <教务名> --window 2026-09-01 --month 2026-09
+   # 课程视角（一门课跨多个联席）；可选带上小黑板图片目录一起分析
+   python ~/.workbuddy/skills/co-teacher-report/scripts/run_all.py \
+     --course 高二数学211层六C肖 --window 2026-09-01 --boards ~/Desktop/小黑板目录
    ```
-4. 产物：`<联席>_学情分析.html` ＋ `<联席>_学生待办清单.xlsx`
+4. 产物：`<联席|教务|课程名>_学情分析.html` ＋ `<联席|教务|课程名>_学生待办清单.xlsx`
 
-## 版本与口径（v3.4）
+## 版本与口径（v3.6）
 
-- **双视角**：`--co <联席名>` 出联席视角（按课程切换）；`--edu <教务名>` 出教务视角（按下属联席下钻，顶部可切「按课程 / 按联席」）。两种视角共用同一套分析逻辑。
+- **三视角**：`--co <联席名>` 联席视角（按课程切换）；`--edu <教务名>` 教务视角（双维度：按课程 / 按联席下钻）；`--course <课程名>` **课程视角**（单课程、按所属联席下钻，适合「分析某门课下所有学生」）。三种视角共用同一套分析逻辑。
+- **小黑板读图（v3.6 新增，可选）**：加 `--boards <小黑板图片目录>` 后，逐张读取学生课堂手写作答，输出「作答完整度 / 正确错误 / 问题定位」，并入报告第⑤块与 Excel「小黑板分析(读图)」sheet。
+  - 目录形如「日期 / 时间戳 / `序号_W或Z-姓名.png`」；**W/Z 只是分批上传标记，不含过关含义**；匹配以**姓名**为准。
+  - 全自动读图需配置 OpenAI 兼容多模态模型：写 `<workdir>/boards_llm.json`（`base_url`/`api_key`/`model`）；未配置则生成待填清单，人工回填后再聚合。
 - **只纳入本人负责的群**（v3.4 重要变更）：报告只统计「归本人管理」的班级群——联席看某群是否由你带、教务看某群是否归你管；学生同期报读的其它学科群（由别的联席/教务负责）不纳入。例：数学联席不会再混入该生的物理/化学/英语群。
 - **数据以聊天记录为准**（v3.2 / v3.3 重要变更）：
   - 「是否需回复」不再采信后台「是否回复」列，改为识别会话尾部是否仍有未获回应提问。
@@ -53,5 +63,5 @@ mv /tmp/co-teacher-report ~/.workbuddy/skills/co-teacher-report
 ## 说明
 
 - 本仓库仅含 `SKILL.md` + `scripts/` + `references/`，**不含任何 token**，可放心公开/转发。
-- 换联席改 `--co`，换月份改 `--window` / `--month`，互不干扰。
+- 换联席改 `--co`、换教务改 `--edu`、换课程改 `--course`；换月份改 `--window` / `--month`，互不干扰。
 - 详细口径与字段说明见技能内 `SKILL.md` 与 `references/api_contract.md`。
