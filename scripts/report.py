@@ -25,6 +25,10 @@ from datetime import datetime
 
 sys.path.insert(0, sys.path[0])
 import common
+try:  # 聊天高频知识点的权威词表，用于小黑板「关联知识点」口径对齐
+    from extract import TOPICS as CHAT_TOPIC_KEYS
+except Exception:
+    CHAT_TOPIC_KEYS = {}
 
 WINDOW_DEFAULT = "2026-09-01"
 # 响应时效提示阈值（与 extract.py 的 RESP_WARN_H 保持一致）：≥12h 在卡片提示「最长响应等待」，不计定档
@@ -176,32 +180,59 @@ def att_block(r):
     </div>'''
 
 
+def norm_topic_key(t):
+    """知识点名归一：去掉 / 与 和 等连接符与空白，便于跨来源对齐。"""
+    return re.sub(r"[\s/与和及、,，·\-]", "", str(t or ""))
+
+
+def align_topic(t, std_keys):
+    """把小黑板输出的『关联知识点』对齐到聊天高频的标准词表；无法对齐则原样返回。"""
+    if not t:
+        return ""
+    if t in std_keys:
+        return t
+    nk = norm_topic_key(t)
+    for k in std_keys:
+        if norm_topic_key(k) == nk:
+            return k
+    return t
+
+
 def board_block(sm):
-    """学生卡第⑤块：小黑板逐轮读图结论（作答完整度＋正确/错误＋问题定位）。
+    """学生卡「学习情况」内的首要证据：小黑板逐轮读图结论（作答完整度＋正确/错误＋问题定位）。
+    它是判断学生优势 / 薄弱知识点的直接依据，故归在第③块「学习掌握与薄弱点」内，而非独立模块。
     无小黑板数据时不报错，给一句兜底。"""
     if not sm:
-        return ('<div class="blk"><div class="blk-h">⑤ 小黑板作答</div>'
+        return ('<div class="sub-blk"><div class="sb-h">课堂小黑板表现（逐轮读图）</div>'
                 '<div class="noatt">该生暂无小黑板图片（未被收录 / 课程未提供）</div></div>')
     sc = sm.get("status_counts", {})
     chips = "".join(f'<span class="chip">{k} {v}</span>' for k, v in sc.items()) or '<span class="chip">—</span>'
+    kb = sm.get("kb_topics", []) or []
+    kb_chips = "".join(f'<span class="chip">{t}</span>' for t in kb) or '<span class="chip">—</span>'
+    et = sm.get("error_topics", []) or []
+    et_chips = ("".join(f'<span class="chip kb">🖍 {t}</span>' for t in et)
+                or '<span class="chip">无（作答无明显错误）</span>')
     errs = "、".join(sm.get("error_types", [])) or "—"
     trend = sm.get("trend", "—")
     rows = ""
     for d in sm.get("details", []):
         cls = {"完整作答": "ok", "部分作答": "pb", "空白": "no"}.get(d.get("status"), "")
         correctness = d.get("correct", "")
+        tk = d.get("topic_knowledge", "") or "—"
         err = "；".join(d.get("errors", [])) or "—"
         stuck = d.get("stuck_at", "") or "—"
         rows += (f'<tr><td>{d.get("round","")}</td><td>{d.get("problem","")}</td>'
                  f'<td class="bs {cls}">{d.get("status","")}</td><td>{correctness}</td>'
-                 f'<td>{err}</td><td>{stuck}</td></tr>')
-    return f'''<div class="blk">
-      <div class="blk-h">⑤ 小黑板作答（逐轮读图）</div>
+                 f'<td>{tk}</td><td>{err}</td><td>{stuck}</td></tr>')
+    return f'''<div class="sub-blk">
+      <div class="sb-h">课堂小黑板表现（逐轮读图 · 佐证依据）</div>
       <div class="kv"><span class="k">轮次</span><span class="v">共 {sm.get("rounds",0)} 轮，已读图分析 {sm.get("analyzed",0)} 轮</span></div>
       <div class="kv"><span class="k">作答分布</span><span class="chips">{chips}</span></div>
+      <div class="kv"><span class="k">涉及知识点</span><span class="chips">{kb_chips}</span></div>
+      <div class="kv"><span class="k">实证薄弱</span><span class="chips">{et_chips}</span></div>
       <div class="kv"><span class="k">典型错误</span><span class="v">{errs}</span></div>
       <div class="kv"><span class="k">趋势</span><span class="v">{trend}</span></div>
-      <table><tr><th>轮次</th><th>题目</th><th>作答</th><th>正确性</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
+      <table><tr><th>轮次</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
     </div>'''
 
 
@@ -219,6 +250,43 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         adv = "学习意愿强、沟通配合好，无明显情绪风险" if s["q"] >= 5 else "沟通配合好，关系良好"
     else:
         adv = "—"
+    # 小黑板是「学习情况」的直接依据：其错误类型并入错误类型、正确作答佐证优势，
+    # 关联知识点与聊天高频交叉验证薄弱点（口径先对齐到聊天高频的标准词表）
+    board_errs, board_ok = [], False
+    std_keys = list(CHAT_TOPIC_KEYS.keys())
+    board_err_topics = []
+    if board:
+        for d in board.get("details", []):
+            for e in d.get("errors", []):
+                if e and e not in board_errs:
+                    board_errs.append(e)
+            if d.get("status") == "完整作答" and d.get("correct") in ("正确", "基本正确"):
+                board_ok = True
+        for t in (board.get("error_topics") or []):
+            t2 = align_topic(t, std_keys)
+            if t2 and t2 not in board_err_topics:
+                board_err_topics.append(t2)
+    if board_errs:
+        err_html = (err_html + "；" if err_html not in ("—", "") else "") + "小黑板：" + "、".join(board_errs)
+    if board_ok:
+        adv = (adv + "；" if adv not in ("—", "") else "") + "课堂小黑板有完整作答且正确，解题落地能力较好"
+    # 薄弱知识点：聊天高频话题 × 小黑板实证 交叉验证（双证据更精准）
+    chat_topics = s["top_topics"]
+    merged = list(chat_topics)
+    for t in board_err_topics:
+        if t not in merged:
+            merged.append(t)
+    weak_chips = ""
+    for t in merged:
+        dual = (t in chat_topics) and (t in board_err_topics)
+        kb_only = (t in board_err_topics) and (t not in chat_topics)
+        if dual:
+            weak_chips += f'<span class="chip dual" title="聊天高频 ＋ 小黑板作答实证">🖍 {t}</span>'
+        elif kb_only:
+            weak_chips += f'<span class="chip kb" title="小黑板作答实证薄弱（聊天未提及）">🖍 {t}</span>'
+        else:
+            weak_chips += f'<span class="chip">{t}</span>'
+    weak_chips = weak_chips or '<span class="chip">—</span>'
     gd, gd_label = grade(r)
     gdbadge = badge(gd_label, "red" if gd == "红" else ("orange" if gd == "黄" else "green"))
     status = ""
@@ -258,17 +326,17 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         <div class="sig">{signal_strip(s)}</div>
       </div>
       {att_block(r)}
-      <div class="blk"><div class="blk-h">③ 知识掌握与薄弱点</div>
-        <div class="kv"><span class="k">薄弱</span><span class="chips">{topics}</span></div>
+      <div class="blk"><div class="blk-h">③ 学习掌握与薄弱点</div>
+        <div class="kv"><span class="k">薄弱知识点</span><span class="chips">{weak_chips}</span></div>
         <div class="kv"><span class="k">错误类型</span><span class="v">{err_html}</span></div>
         <div class="kv"><span class="k">优势</span><span class="v">{adv}</span></div>
+        {board_block(board)}
       </div>
       <div class="blk"><div class="blk-h">{blk4_title}</div>
         <ul class="todos">{todos_html}</ul>
         <div class="kv"><span class="k">{cadence_label}</span><span class="v">{cadence}</span></div>
         <div class="kv"><span class="k">改善信号</span><span class="v">{imp}</span></div>
       </div>
-      {board_block(board)}
     </div>"""
 
 
@@ -316,7 +384,12 @@ th{color:#8a9099;font-weight:600}
 .pri-高{background:#fdecec;color:#e54545} .pri-中{background:#fff3e0;color:#ff8f1f} .pri-低{background:#eef2f5;color:#6b7280}
 .basis{color:#8a9099;font-size:12px}
 .blk{border-top:1px dashed #eef0f3;padding-top:10px;margin-top:10px}
+.blk .blk{border-top:1px solid #f0f1f3;margin-top:8px;padding-top:8px}
 .blk-h{font-size:13px;font-weight:700;color:#3a5bdb;margin-bottom:6px}
+.chip.dual{background:#ffeded;color:#cf1322;font-weight:600;box-shadow:inset 0 0 0 1px #ffccc7}
+.chip.kb{background:#fff7e6;color:#d46b08;box-shadow:inset 0 0 0 1px #ffd591}
+.sub-blk{margin-top:8px;padding:8px 10px;background:#fafbfc;border:1px solid #eef0f3;border-radius:8px}
+.sb-h{font-size:12px;font-weight:700;color:#5a6472;margin-bottom:6px}
 .coop{font-size:13px;color:#1f2329;margin:2px 0 10px;line-height:1.7}
 .coop b{color:#3a5bdb;margin-right:6px}
 .watch{font-size:13px;background:#fff7ec;border-left:3px solid #ff8f1f;padding:7px 10px;border-radius:4px;margin:0 0 10px}
@@ -568,7 +641,7 @@ def main():
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
 • 出勤判定：「是否需关注」规则 —— 全缺 → 🔴 高风险建议电话；缺 ≥2 节 或 “缺了且未看回放” → 🔴 需关注；缺 1 节未看回放 → 🟡 轻关注；缺 1 节但已看回放 / 全勤 → 🟢 常规。<b>出勤为独立提示，不改变红黄绿定档。</b><br>
 • 请假备注：仅摘录学生在群内自述的请假/看回放缘由，后台无请假原因字段，具体以教务记录为准。<br>
-• 报告结构（{view_cn}）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 知识掌握与薄弱点；④ {blk4_cn} To-Do（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）；⑤ 小黑板作答（逐轮读图结论：作答完整度＋正确/错误＋问题定位）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ''}<br>
+• 报告结构（{view_cn}）：① 速览卡（定档＋配合度结论＋最该盯 1 件事＋一句话总评）；② 出勤（后台权威，含是否需关注＋请假备注）；③ 学习掌握与薄弱点——<b>结论先行</b>：先给薄弱知识点、错误类型与优势，再附<b>课堂小黑板逐轮读图</b>作为佐证依据。薄弱知识点由<b>「聊天高频话题 × 课堂小黑板读图实证」交叉验证</b>得出：两者同时命中为 🖍 双证据高亮，仅小黑板命中为 🖍 实证薄弱（聊天未提及）；小黑板读图会标注每题的<b>关联知识点</b>（与聊天高频同口径），据此把作答错误精准落到知识点上；④ {blk4_cn} To-Do（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 面向「跟课辅导 / 答疑 / 作业订正 / 出勤补课」'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ''}<br>
 • 配合度（结论式）：依据 学生本人发言密度/主动提问 与 家长代交/代沟通措辞 综合判定类型（如“家长推着走”型 / 放手培养型），数据源未区分发言者 ID，为启发式估算，供跟进策略参考。<br>
 • 定档规则：🔴 红=聊天分析判定「响应迟缓」（学生提问后 ≥24 小时才见老师回复）或「需回复」（会话尾部仍有未获回应提问），或存在未闭环疑问/负面情绪；🟡 黄=有未解疑问、作业负面信号、出勤异常或负面情绪；🟢 绿=其余正常推进。<br>
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>

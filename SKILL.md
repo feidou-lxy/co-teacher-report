@@ -108,7 +108,7 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 
 学生卡标题（学生姓名）后展示**购课类型**小标签（`直播` / `回放` / `试听（插班）` / `测试`）——取自后台「我的学生」列表的「购课类型」列（花名册字段 `cIncomeProductType`）。联席与教务两种视角均展示。
 
-每张学生卡 4 块（提供小黑板时追加第 5 块）：
+每张学生卡 4 块（小黑板为第③块内的佐证，不单独成块）：
 
 1. **速览卡** — 定档（红/黄/绿）+ 配合度**结论式**（去星级）+ 最该盯 1 件事 + **信号条**。
    **排版**：配合度、「最该盯」（标签＋依据小字＋行动）、信号条**各自独立成行**。
@@ -117,9 +117,12 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
    ⚠️ 近窗覆盖/条数统计见卡片头 `cmeta`，高频知识点见第③块，**两处均不重复**。无任何信号时显示「窗口内无明显风险信号」。
    配合度结论在「学生/家长均非极端」时不再附加「配合度中等，常规引导」类套话（`analysis.json` 仍保留完整 `summary` 字段备查）。
 2. **出勤（后台权威）** — 逐节 `✓/回放/✗` + 日期 → `出勤X/N·缺Y·回放Z` → **是否需关注**（红黄绿）+ 请假备注
-3. **知识掌握与薄弱点** — 薄弱 / 错误类型 / 优势
+3. **学习掌握与薄弱点**（**结论先行**）— 顺序固定为：**薄弱知识点 → 错误类型 → 优势 → 课堂小黑板佐证**。
+   - **薄弱知识点**＝「聊天高频话题 × 课堂小黑板读图实证」**交叉验证**：两者同时命中 → 🖍 **双证据**高亮；仅小黑板命中（聊天未提及）→ 🖍 实证薄弱。
+   - **错误类型**并入小黑板作答错误（前缀「小黑板：」）；**优势**对「完整作答且正确」自动补「解题落地能力较好」。
+   - 末尾**课堂小黑板表现**为佐证子块：涉及知识点 / 实证薄弱 / 轮次 / 作答分布 / 典型错误 / 趋势 / 逐轮明细表（题目 / 作答 / 正确性 / **关联知识点** / 错误类型 / 卡点）。
+   - ⚠️ 小黑板**不再独立成第⑤块**（v3.6.1 调整）：它是判断学生优势 / 薄弱知识点的**直接依据**，故归在第③块内、置于结论之后作佐证。报告**只出文字结论、不嵌图片**。
 4. **联席跟进 Action / 教务 To-Do** — 按角色（联席=跟课辅导；教务=家长沟通）；优先级动作 + 追踪/沟通节奏 + 改善信号
-5. **小黑板作答（逐轮读图，v3.6 新增，仅当提供 `--boards`）** — 轮次统计 + 作答分布 + 典型错误 + 趋势 + 逐轮明细表（题目 / 作答完整度 / 正确性 / 错误类型 / 卡点）。报告**内嵌文字结论、不嵌图片**。
 
 口径约定（已与用户确认）：
 
@@ -198,10 +201,14 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 - **读图分析**：`read_boards.py`
   - 配置视觉模型时全自动：在 `<workdir>/boards_llm.json` 写 `{"base_url","api_key","model"}`（OpenAI 兼容多模态），
     或设环境变量 `BOARDS_LLM_BASE_URL / BOARDS_LLM_API_KEY / BOARDS_LLM_MODEL`；逐张输出
-    `problem / topic / status(完整作答|部分作答|空白未提交) / correct(正确|有错|待判) / errors[] / stuck_at / note`。
-  - 未配置模型时：生成 `board_analysis_template.json` 待填清单，人工/代理逐张读图回填 `board_analysis.json` 后再跑本步聚合。
-  - 聚合产物 `boards_summary.json`（`{姓名: {rounds, analyzed, status_counts, error_types, trend, details}}`），供 report / xlsx 消费。
-- **呈现**：报告第⑤块与 Excel「小黑板分析(读图)」sheet；**只出文字结论，不嵌图片**。
+    `problem / topic / topic_knowledge / status(完整作答|部分作答|空白未提交) / correct(正确|有错|待判) / errors[] / stuck_at / note`。
+    - **`topic_knowledge`（关联知识点，v3.6.1 新增）**：该作答/卡点关联的**大知识点**，必须从与聊天高频 `TOPICS` **同口径**的候选里选
+      （立体几何/空间向量、直线和圆、函数与导数、数列、圆锥曲线、三角函数、概率统计、解三角形、不等式/参数、计算/粗心、其他），
+      用于把小黑板错误**反向落到知识点上**、并与聊天高频交叉验证薄弱点（⚠️ 口径不一致会导致双证据永远匹配不上）。
+  - 未配置模型时：生成 `board_analysis_template.json` 待填清单（含 `topic_knowledge` 字段），人工/代理逐张读图回填 `board_analysis.json` 后再跑本步聚合。
+  - 聚合产物 `boards_summary.json`（`{姓名: {rounds, analyzed, status_counts, error_types, kb_topics, error_topics, trend, details}}`）：
+    `kb_topics`＝小黑板涉及的全部知识点；`error_topics`＝**有错误/卡点轮次所关联的知识点**（即小黑板实证的薄弱点）。供 report / xlsx 消费。
+- **呈现**：报告第③块内的「课堂小黑板表现」佐证子块，与 Excel「小黑板分析(读图)」sheet（含「涉及知识点」「实证薄弱」列）；**只出文字结论，不嵌图片**。
 
 ## 目录与产物
 
@@ -218,7 +225,7 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 ├── analysis_merged.json     # 合并最终分析
 ├── boards.json              # （可选）小黑板图片索引（提供 --boards 时）
 ├── board_analysis.json      # （可选）逐张读图结构化结论
-├── boards_summary.json      # （可选）小黑板逐生聚合结论（第⑤块 / Excel sheet 消费）
+├── boards_summary.json      # （可选）小黑板逐生聚合结论（第③块佐证 / Excel sheet 消费）
 ├── <姓名|课程名>_学情分析.html    # ← 主交付（联席按课程切换 / 课程按联席下钻 / 教务双维度）
 └── <姓名|课程名>_学生待办清单.xlsx  # ← 主交付（含小黑板分析 sheet）
 ```

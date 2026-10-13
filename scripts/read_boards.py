@@ -10,15 +10,20 @@
   3) 直接聚合：若 board_analysis.json 已存在，仅执行聚合 → boards_summary.json。
 
 单图结构化结论字段：
-  problem(题目简述) / topic(知识点) / status(完整作答|部分作答|空白未提交)
-  / correct(正确|有错|待判) / errors(错误类型列表) / stuck_at(卡点) / note(一句话)
+  problem(题目简述) / topic(题目模块) / topic_knowledge(关联大知识点，用于与聊天高频交叉验证薄弱)
+  / status(完整作答|部分作答|空白未提交) / correct(正确|有错|待判)
+  / errors(错误类型列表) / stuck_at(卡点) / note(一句话)
 
-聚合后 boards_summary.json：{ 姓名: { rounds, analyzed, status_counts, error_types, trend, details } }
-report.py / xlsx.py 的第⑤块与「小黑板分析」sheet 直接消费此文件。
+聚合后 boards_summary.json：
+  { 姓名: { rounds, analyzed, status_counts, error_types, kb_topics, error_topics, trend, details } }
+  - kb_topics：小黑板涉及到的全部大知识点
+  - error_topics：有错误 / 卡点轮次所关联的大知识点（＝小黑板实证的薄弱点）
+report.py 第③块「学习掌握与薄弱点」与 xlsx「小黑板分析」sheet 直接消费此文件。
 """
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -29,10 +34,11 @@ PROMPT = """你是高二数学老师，正在批改学生的课堂小黑板手�
 请只依据图片内容判断，输出 JSON（不要额外文字）：
 {
   "problem": "题目简述（一句话，含考点，如：四面体相对棱中点距离）",
-  "topic": "知识点（如：立体几何/空间向量、函数与导数、数列、解析几何）",
+  "topic": "题目所属模块（如：立体几何/空间向量、函数与导数、数列、解析几何）",
+  "topic_knowledge": "该生作答 / 卡点关联的『大知识点』，务必从下列候选中选最贴切的一个或多个（用顿号分隔）；若无法归入则填『其他』：立体几何/空间向量、直线和圆、函数与导数、数列、圆锥曲线、三角函数、概率统计、解三角形、不等式/参数、计算/粗心、其他",
   "status": "作答完整度，三选一：完整作答 / 部分作答 / 空白未提交",
   "correct": "正确性，三选一：正确 / 有错 / 待判",
-  "errors": ["错误类型，如：建系错误、法向量算错、计算符号、漏解、思路偏差、未代入"],
+  "errors": ["错误类型，如：建系错误、法向量算错、计算符号、漏解、思路偏差、未代入、收尾未完成"],
   "stuck_at": "该生卡在哪一步（简短；若顺畅作答写空字符串）",
   "note": "一句话点评（指出最关键的优点或问题）"
 }"""
@@ -76,6 +82,14 @@ def call_vision(cfg, img_path):
     return json.loads(data["choices"][0]["message"]["content"])
 
 
+def split_topics(t):
+    """把模型输出的『关联知识点』拆成知识点列表（支持顿号/逗号分隔多个）。"""
+    if not t:
+        return []
+    return [x.strip() for x in re.split(r"[、,，]", str(t))
+            if x.strip() and x.strip() != "其他"]
+
+
 def aggregate(analysis_list):
     from collections import Counter
     summary = {}
@@ -84,6 +98,8 @@ def aggregate(analysis_list):
         d = {
             "round": item.get("round", ""),
             "problem": item.get("problem", ""),
+            "topic": item.get("topic", ""),
+            "topic_knowledge": (item.get("topic_knowledge") or "").strip(),
             "status": item.get("status", ""),
             "correct": item.get("correct", ""),
             "errors": item.get("errors", []) or [],
@@ -99,6 +115,16 @@ def aggregate(analysis_list):
         sm["status_counts"] = dict(sc)
         ec = Counter(e for d in sm["details"] for e in d["errors"])
         sm["error_types"] = [k for k, _ in ec.most_common(5)]
+        # 小黑板关联知识点：kb_topics=涉及的全部，error_topics=有错误轮次实证的（薄弱）
+        kb, err_kb = [], []
+        for d in sm["details"]:
+            for t in split_topics(d.get("topic_knowledge")):
+                if t not in kb:
+                    kb.append(t)
+                if d.get("errors") and t not in err_kb:
+                    err_kb.append(t)
+        sm["kb_topics"] = kb
+        sm["error_topics"] = err_kb
         # 趋势：前后半段正确率对比
         ds = sm["details"]
         if len(ds) >= 2:
@@ -156,8 +182,8 @@ def main():
             for stu, recs in boards.items():
                 for r in recs:
                     template.append({"student": stu, "round": r["round"], "path": r["path"],
-                                     "problem": "", "topic": "", "status": "", "correct": "",
-                                     "errors": [], "stuck_at": "", "note": ""})
+                                     "problem": "", "topic": "", "topic_knowledge": "", "status": "",
+                                     "correct": "", "errors": [], "stuck_at": "", "note": ""})
             json.dump(template, open(template_path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
             print(f"ℹ️ 未配置视觉模型，已生成待填模板：{template_path}\n"
                   f"   请逐张读图后把结论填入该文件（或 board_analysis.json），再重跑本脚本聚合。")

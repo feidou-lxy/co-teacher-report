@@ -235,7 +235,7 @@ def main():
     boards_map = json.load(open(boards_path, encoding="utf-8")) if os.path.exists(boards_path) else {}
     if boards_map:
         ws4 = wb.create_sheet("小黑板分析(读图)")
-        cols4 = ["学生", "轮次总数", "已读图", "作答分布", "典型错误", "趋势", "逐轮明细"]
+        cols4 = ["学生", "轮次总数", "已读图", "作答分布", "涉及知识点", "实证薄弱(关联知识点)", "典型错误", "趋势", "逐轮明细(含关联知识点)"]
         ws4.append(cols4)
         for c in range(1, len(cols4) + 1):
             cell = ws4.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
@@ -245,15 +245,18 @@ def main():
                 continue
             sc = sm.get("status_counts", {})
             dist = " / ".join(f"{k}{v}" for k, v in sc.items()) or "—"
+            kb = "、".join(sm.get("kb_topics", []) or []) or "—"
+            et = "、".join(sm.get("error_topics", []) or []) or "无"
             details = " | ".join(
-                f"{d.get('round','')}:{d.get('problem','')}({d.get('status','')}/{'正确' if d.get('correct')=='正确' else '有错'})"
+                f"{d.get('round','')}:{d.get('problem','')}[{d.get('topic_knowledge','') or '—'}]"
+                f"({d.get('status','')}/{'正确' if d.get('correct')=='正确' else '有错'})"
                 for d in sm.get("details", []))
-            ws4.append([stu, sm.get("rounds", 0), sm.get("analyzed", 0), dist,
+            ws4.append([stu, sm.get("rounds", 0), sm.get("analyzed", 0), dist, kb, et,
                         "、".join(sm.get("error_types", [])) or "—", sm.get("trend", "—"), details])
             for c in range(1, len(cols4) + 1):
                 ws4.cell(ws4.max_row, c).border = border; ws4.cell(ws4.max_row, c).alignment = wrap
         ws4.freeze_panes = "A2"
-        w4 = {"A": 13, "B": 9, "C": 8, "D": 20, "E": 22, "F": 12, "G": 70}
+        w4 = {"A": 13, "B": 9, "C": 8, "D": 20, "E": 22, "F": 24, "G": 22, "H": 12, "I": 70}
         for k, v in w4.items():
             ws4.column_dimensions[k].width = v
 
