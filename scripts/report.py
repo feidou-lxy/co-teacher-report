@@ -726,7 +726,7 @@ def main():
   <div class="tabs">{''.join(course_tabs)}</div>
   {''.join(course_sections)}
 </div>'''
-        edu_note = "课程维度：单一课程下跨多个联席，顶部「筛选联席」可下钻到具体联席，学生卡标注所属联席；第④块为联席跟进 Action。"
+        edu_note = "课程维度：单一课程下跨多个联席，顶部「筛选联席」可下钻到具体联席，学生卡标注所属联席；第④块为联席跟进 Action（按四维排序）。"
     else:
         # ===== 联席视角（仅按课程） =====
         course_order = [k for k, _ in Counter(r["course"] for r in rows).most_common()]
@@ -842,7 +842,7 @@ function doSearch(val){{
     elif is_course:
         print(f"✅ HTML 生成完成（课程维度）｜ 课程：{name} · 联席数 {len(co_all)} · 学生 {len(rows)} ｜ {out}")
     else:
-        print(f"✅ HTML 生成完成（联席·课程维度）｜ 课程数 {len(course_order)} ｜ {out}")
+        print(f"✅ HTML 生成完成（联席维度 · 按课程下钻）｜ 课程数 {len(course_order)} ｜ {out}")
 
 
 if __name__ == "__main__":
