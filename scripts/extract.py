@@ -40,6 +40,9 @@ FIX_REQ = ["订正", "改正", "改一下", "改下", "重做", "重新写", "�
            "再算一遍", "再看一遍", "重新算", "更正", "纠正"]
 FIX_ACK = ["改好了", "订正了", "改正了", "改完", "重做了", "重新写了", "重新做了", "已改", "改过来了",
            "改好了老师", "更正了", "改过了"]
+# 老师反馈（只统计老师消息）：用于「学习情况分层」的第三类证据
+TEA_POS = ["全对", "很好", "不错", "有进步", "进步", "正确", "规范", "做得好", "继续保持", "完全正确", "很棒"]
+TEA_NEG = ["错了", "算错", "不对", "错误", "粗心", "漏了", "没交", "没写完", "没做完", "没掌握", "薄弱"]
 
 STU_SELF = ["我自己", "我这道题", "我算", "我听", "我做", "我提交", "我交了", "我错了", "我漏",
             "我忘", "我这次", "我自己做", "我理解", "我懂", "我试", "我写", "我的作业", "我来看"]
@@ -284,7 +287,7 @@ def main():
                 "gap_days": None,
                 "urge_n": 0, "urge_ok": 0, "urge_fail": [],
                 "fix_n": 0, "fix_ok": 0, "fix_fail": [],
-                "ask_lv": "无",
+                "ask_lv": "无", "tea_pos": 0, "tea_neg": 0,
             }
             continue
         all_txt = " ".join(t for _, t in texts)
@@ -410,6 +413,9 @@ def main():
         urge_n, urge_ok, urge_fail = pair_after(triples, URGE, SUBMIT)      # 催交 → 是否交
         fix_n, fix_ok, fix_fail = pair_after(triples, FIX_REQ, FIX_ACK)     # 要求订正 → 是否改
         ask_lv = "高" if q >= 8 else ("中" if q >= 3 else ("低" if q >= 1 else "无"))
+        # 老师反馈（学习情况分层的第三类证据）：只统计老师侧消息
+        tea_pos = sum(hits(t, TEA_POS) for t in tea_txt)
+        tea_neg = sum(hits(t, TEA_NEG) for t in tea_txt)
         if is_edu:
             # 教务视角：To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」，并注入该生具体信息
             if resp_slow:
@@ -475,6 +481,7 @@ def main():
             "urge_n": urge_n, "urge_ok": urge_ok, "urge_fail": urge_fail,
             "fix_n": fix_n, "fix_ok": fix_ok, "fix_fail": fix_fail,
             "ask_lv": ask_lv,
+            "tea_pos": tea_pos, "tea_neg": tea_neg,   # 老师反馈（学习分层第三类证据）
         }
 
     json.dump(students, open(f"{wd}/analysis.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)

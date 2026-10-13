@@ -70,6 +70,13 @@ def grade(s, slow, unreply, edu=False):
     return "黄" if hard else "绿"
 
 
+def lv_cells(s, board):
+    """学习分层（v3.8）：综合小黑板 + 作业闭环 + 老师反馈判档，与 report.py 共用 common.learning_level。"""
+    key, cn, ev = common.learning_level(s, board)
+    basis = "；".join(f"{src}：{t}" for src, t in ev)
+    return [cn, basis]
+
+
 def four_cells(s):
     """联席四维（v3.7）：互动状态 / 催交作业是否交 / 批改后是否订正 / 提问意愿。"""
     un, uo = s.get("urge_n", 0), s.get("urge_ok", 0)
@@ -132,19 +139,17 @@ def coop_conclusion(s):
 
 
 def att_short(a):
+    """出勤一句话 + 是否需关注（v3.8：**看回放也算有效出勤**，只有既没到课也没看回放才算真缺课）。"""
     if not a:
         return "无后台记录", "—"
-    n, ab, pbc = a["lessonCount"], a["absentCount"], a["playbackCount"]
-    no_pb = [c for c in a["classes"] if c["isAttend"] != 1 and c["isPlayback"] != 1]
-    if ab == 0:
-        flag = "🟢 全勤"
-    elif ab == n:
-        flag = "🔴 全勤未到，" + ("均看回放" if pbc == n else "部分未看回放")
-    elif ab >= 2 or no_pb:
+    n, eff, att, pb_only, pb, absent, _no_pb = common.att_stats(a)
+    if absent == 0:
+        flag = "🟢 全勤" if pb_only == 0 else "🟢 常规"
+    elif absent >= 2 or eff == 0:
         flag = "🔴 需关注"
     else:
-        flag = "🟡 轻关注" if no_pb else "🟢 常规"
-    return f"出勤{n-ab}/{n}·缺{ab}·回放{pbc}", flag
+        flag = "🟡 轻关注"
+    return common.att_sentence(a), flag
 
 
 def main():
@@ -195,6 +200,7 @@ def main():
     ws = wb.active; ws.title = "学生群总览"
     cols = ["序号", "学生", "购课类型", "群名", "课程", "所属联席", "定档", "是否需回复", "响应时效", "最长等待", "近窗起", "近窗止",
             "可分析消息", "生/家长消息", "礼节回应", "师消息", "语音条", "配合度结论",
+            "学习分层", "分层依据",
             "互动状态", "催交作业", "批改订正", "提问意愿",
             "出勤(后台)", "是否需关注", "请假备注(聊天)", "高频知识点", "近期未解疑问"]
     ws.append(cols)
@@ -209,6 +215,7 @@ def main():
             resp_tag(s), resp_wait_txt(s),
             (s["oldest"] or "")[:10], (s["newest"] or "")[:10], s["n_text"], s["n_stu"], s.get("n_ack", 0), s["n_tea"], s["voice"],
             coop_conclusion(s),
+            *lv_cells(s, boards_map.get(common.norm_name(stu))),
             *four_cells(s),
             att_txt, att_flag, " / ".join(s.get("leave", [])),
             "、".join(s["top_topics"]), "是" if s["unresolved"] else "否",
@@ -219,8 +226,8 @@ def main():
     ws.freeze_panes = "A2"
     widths = {"A": 5, "B": 13, "C": 10, "D": 30, "E": 24, "F": 12, "G": 7, "H": 9, "I": 9, "J": 11,
               "K": 11, "L": 11, "M": 9, "N": 11, "O": 9, "P": 8, "Q": 8, "R": 34,
-              "S": 12, "T": 12, "U": 12, "V": 10,
-              "W": 16, "X": 16, "Y": 32, "Z": 20, "AA": 10}
+              "S": 12, "T": 58, "U": 12, "V": 12, "W": 12, "X": 10,
+              "Y": 34, "Z": 16, "AA": 32, "AB": 20, "AC": 10}
     for k, v in widths.items():
         ws.column_dimensions[k].width = v
 
@@ -266,29 +273,32 @@ def main():
         idx = build_todo_sheet("课程待办清单", lambda g: course_of(g.get("groupName", "")), "联席 To-Do")
 
     ws3 = wb.create_sheet("出勤明细(后台)")
-    cols3 = ["学生", "课程", "总节数", "出勤", "缺勤", "看回放", "逐节(✓出勤/回放/✗缺)", "是否需关注"]
+    # v3.8 口径：看回放也算有效出勤；真缺课 = 既没到课也没看回放
+    cols3 = ["学生", "课程", "总节数", "有效出勤", "到课", "看回放补齐", "真缺课", "逐节(✓出勤/回放/✗缺)", "是否需关注"]
     ws3.append(cols3)
     for c in range(1, len(cols3) + 1):
         cell = ws3.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
     for _, stu, s, g, slow, unreply in rows:
         a = s.get("att")
         if not a:
-            ws3.append([stu, "—", "—", "—", "—", "—", "无后台记录", "—"])
+            ws3.append([stu, "—", "—", "—", "—", "—", "—", "无后台记录", "—"])
         else:
             marks = " ".join(f"第{c['classSeq']}节" + ("✓" if c["isAttend"] == 1 else ("回" if c["isPlayback"] == 1 else "✗")) for c in a["classes"])
             _, flag = att_short(a)
-            ws3.append([stu, a["course"], a["lessonCount"], a["attendCount"], a["absentCount"], a["playbackCount"], marks, flag])
+            n, eff, att, pb_only, pb, absent, _np = common.att_stats(a)
+            ws3.append([stu, a["course"], n, eff, att, pb_only, absent, marks, flag])
         for c in range(1, len(cols3) + 1):
             ws3.cell(ws3.max_row, c).border = border; ws3.cell(ws3.max_row, c).alignment = wrap
     ws3.freeze_panes = "A2"
-    w3 = {"A": 13, "B": 22, "C": 8, "D": 8, "E": 8, "F": 8, "G": 40, "H": 16}
+    w3 = {"A": 13, "B": 22, "C": 8, "D": 10, "E": 8, "F": 12, "G": 8, "H": 40, "I": 16}
     for k, v in w3.items():
         ws3.column_dimensions[k].width = v
 
     # 小黑板逐轮读图分析（可选，boards_summary.json 已在 main 前部加载为 boards_map）
     if boards_map:
         ws4 = wb.create_sheet("小黑板分析(读图)")
-        cols4 = ["学生", "轮次总数", "已读图", "作答分布", "涉及知识点", "实证薄弱(关联知识点)", "典型错误", "趋势", "逐轮明细(含关联知识点)"]
+        cols4 = ["学生", "课次数", "轮次总数", "已读图", "作答分布", "涉及知识点", "实证薄弱(关联知识点)",
+                 "典型错误", "趋势", "逐课次概况(上课日期｜轮数｜分布)", "逐轮明细(含关联知识点)"]
         ws4.append(cols4)
         for c in range(1, len(cols4) + 1):
             cell = ws4.cell(1, c); cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
@@ -301,15 +311,23 @@ def main():
             kb = "、".join(sm.get("kb_topics", []) or []) or "—"
             et = "、".join(sm.get("error_topics", []) or []) or "无"
             details = " | ".join(
-                f"{d.get('round','')}:{d.get('problem','')}[{d.get('topic_knowledge','') or '—'}]"
+                f"{d.get('lesson_date') or d.get('round','')}:{d.get('problem','')}"
+                f"[{d.get('topic_knowledge','') or '—'}]"
                 f"({d.get('status','')}/{'正确' if d.get('correct')=='正确' else '有错'})"
                 for d in sm.get("details", []))
-            ws4.append([stu, sm.get("rounds", 0), sm.get("analyzed", 0), dist, kb, et,
-                        "、".join(sm.get("error_types", [])) or "—", sm.get("trend", "—"), details])
+            # 逐课次概况：上课日期｜课次｜轮数｜作答分布
+            ls_txt = " | ".join(
+                f"{g.get('lesson_date') or '—'} {g.get('lesson') or '课次'}｜{g.get('rounds',0)}轮｜"
+                + ("/".join(f"{k}{v}" for k, v in (g.get("status_counts") or {}).items()) or "—")
+                for g in (sm.get("lessons") or []))
+            ws4.append([stu, sm.get("lesson_count") or len(sm.get("lessons") or []),
+                        sm.get("rounds", 0), sm.get("analyzed", 0), dist, kb, et,
+                        "、".join(sm.get("error_types", [])) or "—", sm.get("trend", "—"),
+                        ls_txt, details])
             for c in range(1, len(cols4) + 1):
                 ws4.cell(ws4.max_row, c).border = border; ws4.cell(ws4.max_row, c).alignment = wrap
         ws4.freeze_panes = "A2"
-        w4 = {"A": 13, "B": 9, "C": 8, "D": 20, "E": 22, "F": 24, "G": 22, "H": 12, "I": 70}
+        w4 = {"A": 13, "B": 8, "C": 9, "D": 8, "E": 20, "F": 22, "G": 24, "H": 22, "I": 12, "J": 46, "K": 70}
         for k, v in w4.items():
             ws4.column_dimensions[k].width = v
 

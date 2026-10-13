@@ -185,59 +185,51 @@ def grade(r, edu=False):
     return "绿", "正常推进"
 
 
-def att_block(r, edu=False):
-    """② 出勤块：按角色调整权重。
-    - 教务（edu=True）：对续报负责，出勤是核心关切 → 逐节明细完整展开 + 醒目的「是否需关注」红黄绿。
-    - 联席 / 课程（edu=False）：对学习效果负责，出勤只是背景信息 → 压成一行中性结论，
-      逐节明细折叠，且不给红黄绿定档色（避免出勤抢走学习情况的注意力）。"""
+def att_line(r, edu=False):
+    """出勤一句话（v3.8）：不再单独占一个模块。
+    - 联席 / 课程：只给一句话（出勤 X 次（含回放 Y 次），缺课 Z 次）。
+    - 教务：一句话 + 折叠的逐节明细 + 是否需关注（教务对续报负责，出勤是核心关切）。
+    """
     a = r["att"]
     lv2 = r["s"].get("leave")
-    lvnote = (f'<div class="lvnote">聊天记录提及：{ " / ".join(lv2) }</div>') if lv2 else ""
+    lvnote = (f'<span class="attmini">聊天提及：{ " / ".join(lv2) }</span>') if lv2 else ""
     if not a:
-        head = "② 出勤（教务主责）" if not edu else "② 出勤（后台权威）"
-        return (f'<div class="blk"><div class="blk-h">{head}</div>'
-                '<div class="noatt">后台无该生出勤记录（可能已退课 / 未排入该课程）</div>'
-                f'{lvnote}</div>')
-    chips = []
-    for c in a["classes"]:
-        seq, dt = c["classSeq"], c["timeStart"]
-        if c["isAttend"] == 1:
-            cls, txt = "ok", "✓"
-        elif c["isPlayback"] == 1:
-            cls, txt = "pb", "回放"
-        else:
-            cls, txt = "no", "✗"
-        chips.append(f'<span class="lchip {cls}">第{seq}节 {txt}<i>{dt[5:]}</i></span>')
-    n, ab, pbc = a["lessonCount"], a["absentCount"], a["playbackCount"]
-    absent_seqs = [c["classSeq"] for c in a["classes"] if c["isAttend"] != 1]
-    no_pb = [c["classSeq"] for c in a["classes"] if c["isAttend"] != 1 and c["isPlayback"] != 1]
-    if ab == 0:
-        lv, txt = "green", "全勤，无需特殊关注"
-    elif ab == n:
-        lv, txt = "red", f'全部 {n} 节未出勤' + ("（均已看回放）" if pbc == n else "（部分未看回放）") + " —— 建议电话确认是否继续跟课"
-    elif ab >= 2 or len(no_pb) >= 1:
-        lv, txt = "red", f'缺课 {ab} 节' + (f'，其中第{"、".join(map(str,no_pb))}节未看回放' if no_pb else "，均已看回放") + " —— 需关注"
+        return '<div class="attline none">出勤：后台无该生出勤记录（可能已退课 / 未排入该课程）</div>'
+    n, eff, att, pb_only, pb, absent, no_pb = common.att_stats(a)
+    if absent == 0 and pb_only == 0:
+        lv, txt = "ok", f"全勤（{n}/{n} 节）"
+    elif absent == 0:
+        lv, txt = "ok", f"出勤 {eff}/{n} 次（其中 {pb_only} 次为看回放补齐），无缺课"
     else:
-        lv, txt = ("yellow", "缺 1 节且未看回放 —— 轻关注") if no_pb else ("green", "缺 1 节但已看回放 —— 常规")
-    conc = f'共 {n} 节：出勤 {n-ab} · 缺 {ab} · 有回放 {pbc}。' + (f'缺席第 {"、".join(map(str,absent_seqs))} 节。' if absent_seqs else '')
-    chips_html = "".join(chips)
-    if edu:
-        # 教务：出勤＝续报关注重点，逐节明细全展开，红黄绿醒目
-        return f'''<div class="blk">
-      <div class="blk-h">② 出勤（后台权威 · 续报关注重点）</div>
-      <div class="attbar">{chips_html}</div>
-      <div class="attconc">{conc}</div>
-      <div class="attflag {lv}">是否需关注：{txt}</div>
-      {lvnote}
-    </div>'''
-    # 联席 / 课程：出勤降为背景信息 —— 一行中性结论 + 折叠明细，不给定档色
-    return f'''<div class="blk dim">
-      <div class="blk-h">② 出勤（教务主责 · 联席仅作背景参考）</div>
-      <div class="attconc">{conc}<span class="attmini">（{txt}）</span></div>
-      <details class="attdet"><summary>逐节明细（共 {n} 节，展开查看）</summary>
-      <div class="attbar">{chips_html}</div></details>
-      {lvnote}
-    </div>'''
+        lv = "bad" if absent >= 2 else "warn"
+        tail = f"，第{'、'.join(map(str, no_pb))}节既没到课也没看回放" if no_pb else ""
+        txt = (f"出勤 {eff}/{n} 次" + (f"（含回放 {pb_only} 次）" if pb_only else "")
+               + f"，缺课 {absent} 次{tail}")
+    line = (f'<div class="attline {lv}"><span class="attk">出勤</span>{txt}'
+            f'<span class="attmini">（到课 {att} · 看回放 {pb}）</span>{lvnote}</div>')
+    if not edu:
+        return line
+    # 教务：补逐节明细（折叠）与「是否需关注」
+    chips = []
+    for c in a.get("classes", []):
+        seq, dt = c.get("classSeq"), c.get("timeStart") or ""
+        if c.get("isAttend") == 1:
+            cl, tx = "ok", "✓"
+        elif c.get("isPlayback") == 1:
+            cl, tx = "pb", "回放"
+        else:
+            cl, tx = "no", "✗"
+        chips.append(f'<span class="lchip {cl}">第{seq}节 {tx}<i>{dt[5:]}</i></span>')
+    if absent == 0:
+        flag = "🟢 常规"
+    elif absent >= 2 or eff == 0:
+        flag = "🔴 需关注"
+    else:
+        flag = "🟡 轻关注"
+    return (line
+            + f'<details class="attdet"><summary>逐节明细（共 {n} 节，展开查看）</summary>'
+              f'<div class="attbar">{"".join(chips)}</div></details>'
+            + f'<div class="attmini">是否需关注：{flag}</div>')
 
 
 def norm_topic_key(t):
@@ -286,15 +278,18 @@ def board_focus(board):
 
 
 def board_block(sm):
-    """学生卡第③块内的佐证子块：小黑板逐轮读图结论。
-    默认只给「作答概况 + 涉及知识点 + 实证薄弱 + 典型错误」四行结论；
-    逐轮明细折叠（≤2 轮自动展开），避免多轮学生（如 29 轮）把卡片撑得又长又啰嗦。"""
+    """学生卡「学习情况」内的佐证子块：课堂小黑板逐轮读图结论（v3.8 按**课次**组织）。
+
+    目录层级：第 1 层=课次（上课日期）→ 第 2 层=该课次下每一轮（时间戳）→ 第 3 层=图片。
+    故这里先给「逐课次概况表」，再给折叠的逐轮明细，避免 29 轮铺成一大张表。"""
     if not sm:
-        return ('<div class="sub-blk"><div class="sb-h">课堂小黑板表现（逐轮读图）</div>'
+        return ('<div class="sub-blk"><div class="sb-h">课堂小黑板（学习情况佐证）</div>'
                 '<div class="noatt">该生暂无小黑板图片（未被收录 / 课程未提供）</div></div>')
     from collections import Counter
     ds = sm.get("details", []) or []
     n = sm.get("rounds", 0) or len(ds)
+    lessons = sm.get("lessons") or []
+    lc = sm.get("lesson_count") or len(lessons)
     sc = sm.get("status_counts", {})
     dist = " · ".join(f"{k} {v}" for k, v in sc.items()) or "—"
     kb = sm.get("kb_topics", []) or []
@@ -305,24 +300,34 @@ def board_block(sm):
     ec = Counter(e for d in ds for e in (d.get("errors") or []))
     errs = "、".join(f"{k}×{v}" for k, v in ec.most_common(3)) or "—"
     trend = sm.get("trend", "—")
+    lrows = ""
+    for g in lessons:
+        gd = " · ".join(f"{k}{v}" for k, v in (g.get("status_counts") or {}).items()) or "—"
+        lrows += (f'<tr><td class="ld">{g.get("lesson_date") or "—"}</td>'
+                  f'<td>{g.get("lesson") or "课次"}</td>'
+                  f'<td>{g.get("rounds", 0)} 轮</td><td>{gd}</td></tr>')
+    ltable = ('<table class="lstab"><tr><th>上课日期</th><th>课次</th><th>轮数</th><th>作答分布</th></tr>'
+              f'{lrows}</table>') if lrows else ""
     rows = ""
     for d in ds:
         cls = {"完整作答": "ok", "部分作答": "pb", "空白": "no"}.get(d.get("status"), "")
         tk = d.get("topic_knowledge", "") or "—"
         err = "；".join(d.get("errors") or []) or "—"
         stuck = d.get("stuck_at", "") or "—"
-        rows += (f'<tr><td>{d.get("round","")}</td><td>{d.get("problem","")}</td>'
+        ld = d.get("lesson_date") or "—"
+        rows += (f'<tr><td>{ld}</td><td>{d.get("problem","")}</td>'
                  f'<td class="bs {cls}">{d.get("status","")}</td><td>{d.get("correct","")}</td>'
                  f'<td>{tk}</td><td>{err}</td><td>{stuck}</td></tr>')
     op = " open" if n <= 2 else ""
     return f'''<div class="sub-blk">
-      <div class="sb-h">课堂小黑板表现（佐证依据）</div>
+      <div class="sb-h">课堂小黑板（{lc} 次课 · {n} 轮 · 学习情况佐证）</div>
       <div class="kv"><span class="k">作答概况</span><span class="v">共 {n} 轮 ｜ {dist} ｜ 趋势：{trend}</span></div>
+      {ltable}
       <div class="kv"><span class="k">涉及知识点</span><span class="chips">{kb_chips}</span></div>
       <div class="kv"><span class="k">实证薄弱</span><span class="chips">{et_chips}</span></div>
       <div class="kv"><span class="k">典型错误</span><span class="v">{errs}</span></div>
       <details class="bdet"{op}><summary>逐轮明细（{n} 轮，点击展开）</summary>
-        <table><tr><th>轮次</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
+        <table><tr><th>上课日期</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
       </details>
     </div>'''
 
@@ -409,9 +414,12 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     cadence = {"高": "每 2–3 天回访一次", "中": "每周一次",
                "低": ("常规家长沟通即可" if edu else "常规跟进即可")}.get(
         s["todos"][0][0], cadence_default) if s["todos"] else cadence_default
-    blk4_title = "④ 教务 To-Do（面向学生的跟进）" if edu else "④ 联席跟进 Action"
+    blk3_title = "③ 教务 To-Do（面向学生的跟进）" if edu else "③ 联席跟进 Action"
     cadence_label = "沟通节奏" if edu else "追踪节奏"
     imp = IMPROVE.get(s["top_topics"][0], "该生相关薄弱点正确率提升、疑问闭环") if s["top_topics"] else "学生整体状态稳定"
+    # 学习情况分层（v3.8）：综合「小黑板 + 作业闭环 + 老师反馈」三源判档，是联席卡片的第一结论
+    lv_key, lv_cn, lv_ev = common.learning_level(s, board)
+    lv_ev_html = "".join(f'<span class="lvev"><b>{src}</b>{t}</span>' for src, t in lv_ev) or '<span class="lvev">—</span>'
     return f"""
     <div class="card" data-co="{co}" data-name="{r['stu']}">
       <div class="chead">
@@ -420,20 +428,22 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         <div class="cstatus">{gdbadge}{status}</div>
       </div>
       <div class="cmeta">近窗 {(s['oldest'] or '—')[:10]} ~ {(s['newest'] or '—')[:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']}，其中礼节 {s.get('n_ack', 0)} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
-      <div class="blk"><div class="blk-h">① 速览卡</div>
-        <div class="coop"><b>配合度</b>{coop}</div>
-        <div class="watch"><div class="watch-h">最该盯<span class="watch-b">依据：{top_basis}</span></div><div class="watch-act">{top_todo}</div></div>
-        {four_dims(s) if not edu else ""}
-        <div class="sig">{signal_strip(s)}</div>
-      </div>
-      {att_block(r, edu=edu)}
-      <div class="blk"><div class="blk-h">③ 学习掌握与薄弱点</div>
+      <div class="blk"><div class="blk-h">① 学习情况</div>
+        <div class="lvbar"><span class="lvlbl">学习分层</span><span class="lvbadge {lv_key}">{lv_cn}</span>
+          <span class="lvevs">{lv_ev_html}</span></div>
         <div class="kv"><span class="k">薄弱知识点</span><span class="chips">{weak_chips}</span></div>
         <div class="kv"><span class="k">错误类型</span><span class="v">{err_html}</span></div>
         <div class="kv"><span class="k">优势</span><span class="v">{adv}</span></div>
         {board_block(board)}
       </div>
-      <div class="blk"><div class="blk-h">{blk4_title}</div>
+      <div class="blk"><div class="blk-h">② 配合度</div>
+        <div class="coop">{coop}</div>
+        {four_dims(s) if not edu else ""}
+        {att_line(r, edu=edu)}
+        <div class="watch"><div class="watch-h">最该盯<span class="watch-b">依据：{top_basis}</span></div><div class="watch-act">{top_todo}</div></div>
+        <div class="sig">{signal_strip(s)}</div>
+      </div>
+      <div class="blk"><div class="blk-h">{blk3_title}</div>
         <ul class="todos">{todos_html}</ul>
         <div class="kv"><span class="k">{cadence_label}</span><span class="v">{cadence}</span></div>
         <div class="kv"><span class="k">改善信号</span><span class="v">{imp}</span></div>
@@ -534,6 +544,22 @@ details.attdet[open]>summary:before{content:"▾ "}
 .blk.dim{opacity:.9}
 .blk.dim .blk-h{color:#8a9099}
 .attmini{color:#8a9099;font-size:12px;margin-left:6px}
+.attline{font-size:13px;color:#4b5563;margin:8px 0;padding:7px 10px;background:#fafbfc;border:1px solid #eef0f3;border-radius:8px}
+.attline .attk{font-weight:700;color:#8a9099;margin-right:8px}
+.attline.ok{background:#e8f7f0;border-color:#cdeadd}
+.attline.warn{background:#fff8ec;border-color:#f5e3c0}
+.attline.bad{background:#fdecec;border-color:#f6cfcf}
+.attline.none{background:#f3f5f8}
+.lvbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.lvlbl{font-size:12px;color:#8a9099}
+.lvbadge{font-size:14px;font-weight:700;padding:3px 12px;border-radius:14px;color:#fff}
+.lvbadge.red{background:#e54545}.lvbadge.orange{background:#ff8f1f}
+.lvbadge.green{background:#2ba471}.lvbadge.blue{background:#3a5bdb}
+.lvevs{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+.lvev{font-size:11.5px;color:#5a6472;background:#f3f5f8;border-radius:6px;padding:2px 8px}
+.lvev b{color:#3a5bdb;margin-right:4px;font-weight:600}
+.lstab{margin:6px 0 8px}
+.lstab .ld{font-weight:600;color:#3a5bdb}
 .noatt{font-size:13px;color:#8a9099}
 .bs{font-weight:600}
 .bs.ok{color:#2ba471} .bs.pb{color:#ff8f1f} .bs.no{color:#e54545}
@@ -772,9 +798,10 @@ def main():
 • 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 取每群最近消息（倒序，单群上限 500 条），文本与语音转写均纳入。<br>
 • 分析窗口：仅分析 <b>{args.window} 至今</b>的聊天内容。<br>
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
-• 出勤判定：「是否需关注」规则 —— 全缺 → 🔴 高风险建议电话；缺 ≥2 节 或 “缺了且未看回放” → 🔴 需关注；缺 1 节未看回放 → 🟡 轻关注；缺 1 节但已看回放 / 全勤 → 🟢 常规。<b>出勤的权重按角色区分：教务（为续报负责）视出勤为核心关切，逐节明细全展开并给红黄绿定档；联席（为学习效果负责）仅作背景参考，压成一行中性结论、明细折叠，且不参与联席定档。</b><br>
+• 出勤口径（v3.8 修正）：<b>看回放也算有效出勤</b> —— 有效出勤 = 到课 + 未到课但已看回放；只有「既没到课、也没看回放」才算<b>真缺课</b>（修正前把已看回放的节次也计成缺课）。呈现统一为<b>一句话</b>：如「出勤 4/5 次（含回放 2 次），缺课 1 次，第 5 节既没到课也没看回放」。判定：全勤 → 🟢；缺课 ≥2 节 → 🔴；缺课 1 节 → 🟡。<b>权重按角色区分：教务（为续报负责）在出勤一句话下另附折叠的逐节明细与「是否需关注」；联席（为学习效果负责）只有这一句话，不再单独成块，也不参与联席定档。</b><br>
 • 请假备注：仅摘录学生在群内自述的请假/看回放缘由，后台无请假原因字段，具体以教务记录为准。<br>
-• 报告结构（{view_cn}）：① 速览卡（定档＋配合度结论＋{'<b>联席关注四维</b>（互动状态 / 催交作业是否交 / 批改后是否订正 / 提问意愿）＋' if not is_edu else ''}最该盯 1 件事）；② 出勤（后台权威{'· 教务续报关注重点，逐节展开' if is_edu else '· 教务主责，联席仅作背景参考，明细折叠且不参与定档'}）；③ 学习掌握与薄弱点——<b>结论先行</b>：先给薄弱知识点、错误类型与优势，再附<b>课堂小黑板逐轮读图</b>作为佐证依据。薄弱知识点由<b>「聊天高频话题 × 课堂小黑板读图实证」交叉验证</b>得出：两者同时命中为 🖍 双证据高亮，仅小黑板命中为 🖍 实证薄弱（聊天未提及）；小黑板读图会标注每题的<b>关联知识点</b>（与聊天高频同口径），据此把作答错误精准落到知识点上；④ {blk4_cn} To-Do（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 严格按<b>联席四维</b>排序：互动状态 → 答疑闭环 → 催交作业 → 批改后订正 → 提问意愿；<b>出勤/请假不再进入联席 To-Do</b>（归教务关切），避免「确认出勤/补回放」抢走联席的「最该盯」'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ('课程维度：单一课程下跨多个联席，顶部「筛选联席」下钻到具体联席，学生卡标注所属联席。' if is_course else '联席维度：同一联席名下的课程 Tab 切换，逐课程查看该联席负责的学生。')}<br>
+• 报告结构（{view_cn}，v3.8 重排）：<b>① 学习情况</b> —— 首行给出<b>学习分层徽章</b>（需重点关注 / 需关注 / 正常 / 良好），由三类证据<b>综合判档</b>：① 课堂小黑板作答（课次·轮次·未收尾占比·典型错误·趋势）② 作业闭环（催交是否交、批改后是否订正）③ 老师反馈（群里指出问题 / 正面评价次数）；作业闭环做对会加分，避免人人被判重点关注。其下为薄弱知识点（<b>「聊天高频话题 × 小黑板实证」交叉验证</b>：两者都命中 → 🖍 双证据，仅小黑板命中 → 🖍 实证薄弱）、错误类型、优势，再附<b>课堂小黑板佐证</b>（按<b>课次</b>给出概况表 + 折叠的逐轮明细，读图标注每题<b>关联知识点</b>，与聊天高频同口径）。<b>② 配合度</b> —— 配合度结论 ＋{'<b>联席四维</b>（互动状态 / 催交作业是否交 / 批改后是否订正 / 提问意愿）＋' if not is_edu else ''}<b>出勤一句话</b>（{'教务另附折叠的逐节明细' if is_edu else '联席不再单独成块'}）＋ 最该盯 1 件事 ＋ 风险信号条。<b>③ {blk4_cn} To-Do</b>（优先级动作＋{'沟通节奏' if is_edu else '追踪节奏'}＋改善信号）——{'教务视角的 To-Do 面向「家长沟通 / 反馈学生问题 / 建立信任 / 推动续报」' if is_edu else '联席视角的 To-Do 严格按<b>联席四维</b>排序：互动状态 → 答疑闭环 → 催交作业 → 批改后订正 → 提问意愿；若小黑板暴露「多轮未收尾 / 多轮空白未提交」且聊天侧无更高优先级问题，该结论会置顶为「最该盯」。<b>出勤/请假不再进入联席 To-Do</b>（归教务关切）'}。{'教务视角支持双维度：① 按课程维度（课程 Tab 切换，每个课程下可「筛选联席」下钻到具体联席）；② 按联席维度（按下属联席下钻，学生卡标注所属联席）。' if is_edu else ('课程维度：单一课程下跨多个联席，顶部「筛选联席」下钻到具体联席，学生卡标注所属联席。' if is_course else '联席维度：同一联席名下的课程 Tab 切换，逐课程查看该联席负责的学生。')}<br>
+• 小黑板目录层级（v3.8 明确）：第 1 层文件夹 = <b>一次课</b>（命名含上课日期，如 0906邵小黑板 / 0927邵清北打穿题）；第 2 层 = <b>该次课下的每一轮</b>（时间戳目录）；第 3 层 = 图片（带红笔批改痕迹的是联席批改后的图）。故报告按「课次 → 轮次」两层组织，轮次按第 2 层目录去重计数。<br>
 • 配合度（结论式）：依据 学生本人发言密度/主动提问 与 家长代交/代沟通措辞 综合判定类型（如“家长推着走”型 / 放手培养型），数据源未区分发言者 ID，为启发式估算，供跟进策略参考。<br>
 • 定档规则：🔴 红=聊天分析判定「响应迟缓」（学生提问后 ≥24 小时才见老师回复）或「需回复」（会话尾部仍有未获回应提问）；🟡 黄=有未解疑问、作业负面信号、负面情绪{'、出勤异常（仅教务）' if is_edu else ''}；🟢 绿=其余正常推进。<br>
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>

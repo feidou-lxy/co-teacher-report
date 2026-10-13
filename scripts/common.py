@@ -137,3 +137,127 @@ def ensure_openpyxl():
         print("⏳ 未检测到 openpyxl，正在用当前 Python 自动安装（仅首次）…")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "openpyxl>=3.1"])
         print("✅ openpyxl 安装完成。")
+
+
+def learning_level(s, board):
+    """学习情况分层（v3.8）：综合三类证据判档 —— ① 课堂小黑板作答 ② 作业闭环 ③ 老师反馈。
+
+    report.py 与 xlsx.py 共用同一份口径，避免两处漂移。
+    返回 (档位key, 档位中文, 依据列表[(来源, 文本)])
+    档位：需重点关注 / 需关注 / 正常 / 良好
+    """
+    ev, score = [], 0
+    # ① 课堂小黑板（最硬的学习证据）
+    if board and board.get("details"):
+        ds = board.get("details", [])
+        rounds = board.get("rounds") or len(ds)
+        sc = board.get("status_counts", {})
+        full = sc.get("完整作答", 0)
+        part = sc.get("部分作答", 0)
+        blank = sc.get("空白未提交", 0) + sc.get("空白", 0)
+        errs = board.get("error_types", []) or []
+        trend = board.get("trend", "")
+        lc = board.get("lesson_count") or len(board.get("lessons") or [])
+        head = f"{lc} 次课 · {rounds} 轮"
+        r = max(1, rounds)
+        if blank / r >= 0.4:
+            score -= 3
+            ev.append(("小黑板", f"{head}中 {blank} 轮空白未提交"))
+        elif part / r >= 0.6:
+            score -= 2
+            ev.append(("小黑板", f"{head}中 {part} 轮未收尾"))
+        elif part / r >= 0.4:
+            score -= 1
+            ev.append(("小黑板", f"{head}中 {part} 轮未收尾"))
+        elif full / r >= 0.7:
+            score += 2
+            ev.append(("小黑板", f"{head}中 {full} 轮完整作答"))
+        elif full / r >= 0.5:
+            score += 1
+            ev.append(("小黑板", f"{head}中 {full} 轮完整作答"))
+        if len(errs) >= 2:
+            score -= 1
+        if errs:
+            ev.append(("小黑板", "典型错误：" + "、".join(errs[:2])))
+        if trend == "下滑":
+            score -= 1
+            ev.append(("小黑板", "作答趋势下滑"))
+        elif trend == "逐步改善":
+            score += 1
+            ev.append(("小黑板", "作答趋势逐步改善"))
+    else:
+        ev.append(("小黑板", "暂无小黑板数据"))
+    # ② 作业闭环（催交 → 是否交 / 批改 → 是否改）：做对要加分，否则人人被判重点关注
+    un, uo = s.get("urge_n", 0), s.get("urge_ok", 0)
+    fn, fo = s.get("fix_n", 0), s.get("fix_ok", 0)
+    if un > uo:
+        miss = un - uo
+        score -= 2 if miss >= 2 else 1
+        ev.append(("作业", f"催交 {un} 次、{miss} 次未见提交"))
+    elif un:
+        score += 1
+        ev.append(("作业", f"催交 {un} 次均已提交"))
+    if fn > fo:
+        miss = fn - fo
+        score -= 2 if miss >= 2 else 1
+        ev.append(("作业", f"批改 {fn} 次、{miss} 次未见改正"))
+    elif fn:
+        score += 1
+        ev.append(("作业", f"批改 {fn} 次均已改正"))
+    if s.get("hw_neg", 0) >= 2:
+        score -= 1
+        ev.append(("作业", f"自述「没写 / 不会做」{s['hw_neg']} 处"))
+    # ③ 老师反馈（群里老师对该生的评价）
+    tp, tn = s.get("tea_pos", 0), s.get("tea_neg", 0)
+    if tn >= 3:
+        score -= 2
+    elif tn == 2:
+        score -= 1
+    if tn:
+        ev.append(("老师反馈", f"指出问题 {tn} 处"))
+    if tp >= 2:
+        score += 1
+    if tp:
+        ev.append(("老师反馈", f"正面评价 {tp} 处"))
+    # 档位
+    if score <= -3:
+        key, cn = "red", "需重点关注"
+    elif score <= -1:
+        key, cn = "orange", "需关注"
+    elif score >= 2:
+        key, cn = "blue", "良好"
+    else:
+        key, cn = "green", "正常"
+    return key, cn, ev
+
+
+def att_stats(a):
+    """出勤口径（v3.8）：看回放也算有效出勤；只有「既没到课也没看回放」才算真缺课。
+
+    返回 (总节数, 有效出勤, 到课, 仅回放补齐, 看回放总数, 真缺课, 缺课节次列表)
+    """
+    n = a["lessonCount"]
+    cls = a.get("classes", []) or []
+    att = sum(1 for c in cls if c.get("isAttend") == 1)
+    pb = sum(1 for c in cls if c.get("isPlayback") == 1)
+    pb_only = sum(1 for c in cls if c.get("isAttend") != 1 and c.get("isPlayback") == 1)
+    eff = a.get("effectiveAttendCount")
+    if eff is None:                      # 兼容旧产物（未含新字段）
+        eff = att + pb_only
+    absent = max(0, n - eff)
+    no_pb = [c.get("classSeq") for c in cls if c.get("isAttend") != 1 and c.get("isPlayback") != 1]
+    return n, eff, att, pb_only, pb, absent, no_pb
+
+
+def att_sentence(a):
+    """出勤一句话（v3.8）：如「出勤 4/5 次（含回放 2 次），缺课 1 次，第 5 节既没到课也没看回放」。"""
+    if not a:
+        return "后台无该生出勤记录"
+    n, eff, att, pb_only, pb, absent, no_pb = att_stats(a)
+    if absent == 0 and pb_only == 0:
+        return f"全勤（{n}/{n} 节）"
+    if absent == 0:
+        return f"出勤 {eff}/{n} 次（其中 {pb_only} 次为看回放补齐），无缺课"
+    tail = f"，第{'、'.join(map(str, no_pb))}节既没到课也没看回放" if no_pb else ""
+    return (f"出勤 {eff}/{n} 次" + (f"（含回放 {pb_only} 次）" if pb_only else "")
+            + f"，缺课 {absent} 次{tail}")

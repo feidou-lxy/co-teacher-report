@@ -90,13 +90,28 @@ def split_topics(t):
             if x.strip() and x.strip() != "其他"]
 
 
-def aggregate(analysis_list):
+def aggregate(analysis_list, boards=None):
     from collections import Counter
     summary = {}
+    # 课次映射：round（第 2 层时间戳目录）→ 所属课次（第 1 层目录名）
+    lesson_of_round = {}
+    if boards:
+        for _stu, recs in boards.items():
+            for r in recs:
+                if r.get("round") and r.get("lesson"):
+                    lesson_of_round[r["round"]] = (r["lesson"], r.get("lesson_date", ""))
     for item in analysis_list:
         stu = common.norm_name(item.get("student"))
+        _rd = item.get("round", "")
+        _ls, _ld = lesson_of_round.get(_rd, ("", ""))
+        if not _ls and "/" in _rd:                 # 兜底：从 round 路径反推课次
+            _ls = _rd.split("/")[0]
+            _md = re.match(r"^(\d{2})(\d{2})", _ls)
+            _ld = f"{_md.group(1)}-{_md.group(2)}" if _md else ""
         d = {
-            "round": item.get("round", ""),
+            "round": _rd,
+            "lesson": _ls,
+            "lesson_date": _ld,
             "problem": item.get("problem", ""),
             "topic": item.get("topic", ""),
             "topic_knowledge": (item.get("topic_knowledge") or "").strip(),
@@ -110,7 +125,8 @@ def aggregate(analysis_list):
         sm["analyzed"] += 1
         sm["details"].append(d)
     for stu, sm in summary.items():
-        sm["rounds"] = sm["analyzed"]  # 已读图轮数即分析的轮数
+        # v3.8：rounds 按「轮次」去重（一个时间戳目录 = 一轮；同轮可能上传多张，不能按图片数计）
+        sm["rounds"] = len({d.get("round") for d in sm["details"] if d.get("round")}) or sm["analyzed"]
         sc = Counter(d["status"] for d in sm["details"] if d["status"])
         sm["status_counts"] = dict(sc)
         ec = Counter(e for d in sm["details"] for e in d["errors"])
@@ -136,6 +152,22 @@ def aggregate(analysis_list):
             sm["trend"] = "逐步改善" if lr > er else ("下滑" if lr < er else "基本持平")
         else:
             sm["trend"] = "样本不足"
+        # v3.8：按「课次」分组（第 1 层目录）→ 便于报告按课次呈现，而不是一长串时间戳
+        ls_order, ls_map = [], {}
+        for d in sm["details"]:
+            k = (d.get("lesson") or "其他", d.get("lesson_date") or "")
+            if k not in ls_map:
+                ls_map[k] = {"lesson": k[0], "lesson_date": k[1], "rounds": 0,
+                             "status_counts": {}, "details": []}
+                ls_order.append(k)
+            g = ls_map[k]
+            g["details"].append(d)
+        for k in ls_order:
+            g = ls_map[k]
+            g["rounds"] = len({d.get("round") for d in g["details"] if d.get("round")})
+            g["status_counts"] = dict(Counter(d["status"] for d in g["details"] if d["status"]))
+        sm["lessons"] = [ls_map[k] for k in ls_order]
+        sm["lesson_count"] = len(sm["lessons"])
     return summary
 
 
@@ -181,7 +213,9 @@ def main():
             template = []
             for stu, recs in boards.items():
                 for r in recs:
-                    template.append({"student": stu, "round": r["round"], "path": r["path"],
+                    template.append({"student": stu, "round": r["round"],
+                                     "lesson": r.get("lesson", ""), "lesson_date": r.get("lesson_date", ""),
+                                     "path": r["path"],
                                      "problem": "", "topic": "", "topic_knowledge": "", "status": "",
                                      "correct": "", "errors": [], "stuck_at": "", "note": ""})
             json.dump(template, open(template_path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -189,7 +223,7 @@ def main():
                   f"   请逐张读图后把结论填入该文件（或 board_analysis.json），再重跑本脚本聚合。")
             return
 
-    summary = aggregate(analysis)
+    summary = aggregate(analysis, boards)
     out = os.path.join(wd, "boards_summary.json")
     json.dump(summary, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"✅ 聚合完成｜ 覆盖学生 {len(summary)} 人 ｜ {out}")

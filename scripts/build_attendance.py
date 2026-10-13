@@ -4,8 +4,16 @@
 逐学生聚合为 classes[]，并统计 出勤/缺勤/回放 节数。
 
 输出 <workdir>/attendance_clean.json ：{ 归一化姓名: {
-  name, course, product, lessonCount, attendCount, absentCount, playbackCount, classes:[...] } }
+  name, course, product, lessonCount, attendCount, playbackCount, playbackOnlyCount,
+  effectiveAttendCount, absentCount, classes:[...] } }
 classes[i] = {classSeq, classId, timeStart(YYYY-MM-DD), isAttend, isPlayback, playbackValidTime}
+
+v3.8 口径：**看回放也算有效出勤**（补课已闭环）。
+  attendCount          到课节数
+  playbackCount        看回放节数（含到课后回看）
+  playbackOnlyCount    未到课、仅靠回放补上的节数
+  effectiveAttendCount 有效出勤 = 到课 + 未到课但已看回放
+  absentCount          真缺课 = 既未到课也未看回放（修正前：未到课即算缺，会把已看回放的误判为缺课）
 """
 import argparse
 import json
@@ -67,16 +75,22 @@ def main():
         cls = list(s["classes"].values())
         cls.sort(key=lambda x: x["classSeq"])
         n = len(cls)
-        att = sum(1 for c in cls if c["isAttend"] == 1)
-        pb = sum(1 for c in cls if c["isPlayback"] == 1)
+        att = sum(1 for c in cls if c["isAttend"] == 1)                          # 到课
+        pb = sum(1 for c in cls if c["isPlayback"] == 1)                         # 看回放（含到课后回看）
+        pb_only = sum(1 for c in cls if c["isAttend"] != 1 and c["isPlayback"] == 1)  # 未到课、靠回放补上
+        # v3.8 口径修正：看回放也算有效出勤（补课已闭环），只有「既未到课也没看回放」才算真缺课
+        eff_att = att + pb_only
+        absent = n - eff_att
         out[k] = {
             "name": s["name"],
             "course": s["course"],
             "product": s["product"],
             "lessonCount": n,
-            "attendCount": att,
-            "absentCount": n - att,
-            "playbackCount": pb,
+            "attendCount": att,                 # 到课节数
+            "playbackCount": pb,                # 看回放节数（全部）
+            "playbackOnlyCount": pb_only,       # 未到课、仅靠回放补上的节数
+            "effectiveAttendCount": eff_att,    # 有效出勤 = 到课 + 未到课但已看回放
+            "absentCount": absent,              # 真缺课 = 既未到课也未看回放
             "classes": cls,
         }
 
