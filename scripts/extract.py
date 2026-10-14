@@ -452,7 +452,9 @@ def main():
                 "group": g, "n_text": 0, "n_stu": 0, "n_stu_sub": 0, "n_ack": 0, "n_tea": 0, "voice": 0,
                 "newest": None, "oldest": None, "att_n": 0, "hw": 0, "q": 0,
                 "pos": 0, "neg": 0, "hw_neg": 0, "att_leave": 0,
-                "student_coop": 0, "parent_coop": 0, "top_topics": [],
+                "student_coop": 0, "parent_coop": 0, "speakers": [], "n_other": 0, "parent_sig": 0,
+                "same_person": 0,
+                "top_topics": [],
                 "unresolved": False, "unresolved_at": "", "unresolved_q": "",
                 "unres_evi": "窗口内无聊天",
                 "resp_n": 0, "resp_max_h": 0.0, "resp_slow": False, "resp_slow_cnt": 0,
@@ -484,6 +486,31 @@ def main():
         n_stu_sub = len(sub_stu)
         n_tea = len(tea_txt)
         voice = sum(1 for m in msgs if m.get("msgType") == "voice")
+        # 群内发言者分布（v4.5）：学生侧按 name 聚合 —— 学生群常态是「学生本人高频 + 家长个位数」，
+        # 用它把「家长发言少」与「家长不配合」分开（归因修正），并让配合度结论可回群核查。
+        _spk = Counter()
+        for _m, (_t, _r, _x) in zip(msgs, triples_all):
+            if _r == 2 and _x and not is_noise(_x):
+                _spk[((_m.get("name") or "").strip() or "（未署名）")] += 1
+        speakers = [{"name": _n, "n": _c} for _n, _c in _spk.most_common(6)]
+        n_other = max(0, n_stu - (speakers[0]["n"] if speakers else 0))
+
+        # 次发言者是否疑似「学生本人的第二个账号」（昵称含共同汉字，如「毛毛～💕」vs「毛星空～💕」）
+        # —— 命中则不能把他当家长，避免造出「家长高度配合」这类反向伪结论。
+        def _cn_chars(x):
+            return {ch for ch in (x or "") if "\u4e00" <= ch <= "\u9fff"}
+
+        same_person = 1 if (len(speakers) >= 2
+                            and (_cn_chars(speakers[0]["name"]) & _cn_chars(speakers[1]["name"]))) else 0
+        # 家长身份证据（v4.5）：只在**非主导发言者**的消息里查家长措辞（自报身份 / 代交 / 代沟通 / 孩子…），
+        # 命中才敢把这个人称作「家长」——避免把「学生本人的第二个账号」误判成家长，造出反向伪结论。
+        _main = speakers[0]["name"] if speakers else None
+        _oth_txt = []
+        for _m, (_t, _r, _x) in zip(msgs, triples_all):
+            if _r == 2 and _x and not is_noise(_x):
+                if (((_m.get("name") or "").strip() or "（未署名）") != _main):
+                    _oth_txt.append(_x)
+        parent_sig = hits(" ".join(_oth_txt), PARENT)
         times = [m.get("msgTime") for m in msgs if m.get("msgTime")]
         newest = times[-1] if times else None
         oldest = times[0] if times else None
@@ -668,6 +695,9 @@ def main():
             "att_n": att, "hw": hw, "q": q, "pos": pos, "neg": neg,
             "hw_neg": hw_neg, "att_leave": att_leave,
             "student_coop": student_coop, "parent_coop": parent_coop,
+            # 群内发言者分布（v4.5）：判断配合度时区分「学生本人高频」与「家长是否出面」
+            "speakers": speakers, "n_other": n_other, "parent_sig": parent_sig,
+            "same_person": same_person,
             "top_topics": top_topics, "unresolved": unresolved,
             "unresolved_at": unresolved_at, "unresolved_q": unresolved_q,
             "unres_evi": unres_evi,
