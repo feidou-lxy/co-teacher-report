@@ -500,7 +500,13 @@ FINE_TYPES = {
         ("离心率", ["离心率"]),
         ("定点定值问题", ["定值", "定点"]),
         ("点差法", ["点差"]),
-        ("定义与轨迹判定", ["距离之和", "距离之差", "轨迹", "定直线", "定点F"]),
+    ],
+    # v4.6（用户口径）：**求轨迹类题目归「曲线与方程」，不属「圆锥曲线」**——
+    # 教材「圆锥曲线与方程」一章里，「曲线与方程」讲求轨迹方程，「圆锥曲线」讲三种曲线的几何性质，
+    # 二者应分开归属。真实数据里「定义与轨迹判定」被读图标到「圆锥曲线」是错的。
+    "曲线与方程": [
+        ("定义与轨迹判定", ["求轨迹方程", "轨迹方程", "点的轨迹", "到定直线", "到定点",
+                            "距离之和", "距离之差", "定直线", "定点F", "轨迹"]),
     ],
     "函数与导数": [
         ("复合函数求导", ["复合函数", "复合"]),
@@ -543,6 +549,10 @@ NOTICE_KWS = ["上课通知", "课表", "讲义", "报名", "扫码", "教室", 
 # 故**仅在小黑板侧**屏蔽它们，聊天侧照旧使用。
 BOARD_KW_BLOCK = {"定点", "投影", "斜率", "对称", "轨迹"}
 
+# 题型 → 强制归属知识点（v4.6，用户口径）：有些题型无论读图把所属章节标成什么，都应归到固定大类。
+# 用途：① 修正读图侧把「定义与轨迹判定」误标为「圆锥曲线」；② 兼容此前已归档的读图结果（无需重读图）。
+ITEM_TOPIC = {"定义与轨迹判定": "曲线与方程"}
+
 
 def is_notice(text):
     """群通知 / 事务性消息（不参与薄弱知识点提取）。"""
@@ -576,7 +586,8 @@ def classify_fine(text, best_only=False):
             if hit:
                 out.append((topic, item, max(len(k) for k in hit)))
     if best_only and out:
-        t, i, _ = max(out, key=lambda x: x[2])
+        # 有强制归属的题型（如「定义与轨迹判定」→ 曲线与方程）优先，避免被同句里的泛化题型抢走
+        t, i, _ = max(out, key=lambda x: (2 if x[1] in ITEM_TOPIC else 0, x[2]))
         return [(t, i)]
     return [(t, i) for t, i, _ in out]
 
@@ -622,7 +633,10 @@ def fine_from_board(board, per_topic=6):
             for it2, kws in items2:
                 hit = [k for k in kws if k in blob and k not in BOARD_KW_BLOCK]
                 if hit:
-                    score = (1 if t2 == topic else 0, max(len(k) for k in hit))
+                    # 有强制归属的题型（ITEM_TOPIC）不受读图 topic 影响，直接给最高优先级 ——
+                    # 读图把「求轨迹」类题标成「圆锥曲线」是常见误标，此处以口径为准。
+                    score = ((2 if it2 in ITEM_TOPIC else (1 if t2 == topic else 0)),
+                             max(len(k) for k in hit))
                     if best is None or score > best[0]:
                         best = (score, it2)
         item = best[1] if best else ""
@@ -634,6 +648,9 @@ def fine_from_board(board, per_topic=6):
             evi += f"｜卡点：{clip_txt(stuck, 22)}"
         elif errs:
             evi += "｜错误：" + "、".join(errs[:2])
+        # 归属知识点：读图的 topic 默认沿用，但若该题型有强制归属（ITEM_TOPIC），以强制值为准
+        # ——「定义与轨迹判定」这类求轨迹题属「曲线与方程」，即使读图把它标成了「圆锥曲线」。
+        topic = ITEM_TOPIC.get(item, topic)
         res.setdefault(topic, []).append(
             {"item": item, "kind": "小黑板", "at": d.get("lesson_date") or "",
              "evi": evi, "count": 1})
