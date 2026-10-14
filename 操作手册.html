@@ -29,6 +29,15 @@
   .say .txt code{background:none;border:none;padding:0;color:var(--blue);font-size:13.5px;}
   .tip{font-size:12.5px;color:#475569;background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:9px 13px;margin-top:7px;}
   .tip b{color:var(--ok);}
+  .more{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfe;overflow:hidden;}
+  .more>summary{cursor:pointer;padding:11px 15px;font-size:13.5px;font-weight:700;color:var(--blue);background:#f0f4ff;list-style:none;user-select:none;}
+  .more>summary::-webkit-details-marker{display:none;}
+  .more>summary::before{content:"▸ ";}
+  .more[open]>summary::before{content:"▾ ";}
+  .more[open]>summary{border-bottom:1px solid var(--line);}
+  .more .tip{margin:8px 13px;}
+  .more>.tip:first-of-type{margin-top:13px;}
+  .more>.tip:last-of-type{margin-bottom:13px;}
   .note{margin-top:18px;background:#fff7ec;border-left:4px solid var(--warn);border-radius:8px;padding:13px 16px;font-size:13px;color:#7a5a1f;}
   .note b{color:var(--warn);}
   .note li{margin:4px 0;}
@@ -110,9 +119,18 @@
         <div class="lbl">课程视角：</div>
         <div class="txt">用 co-teacher-report 技能，生成 <b>高二数学211层六C肖</b>（课程） <b>2026年9月</b> 的学情分析</div>
       </div>
+      <div class="say">
+        <div class="lbl">叠加小黑板读图（可选）：</div>
+        <div class="txt">用 co-teacher-report 技能，生成 高二数学211层六C肖（课程）2026年9月 的学情分析，<b>并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</b></div>
+      </div>
+      <div class="tip">
+        <b>小黑板为可选项</b>：把该课所有学生的小黑板图片放进一个本地文件夹，让 WorkBuddy 逐张读图 —— <b>一次课、一轮都不能漏</b>（v4.3：报告里的「具体薄弱点」是<b>聊天 ＋ 每次课每一轮</b>一起归纳出来的，只读一轮会把结论做偏）。读图判断每生<b>作答情况（完整 / 部分 / 空白未提交）</b>、<b>定位典型错误与卡点</b>并标注<b>关联知识点</b>，作为判断优势 / 薄弱点的<b>直接依据</b>写进学生卡片的「① 学习情况」——<b>结论先行</b>：先给<b>具体薄弱点（v4.2 起会下钻到题型，例：课堂作答卡点「两两垂直结论未写完」）</b>与优势；小黑板佐证只给「一句话作答概况 ＋ 典型错误」，<b>每次课的情况 / 逐轮明细默认折叠，需要时点击展开</b>（不嵌图片，只给文字结论）。需配置一个视觉模型（或走人工回填模板）。
+      </div>
       <div class="tip">
         换人 / 换月 / 换课：只改名字和月份即可。教务视角会拉出该教务管辖的全部学生，学情分析可切换<b>「按课程」/「按联席」</b>两种维度查看；课程视角直接拉出该门课的全部学生，<b>下方可下钻到具体联席</b>；联席视角按<b>课程 Tab</b> 切换。
       </div>
+      <details class="more">
+      <summary>📖 报告怎么看 · 详细说明（点击展开）</summary>
       <div class="tip">
         <b>两个角色的关注点不一样，报告会按角色自动调权重：</b><br>
         • <b>联席</b>（为学习效果负责）：每张卡<b>右上角给一枚「学习分层」徽章</b>（需重点关注 / 需关注 / 正常 / 良好），由<b>课堂小黑板 + 作业闭环 + 老师反馈 + 学生成绩</b>四方面证据综合判定，判定依据可在 ① 块末尾<b>点击展开</b>（v4.4：依据里<b>逐条给出加减分</b>，标题给出<b>累计总分</b>，可以自己核对）；<b>① 学习情况</b>给<b>成绩</b>（群里发过月考 / 期中成绩时才有这一行）、<b>具体薄弱点</b>（v4.2：从「知识点」下钻到<b>题型 / 方法</b>，如「直线和圆」→「含参直线过定点」，每条都附原文出处、可回群核对）与优势（小黑板佐证折叠）；<b>② 配合度</b>给<b>「联席四维」</b>（互动状态 / 催交作业是否交 / 批改后是否订正 / 提问意愿）＋<b>群内发言人分布</b>（v4.5：谁在说话、各说了多少条，可回群核对）；<b>③ 行动清单</b>按优先级排序、第 1 条即<b>「最该盯」</b>。出勤只汇总成<b>一句话</b>。<br>
@@ -156,13 +174,7 @@
       <div class="tip">
         <b>判定精度（v4.1 收紧 · 重要）：</b>「学生问题未解决」只在两种情况成立 —— ① 老师说了「稍后 / 晚点 / 回头」这类<b>应允却没下文</b>（且不是在说排课/假期安排）；② 老师回复后 24 小时内，学生<b>明确表示仍然困惑</b>（还是不会 / 没懂 / 不明白 / 没解决）再次追问。师生之间正常的多轮深挖<b>不再误报</b>（旧口径曾在真实数据上把一名积极学生连判 7 项）。另外，若用<b>合成/演示数据</b>试跑，报告顶部会有一条<b>橙色横幅</b>注明数据来源 —— 看到它就知道报告里的提问原文在真实群里搜不到属正常。
       </div>
-      <div class="say">
-        <div class="lbl">叠加小黑板读图（可选）：</div>
-        <div class="txt">用 co-teacher-report 技能，生成 高二数学211层六C肖（课程）2026年9月 的学情分析，<b>并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</b></div>
-      </div>
-      <div class="tip">
-        小黑板为<b>可选项</b>：把该课所有学生的小黑板图片放进一个本地文件夹，让 WorkBuddy 逐张读图 —— <b>一次课、一轮都不能漏</b>（v4.3：报告里的「具体薄弱点」是<b>聊天 ＋ 每次课每一轮</b>一起归纳出来的，只读一轮会把结论做偏）。读图判断每生<b>作答情况（完整 / 部分 / 空白未提交）</b>、<b>定位典型错误与卡点</b>并标注<b>关联知识点</b>，作为判断优势 / 薄弱点的<b>直接依据</b>写进学生卡片的「① 学习情况」——<b>结论先行</b>：先给<b>具体薄弱点（v4.2 起会下钻到题型，例：课堂作答卡点「两两垂直结论未写完」）</b>与优势；小黑板佐证只给「一句话作答概况 ＋ 典型错误」，<b>每次课的情况 / 逐轮明细默认折叠，需要时点击展开</b>（不嵌图片，只给文字结论）。需配置一个视觉模型（或走人工回填模板）。
-      </div>
+      </details>
       <div class="out">
         <b>你会拿到一份文件：</b>
         <div>• <b>&lt;姓名&gt;_学情分析.html</b> —— 彩色学情分析页（学生姓名后标注购课类型：直播 / 回放；右上角<b>学习分层</b>徽章；① 学习情况：<b>具体薄弱点（下钻到题型、附原文出处）</b>＋优势＋折叠的小黑板佐证 ② 配合度：待回应提醒＋四维＋出勤一句话 ③ 行动清单：按优先级排序、首条即「最该盯」）</div>
