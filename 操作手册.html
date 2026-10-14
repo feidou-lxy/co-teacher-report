@@ -27,6 +27,22 @@
   .say .lbl{font-size:11px;color:var(--blue);font-weight:700;margin-bottom:2px;}
   .say .txt{font-size:14px;color:#1f2329;font-weight:600;}
   .say .txt code{background:none;border:none;padding:0;color:var(--blue);font-size:13.5px;}
+  /* 第 2 步：角色卡 */
+  .roles{display:flex;flex-direction:column;gap:12px;margin:12px 0 2px;}
+  .role{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;}
+  .role-h{display:flex;align-items:center;gap:10px;padding:10px 15px;background:linear-gradient(90deg,#eef2ff,#f8faff);border-bottom:1px solid var(--line);}
+  .role-h .ic{width:26px;height:26px;border-radius:8px;background:var(--blue);color:#fff;font-size:14px;display:flex;align-items:center;justify-content:center;flex:0 0 26px;}
+  .role-h b{font-size:14.5px;color:var(--ink);}
+  .role-h .who{font-size:12px;color:var(--sub);margin-left:auto;background:#fff;border:1px solid var(--line);padding:2px 9px;border-radius:12px;white-space:nowrap;}
+  .role-b{padding:6px 15px 12px;}
+  .rrow{display:flex;gap:10px;padding:7px 0;border-top:1px dashed #eef0f3;font-size:13px;}
+  .rrow:first-child{border-top:none;}
+  .rrow>.rk{flex:0 0 74px;color:var(--blue);font-weight:700;font-size:12.5px;padding-top:2px;}
+  .rrow>.rv{color:#3a4250;flex:1;line-height:1.6;}
+  .rrow>.rv b{color:var(--ink);}
+  .rrow>.rv .q{display:block;background:#f0f7ff;border:1px solid #cfe0ff;border-radius:8px;padding:7px 11px;margin:5px 0 3px;font-weight:600;color:#1f2329;font-size:13.5px;}
+  .rstep{display:flex;gap:8px;padding:2px 0;}
+  .rstep>.n{flex:0 0 17px;height:17px;border-radius:50%;background:#eef2ff;color:var(--blue);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:3px;}
   .tip{font-size:12.5px;color:#475569;background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:9px 13px;margin-top:7px;}
   .tip b{color:var(--ok);}
   .more{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfe;overflow:hidden;}
@@ -106,21 +122,63 @@
         <h3>生成学情分析</h3>
         <span class="when">每次出分析</span>
       </div>
-      <p>在<strong>新对话</strong>里，说出<strong>姓名 + 角色 + 月份</strong>即可。</p>
-      <div class="say">
-        <div class="lbl">联席视角：</div>
-        <div class="txt">用 co-teacher-report 技能，生成 <b>张巍</b>（联席） <b>2026年9月</b> 的学情分析</div>
+      <p>在<strong>新对话</strong>里，先想清楚<b>用哪个视角</b>（看谁的学生），再说一句话：<strong>技能 + 谁 + 哪个月</strong>。下面三种角色各是一张卡，标明了<strong>你要准备什么、操作几步、会得到什么</strong> —— 照抄「你说」那一行即可。</p>
+
+      <div class="roles">
+
+        <!-- ① 联席 -->
+        <div class="role">
+          <div class="role-h"><span class="ic">👤</span><b>① 联席视角</b><span class="who">联席本人 / 代联席出报告</span></div>
+          <div class="role-b">
+            <div class="rrow"><span class="rk">你要准备</span><span class="rv">一位<b>联席的姓名</b>（与后台一致，如「张巍」）＋ <b>月份</b></span></div>
+            <div class="rrow"><span class="rk">操作步骤</span><span class="rv">
+              <div class="rstep"><span class="n">1</span><span>确认要出<b>哪位联席</b>的报告（姓名照后台写）</span></div>
+              <div class="rstep"><span class="n">2</span><span>对 WorkBuddy 说这句话：</span></div>
+              <span class="q">用 co-teacher-report 技能，生成 张巍（联席） 2026年9月 的学情分析</span>
+              <div class="rstep"><span class="n">3</span><span>等它自动<b>取数 → 分析 → 排版</b>（首次约几分钟），直接给你一份 HTML</span></div>
+            </span></div>
+            <div class="rrow"><span class="rk">取什么数</span><span class="rv">该联席<b>名下的全部学生</b>（只算他负责的群，不混入别的老师）</span></div>
+            <div class="rrow"><span class="rk">得到什么</span><span class="rv"><b>按课程 Tab 切换</b>；每张学生卡 = 右上角 1 枚<b>「学习分层」徽章</b> ＋ <b>①学习情况</b>（具体薄弱点→题型、优势）<b>②配合度</b>（待回应、联席四维、出勤一句话）<b>③联席跟进 Action</b>（第 1 条即「最该盯」）。<b>为「学习效果」负责，出勤只作背景。</b></span></div>
+          </div>
+        </div>
+
+        <!-- ② 教务 -->
+        <div class="role">
+          <div class="role-h"><span class="ic">🧑💼</span><b>② 教务视角</b><span class="who">教务本人 / 代教务出报告</span></div>
+          <div class="role-b">
+            <div class="rrow"><span class="rk">你要准备</span><span class="rv">一位<b>教务的姓名</b>（如「罗绂燕」）＋ <b>月份</b></span></div>
+            <div class="rrow"><span class="rk">操作步骤</span><span class="rv">
+              <div class="rstep"><span class="n">1</span><span>确认要出<b>哪位教务</b>的管辖报告</span></div>
+              <div class="rstep"><span class="n">2</span><span>对 WorkBuddy 说：</span></div>
+              <span class="q">用 co-teacher-report 技能，生成 罗绂燕（教务） 2026年9月 的学情分析</span>
+              <div class="rstep"><span class="n">3</span><span>等它出报告（人数多，时间会长一点）</span></div>
+            </span></div>
+            <div class="rrow"><span class="rk">取什么数</span><span class="rv">该教务<b>管辖的全部学生</b>（跨多个下属联席）</span></div>
+            <div class="rrow"><span class="rk">得到什么</span><span class="rv">顶部<b>一键切换「按课程 / 按联席」两种维度</b> —— 按课程：课程 Tab ＋ 课程内「筛选联席」两级下钻；按联席：每 Tab 一名下属联席，便于横向对比。<b>出勤是核心关切</b>：出勤一句话下另附逐节明细与红黄绿。<b>为「续报」负责，看重出勤与家长沟通。</b></span></div>
+          </div>
+        </div>
+
+        <!-- ③ 课程 -->
+        <div class="role">
+          <div class="role-h"><span class="ic">📚</span><b>③ 课程视角</b><span class="who">按一门课看整体</span></div>
+          <div class="role-b">
+            <div class="rrow"><span class="rk">你要准备</span><span class="rv"><b>课程名</b>（⚠️ <b>去后台「响应时效」列表的「课程」列整串复制</b>，如「高二数学985层进化班六D谢胡」；<b>不要照抄群名</b> —— 群名常漏班型 / 缺字 / 写成另一门课）＋ <b>月份</b></span></div>
+            <div class="rrow"><span class="rk">操作步骤</span><span class="rv">
+              <div class="rstep"><span class="n">1</span><span>打开后台「响应时效」列表，把<b>「课程」列的字</b>复制出来</span></div>
+              <div class="rstep"><span class="n">2</span><span>对 WorkBuddy 说：</span></div>
+              <span class="q">用 co-teacher-report 技能，生成 高二数学211层六C肖（课程） 2026年9月 的学情分析</span>
+              <div class="rstep"><span class="n">3</span><span>等它出报告</span></div>
+            </span></div>
+            <div class="rrow"><span class="rk">取什么数</span><span class="rv">该课程下的<b>全部学生</b>（一门课跨多个联席）</span></div>
+            <div class="rrow"><span class="rk">得到什么</span><span class="rv"><b>单课程结构</b>（无课程 Tab）；顶部「筛选联席」下拉可下钻到具体联席，学生卡标注「联席：XXX」；其余结构同联席视角。</span></div>
+            <div class="rrow"><span class="rk">进阶</span><span class="rv">只想看该课程里<b>某位联席</b>负责的部分 —— 补一句「<b>只看该课程下张巍负责的学生</b>」即可。</span></div>
+          </div>
+        </div>
+
       </div>
-      <div class="say">
-        <div class="lbl">教务视角：</div>
-        <div class="txt">用 co-teacher-report 技能，生成 <b>罗绂燕</b>（教务） <b>2026年9月</b> 的学情分析</div>
-      </div>
-      <div class="say">
-        <div class="lbl">课程视角：</div>
-        <div class="txt">用 co-teacher-report 技能，生成 <b>高二数学211层六C肖</b>（课程） <b>2026年9月</b> 的学情分析</div>
-      </div>
-      <div class="say">
-        <div class="lbl">叠加小黑板读图（可选）：</div>
+
+      <div class="say" style="margin-top:14px;">
+        <div class="lbl">叠加小黑板读图（可选 · 三种视角都能加）：</div>
         <div class="txt">用 co-teacher-report 技能，生成 高二数学211层六C肖（课程）2026年9月 的学情分析，<b>并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</b></div>
       </div>
       <div class="tip">
@@ -194,7 +252,7 @@
       </ul>
     </div>
 
-    <div class="foot">学生学情分析 · 操作手册 ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
+    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.7（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
   </div>
 </div>
 </body>
