@@ -6,12 +6,18 @@
   - 联席/教务视角（双条件，缺一不可）：
       ① 群内学生名 ∈ students.json 名单；② 群归属字段 == 本角色（联席看 coTeacherName、
          教务看 classTeacherName）。② 避免把学生别的科目群（由别的角色负责）混入。
-  - **课程维度（--course）**：群名 groupName 包含课程串即收（如「高二数学清北层日E邵」），
+  - **课程维度（--course）**：**后台课程名 `productName`** 包含课程串即收
+     （如「高二数学清北层日E邵」「高二数学985层进化班六D谢胡」），
      无需学生名/归属过滤——课程天然跨多个联席，正是要一次性取出该课全部群；
      另传 --co <联席名> 可作课程内子筛选（只保留该联席负责的部分）。
+     ⚠️ v4.7 起**不再用群名 groupName 判归属**：实测二者会不一致
+     （群名「高二数学985层六D谢胡」而后台课程名是「高二数学清北层进化班日D谢胡」，
+     另有群名缺字如「高二数学清北层E邵」）。课程名一个都没命中时，才退回群名匹配并提示。
 
-输出 <workdir>/groups.json ：[{roomId, studentName, groupName,
-coTeacherName, classTeacherName, subjectName}]
+输出 <workdir>/groups.json ：[{roomId, studentName, groupName, productName,
+coTeacherName, classTeacherName, ownerName, subjectName}]
+其中 productName（v4.7）= 后台「响应时效」列表直接给出的**课程名**（如
+「2026Q-SX-高二数学985层进化班六D谢胡」），报告侧据此取课程名，不再切群名解析。
 （注：「是否回复」与「响应超时」均不再采用后台列 —— 实测与聊天事实不符；
   统一由 extract.py 依据聊天记录自行推算，故此处不再拉取 isReplied / isTimeout / timeoutDuration）
 """
@@ -98,31 +104,73 @@ def main():
     print(f"机构级群列表去重后 {len(by_room)} 个")
 
     if role == "course":
-        # —— 课程维度：群名含课程串即收（课程天然跨多个联席，一次性取出该课全部群）——
+        # —— 课程维度：**以后台课程名 productName 为唯一口径**（v4.7）——
+        # 课程天然跨多个联席，一次性取出该课全部群；--co 可作课程内子筛选。
+        # ⚠️ 实测群名与后台课程名会不一致（例：群名「高二数学985层六D谢胡」，
+        #    后台课程名却是「高二数学清北层进化班日D谢胡」），故**不再用群名判归属**，
+        #    只把这类群作为诊断列出，避免把别的课的学生算进来。
         course = name
         sub_co = (getattr(args, "co", None) or "").strip()
-        out = []
-        for g in by_room.values():
-            gn = g.get("groupName") or ""
-            if course not in gn:
-                continue
-            # 课程内可选子筛选：只保留指定联席负责的部分
-            if sub_co and not owner_matches(g.get("coTeacherName"), sub_co):
-                continue
-            out.append({
+
+        def rec(g, pn):
+            return {
                 "roomId": g.get("roomId"),
                 "studentName": g.get("studentName"),
                 "groupName": g.get("groupName"),
+                # v4.7：课程名（后台产品名），报告侧据此取课程，不再解析 groupName
+                "productName": pn,
                 # 课程维度直接用群自带的归属/学科（无需学生名映射）
                 "coTeacherName": g.get("coTeacherName") or "",
                 "classTeacherName": g.get("classTeacherName") or "",
                 "ownerName": g.get("coTeacherName") or "",
                 "subjectName": g.get("subjectName") or "",
-            })
+            }
+
+        # 诊断用：把「进化班」这类班型后缀抹掉再比，双向识别「群名像、课程名不对」的群
+        _nt = lambda x: str(x or "").replace("进化班", "")
+        out, mismatch = [], []
+        for g in by_room.values():
+            pn = g.get("productName") or ""
+            if course not in pn:
+                gn_course = common.course_name(None, g.get("groupName"))
+                if _nt(course) and (_nt(course) in _nt(gn_course)
+                                    or course in (g.get("groupName") or "")):
+                    mismatch.append(g)     # 群名像、课程名不是 → 仅诊断
+                continue
+            if sub_co and not owner_matches(g.get("coTeacherName"), sub_co):
+                continue
+            out.append(rec(g, pn))
+
+        # 课程名一个都没命中 → 退回群名匹配（兼容按旧群名写法输入；口径风险会提示）
+        by_gn = False
+        if not out:
+            by_gn = True
+            for g in by_room.values():
+                if course not in (g.get("groupName") or ""):
+                    continue
+                if sub_co and not owner_matches(g.get("coTeacherName"), sub_co):
+                    continue
+                out.append(rec(g, g.get("productName") or ""))
+
         json.dump(out, open(f"{wd}/groups.json", "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)
-        print(f"\n✅ 课程「{course}」命中群 {len(out)} 个 -> groups.json"
-              + (f"（已按联席「{sub_co}」子筛选）" if sub_co else ""))
+        how = "⚠️ 按群名兜底匹配（后台课程名未命中）" if by_gn else "按后台课程名匹配"
+        print(f"\n✅ 课程「{course}」命中群 {len(out)} 个 -> groups.json（{how}）"
+              + (f" · 已按联席「{sub_co}」子筛选" if sub_co else ""))
+        if by_gn:
+            print("   ⚠️ 你输入的是**群名写法**，后台课程名里没有这个串。"
+                  "群名与后台课程名可能不一致（实测约 1 成群如此），建议改从后台复制课程名重跑。")
+            pns = sorted({g.get("productName") or "" for g in out})
+            for p in pns[:6]:
+                print(f"      该口径下实际涉及课程：{p}")
+        elif mismatch:
+            print(f"   ⚠️ 另有 {len(mismatch)} 个群「群名含该串、但后台课程名是别的课程」，"
+                  f"**已排除**（群名与后台不符，建议回后台核对）：")
+            for g in mismatch[:8]:
+                print(f"      {g.get('studentName')}：群名 {g.get('groupName')}"
+                      f" → 后台课程名 {g.get('productName')}")
+            if len(mismatch) > 8:
+                print(f"      …另 {len(mismatch) - 8} 个")
         return
 
     # —— 联席/教务视角（双条件过滤）——
@@ -154,6 +202,9 @@ def main():
             "roomId": g.get("roomId"),
             "studentName": g.get("studentName"),
             "groupName": g.get("groupName"),
+            # v4.7：课程名（后台产品名，如 2026Q-SX-高二数学985层进化班六D谢胡），
+            # 报告侧据此取课程，不再解析 groupName（缺失时自动回退群名）
+            "productName": g.get("productName") or "",
             # 注：不再采信后台 isTimeout / isReplied（响应时效），实测与聊天事实不符，
             # 统一由 extract.py 依据聊天记录自行推算（见 resp_wait_stats）。
             "coTeacherName": co_of.get(sn, ""),

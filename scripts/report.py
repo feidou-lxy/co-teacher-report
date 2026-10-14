@@ -35,16 +35,17 @@ WINDOW_DEFAULT = "2026-09-01"
 RESP_WARN_H = 12.0
 
 
-def course_of(group_name):
-    gn = group_name or ""
-    parts = gn.split("-")
-    raw = parts[1] if len(parts) > 1 else gn
-    if raw == "高二数学清北层E邵":
+def course_of(group_name, product_name=None):
+    """课程 → (展示名, 课程名原串)。
+
+    v4.7：**优先用后台「响应时效」列表直接给出的课程名 `productName`**
+    （如「2026Q-SX-高二数学985层进化班六D谢胡」），不再从群名 groupName 切段解析；
+    groupName 仅作回退，兼容 v4.6 及更早归档的 groups.json（无 productName 字段）。
+    """
+    raw = common.course_name(product_name, group_name)
+    if raw == "高二数学清北层E邵":          # 旧群名写法缺「日」，回退路径专用修正
         raw = "高二数学清北层日E邵"
-    m = re.match(r"高二数学(清北层|985层|211层|[\u4e00-\u9fa5]+层)(.+?)(邵|谢胡|胡[\u4e00-\u9fa5]*)$", raw)
-    if m:
-        return f"高二数学·{m.group(1)}·{m.group(2)}班（{m.group(3)}老师）", raw
-    return raw, raw
+    return common.clean_course_name(raw), raw
 
 
 ERR_MAP = {
@@ -914,7 +915,8 @@ def main():
         # 统一改用聊天记录分析结论：unresolved=会话尾部仍有未获回应提问；resp_slow=提问后 ≥24h 才见回复
         unreply = bool(s.get("unresolved"))
         slow = bool(s.get("resp_slow"))
-        course, course_raw = course_of(g.get("groupName", ""))
+        # v4.7：课程名优先取后台 productName（响应时效列表新增字段），groupName 仅回退
+        course, course_raw = course_of(g.get("groupName", ""), g.get("productName"))
         co = g.get("coTeacherName") or "未分配联席"
         score = (1 if slow else 0, 1 if s["unresolved"] else 0, s["n_text"])
         rows.append(dict(score=score, stu=stu, s=s, g=g, slow=slow,
@@ -925,7 +927,10 @@ def main():
     # 动态学科：从纳入的群中提取（角色只带某科时即显示该科，避免写死「高二数学」）
     _subj = []
     for r in rows:
-        sj = (r["g"].get("subjectName") or common.subject_of(r["g"].get("groupName", "")) or "").strip()
+        _g = r["g"]
+        sj = (_g.get("subjectName")
+              or common.subject_of(common.course_name(_g.get("productName"), _g.get("groupName")))
+              or "").strip()
         if sj and sj not in _subj:
             _subj.append(sj)
     subject_line = " / ".join(_subj) or "—"

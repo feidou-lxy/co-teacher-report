@@ -95,19 +95,82 @@ def norm_name(s):
     return re.sub(r"\s*\d+$", "", str(s or "")).strip()
 
 
-def clean_course_name(product_name):
-    """把后台 product 名收敛成课程标签，例如
-    '2026Q-SX-高二数学985层进化班六D谢胡' -> '高二数学·985层·六D班（谢胡老师）'
+# ============================================================================
+# 课程名（v4.7）：后台「响应时效」列表已**直接给出课程名** `productName`
+#   productName = 「2026Q-SX-高二数学985层进化班六D谢胡」   ← 权威、含班型
+#   groupName   = 「张喜然(W)-高二数学985层六D谢胡-26Q」     ← 学生名 + 课程 + 26Q
+# 旧做法（v4.6 及更早）从 groupName 切段再正则解析 —— 班号写法不一、
+# 同一课程在不同群里写法还可能不同（群名缺「进化班」）。现改为**优先取 productName**，
+# groupName 仅作回退（兼容已归档、不含 productName 的 groups.json）。
+# ============================================================================
+COURSE_PREFIX_RE = re.compile(r"^\s*\d{4}\s*Q\s*-\s*[A-Za-z]{2,4}\s*-\s*")
+
+
+def course_name(product_name=None, group_name=None):
+    """取「课程名」原串（去掉 `2026Q-SX-` 这类产品前缀，保留班型如「进化班」）。
+
+    优先用后台 `productName`；缺失时回退从群名第二段取（`学生名-课程名-26Q`）。
+    两者都没有时返回空串。
     """
-    import re
-    s = str(product_name or "")
-    s = re.sub(r"^2026Q-SX-", "", s)
-    s = s.replace("进化班", "")
-    m = re.match(r"^(高二数学)(清北层|985层|211层|[\u4e00-\u9fa5]+层?)(.+?)(邵|谢胡|胡[\u4e00-\u9fa5]*)$", s)
+    pn = COURSE_PREFIX_RE.sub("", str(product_name or "").strip()).strip()
+    if pn:
+        return pn
+    gn = str(group_name or "").strip()
+    parts = [p for p in gn.split("-") if p.strip()]
+    return (parts[1] if len(parts) > 1 else gn).strip()
+
+
+# 层级词（清北层 / 985层 / 211层 / 培优层 …）；「进化班」是层级后缀（985层进化班）
+# 先按**已知层级**精确匹配（覆盖当前全部课程）；未知层级才走通用 `..层`，
+# 且要先把误吞的学科词（数学/物理…）退回前缀 —— 否则「高二数学清北层」
+# 会被通用分支切在「数学清北层」上，展示名变成「高二·数学清北层·…」。
+_LAYER_RE = re.compile(r"清北层|985层|211层|培优层|尖子层|提高层|基础层")
+_LAYER_ANY_RE = re.compile(r"[\u4e00-\u9fa5]{2,4}层")
+_SUBJECT_WORDS = ("数学", "物理", "化学", "英语", "语文", "生物", "历史", "地理", "政治", "科学", "信息")
+
+
+def _split_layer(s):
+    """在课程名里定位「层级」，返回 (层级起始下标, 层级文本)；定位不到返回 (None, None)。"""
+    m = _LAYER_RE.search(s)
     if m:
-        layer, cls, teacher = m.group(2), m.group(3), m.group(4)
-        return f"高二数学·{layer}·{cls}班（{teacher}老师）"
-    return s or "未命名课程"
+        return m.start(), m.group(0)
+    m = _LAYER_ANY_RE.search(s)
+    if not m:
+        return None, None
+    txt = m.group(0)
+    for w in _SUBJECT_WORDS:          # 通用分支误吞学科词 → 退回前缀
+        if txt.startswith(w) and len(txt) > len(w):
+            return m.start() + len(w), txt[len(w):]
+    return m.start(), txt
+
+
+# 班号：日E / 六D / 日A …（「日/六」等 + 单个大写字母）
+_CLASS_RE = re.compile(r"([日一二三四五六][A-Z])")
+
+
+def clean_course_name(text):
+    """课程名 → 展示名（含层级与班号），例如：
+        '2026Q-SX-高二数学985层进化班六D谢胡' → '高二数学·985层进化班·六D班（谢胡老师）'
+        '高二数学清北层日E邵'                 → '高二数学·清北层·日E班（邵老师）'
+        '高二数学进度二985层日D肖'            → '高二数学进度二·985层·日D班（肖老师）'
+    解析不出层级 / 班号时**原样返回**（绝不硬凑），如 '高二数学快进度定制1班日B袁'。
+    """
+    s = COURSE_PREFIX_RE.sub("", str(text or "").strip()).strip()
+    if not s:
+        return "未命名课程"
+    li, layer = _split_layer(s)
+    if li is None:
+        return s
+    head, rest = s[:li], s[li + len(layer):]
+    mc = _CLASS_RE.search(rest)
+    if not mc:
+        return s
+    # 层级与班号之间的成分**一律保留**（如「进化班」「零点五加三直升班」），避免丢信息
+    mid = rest[:mc.start()].strip()
+    cls, tea = mc.group(1), rest[mc.end():].strip()
+    if not tea:
+        return s
+    return f"{head}·{layer}{mid}·{cls}班（{tea}老师）".lstrip("·")
 
 
 SUBJECTS = ("数学", "物理", "化学", "英语", "语文", "生物", "历史", "地理", "政治", "科学", "信息", "编程")

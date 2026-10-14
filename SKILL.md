@@ -87,7 +87,7 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 `<skill>` 为本技能目录。该命令依次执行：
 
 1. `pull_students.py` — 拉花名册，按 `coTeacherName`（联席）/ `classTeacherName`（教务）过滤；课程视角按课程名匹配 `productName` 拉该课程全部学生 → `students.json`
-2. `pull_groups.py` — 拉群聊列表（月维度+日维度并集），**双条件过滤**：① 群内学生 ∈ 花名册；② 群归属 == 本角色（联席看群 `coTeacherName` / 教务看群 `classTeacherName`）。仅按学生名交集会误收该生其他学科、由别的角色负责的群。课程视角按群名含课程名筛选、跳过 owner 过滤（课程跨联席）→ `groups.json`
+2. `pull_groups.py` — 拉群聊列表（月维度+日维度并集），**双条件过滤**：① 群内学生 ∈ 花名册；② 群归属 == 本角色（联席看群 `coTeacherName` / 教务看群 `classTeacherName`）。仅按学生名交集会误收该生其他学科、由别的角色负责的群。课程视角**按后台课程名 `productName` 筛选**（v4.7；不再用群名），跳过 owner 过滤（课程跨联席）→ `groups.json`（各条均带 `productName`）
 3. `pull_chats.py` — 逐群拉聊天（文本+语音转写，**分页拉满，不再截断**）→ `chats.json`
 4. `pull_attendance.py` — 拉逐节课出勤（按 ProductId），按 `students.json` 学生白名单过滤 → `attendance_raw.json`
 5. `build_attendance.py` — 去重清洗 → `attendance_clean.json`
@@ -271,11 +271,21 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 - **联席四维（v3.7）** 在 `analysis.json` / `analysis_merged.json` 中落地为字段：`interact` / `interact_lv` / `interact_evi`（互动状态）、`urge_n` / `urge_ok` / `urge_fail`（催交→提交）、`fix_n` / `fix_ok` / `fix_fail`（批改→订正）、`ask_lv`（提问意愿）。配对规则：老师发出催交/订正要求后 **72 小时**内学生给出对应回应记为「已响应」；6 小时内的重复催只计一次。数据以 `four_dims()` 渲染成 4 张横排小卡展示在卡片第②块「配合度」内。
 - **购课类型**：展示在学生姓名之后（`直播` / `回放` / `试听（插班）` / `测试`）。来源为花名册字段 `cIncomeProductType`（后台「我的学生」列表的「购课类型」列）；取值映射来自字典接口 `GET /sysDictionary/findSysDictionary?type=productType`（1=直播 2=回放 3=试听（插班）4=测试）。报告学生卡标题同步展示该标签。
 
-### 课程维度（v3.6 新增）
+### 课程维度（v3.6 新增 · v4.7 课程名口径改为后台字段）
 
-- **取数**：`--course <课程名>`（如 `高二数学211层六C肖`）。花名册按 `productName` 含课程名筛出该课程**全部学生**（跨多个联席，各自 `coTeacherName`）；群列表按群名含课程名筛选（**不做 owner 过滤**，因为课程跨联席）。可加 `--co <联席名>` 只保留该联席负责的部分。
+- **取数**：`--course <课程名>`（如 `高二数学211层六C肖`）。花名册按 `productName` 含课程名筛出该课程**全部学生**（跨多个联席，各自 `coTeacherName`）；群列表同样**按后台课程名 `productName` 筛选**（**不做 owner 过滤**，因为课程跨联席）。可加 `--co <联席名>` 只保留该联席负责的部分。
+  - ⚠️ **v4.7：课程名以 `productName` 为准，不按群名子串匹配。** 实测群名与后台课程名会不一致
+    （`高二数学985层六D谢胡` ↔ `高二数学清北层进化班日D谢胡` 共 5 例；`高二数学清北层E邵` 缺「日」）。
+    按群名匹配会**混入别的课程的学生 / 漏掉群名写错的群**。用 `productName` 后，同课异构的群名一律归到真课程，
+    「清北层日E邵」命中数由 30 → **31**（补回群名写成 `清北层E邵` 的黄五琦）。
+  - 群名里像某课程、但后台课程名不是的群会被**排除并逐条列出**（便于回后台核对）；
+    若输入的课程串在 `productName` 里一个都没命中，才退回群名匹配并打印风险提示。
 - **报告**：单课程结构（无课程 Tab）。顶部「筛选联席」下拉按 `coTeacherName` 下钻，学生卡标注「联席：XXX」；第③块为「联席跟进 Action」；**学习分层徽章在卡片右上角**、第①块给**具体薄弱点（v4.2 下钻到题型 / 方法，附原文出处）**与优势（小黑板佐证折叠）、第②块含**联席四维**与**出勤一句话**（v3.8 口径 + v4.0 去重重排 + v4.2 细粒度薄弱点）。
-- 课程名解析：群名形如 `学生名-高二数学211层六C肖-XXX`，取第 2 段作课程原始名；展示名由 `course_of()` 收敛为 `高二数学·211层·六C班（肖老师）`。
+- 课程名解析（v4.7）：**优先取后台响应时效列表的课程名 `productName`**（如 `2026Q-SX-高二数学985层进化班六D谢胡`），
+  `common.course_name()` 去掉 `YYYYQ-学科码-` 前缀得课程原串；展示名由 `common.clean_course_name()` 收敛为
+  `高二数学·985层进化班·六D班（谢胡老师）`（层级与班号之间的成分如「进化班」「零点五加三直升班」**原样保留**，
+  解析不出层级/班号时原样返回，绝不硬凑）。学生卡上的课程串用 `course_raw`（课程名原串），可回后台逐字核对。
+  `groupName` 仅作回退（兼容 v4.6 及更早、不含 `productName` 的归档 `groups.json`）。
 
 ### 小黑板读图（v3.6 新增，可选）
 
@@ -336,6 +346,7 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 
 - token 约 24 小时过期，过期后重登并覆盖 `token.txt` 再重跑。
 - 群聊**分页拉满不再截断**（v3.5 起固化；此前单群 500 条上限已取消），活跃群也能取全窗口消息。
-- 当前脚本针对「高二数学」课程命名规则解析课程标签；其他学科接入时微调
-  `common.clean_course_name` 与 `report.py` 里的 `course_of` 正则即可。
+- **课程名一律取后台字段（v4.7）**：课程名来自响应时效列表的 `productName`，**不要**再从群名切段解析
+  （群名会漏班型、缺字、甚至写成别的课程）。展示名规则集中在 `common.clean_course_name()`：
+  改口径只改这一个函数即可，且对任何学科/年级通用（`2026Q-WL-高一物理…` 同样解析）。
 - 接口为逆向所得，若后台升级改字段，优先核对 `references/api_contract.md` 并相应调整脚本。
