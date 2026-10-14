@@ -118,15 +118,36 @@ TOPICS = {
 }
 
 
+# 微信「引用回复」的文本形态：`「引用人：被引用内容」- - - - 真正的回复正文`
+# 被引用内容常常只是 [图片]/[文件]，此时整条消息的正文为空 —— 但旧实现会把
+# `「张子墨：[图片]」- - - - - -` 整串当成一句「学生提问」，从而在近 3 天待回应里
+# 产生假条目（真实数据实测）。故统一剥离引用头，只留正文。
+QUOTE_HEAD_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*[-—]{2,}\s*")
+QUOTE_ONLY_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*[-—]{2,}\s*$")
+
+
+def strip_quote(t):
+    """剥离微信引用回复头部，返回真正的回复正文（无引用头时原样返回）。"""
+    s = (t or "").strip()
+    if not s.startswith("「"):
+        return s
+    if QUOTE_ONLY_RE.match(s):
+        return ""                          # 只引用了图片/文件、没有正文
+    m = QUOTE_HEAD_RE.match(s)
+    return s[m.end():].strip() if m else s
+
+
 def get_text(m):
     c = m.get("content")
+    text = ""
     if isinstance(c, str):
-        return c
-    if isinstance(c, dict):
+        text = c
+    elif isinstance(c, dict):
         for k in ("content", "text"):
             if k in c and isinstance(c[k], str):
-                return c[k]
-    return ""
+                text = c[k]
+                break
+    return strip_quote(text)
 
 
 def hits(text, kws):
@@ -218,9 +239,19 @@ def resp_wait_stats(triples_all):
 # —— 近 N 天待回应（v3.9）：联席忘记回复 / 学生问题仍未解决 ——
 # 用户口径：结合近 3 天聊天，若「联席忘记回复」或「学生问题未解决」，必须重点标记提醒。
 RECENT_DAYS = 3
-# 老师回复里出现这些「延宕 / 应允」词 → 该提问仍算未解决（说了会答但没有答）
-DEFER_KWS = ["稍后", "稍等", "晚点", "晚些", "一会儿", "等下", "等会", "待会", "过会儿", "明天", "下次",
-             "回头", "有时间", "再想想", "再讲", "到时候", "随后", "改天", "之后说", "后头", "这两天"]
+# 老师回复里出现这些「延宕 / 应允」词 → 该提问仍算未解决（说了会答但没有答）。
+# v4.1 收紧：移除「明天 / 下次 / 再讲」—— 真实数据实测它们高频出现在**正常教学安排**里
+# （例：「明天下午3:40-5:40正常上课」被误判成「应允未答」），造成假条目。
+DEFER_KWS = ["稍后", "稍等", "晚点", "晚些", "晚一些", "一会儿", "等下", "等会", "待会", "过会儿",
+             "回头", "有时间", "再想想", "到时候", "改天", "之后说", "后头", "这两天"]
+# 命中延宕词但回复同时含这些词 → 属排课/说明性安排，不算「应允未答」
+DEFER_EXCLUDE = ["正常上课", "上课时间", "课程安排", "调课", "上课", "加课", "请假", "调休", "休息", "放假"]
+# 「学生问题未解决」的第二类证据（v4.1 收紧）：老师在 24h 内回复过，但学生**紧接着又追问同一困惑**。
+# 旧口径只要 24h 内有下一次提问就算「没讲透」，导致师生正常的多轮深挖（真实数据里一名积极学生
+# 被连判 7 项）被误报。现要求追问**明确表达仍然困惑/没解决**，才算「没讲透」。
+REASK_KWS = ["还是不会", "还是不懂", "还是没懂", "还是不明白", "还是没", "还是不太", "仍然不会", "仍然不懂",
+             "没懂", "没听懂", "看不懂", "不理解", "不明白", "没解决", "没讲", "讲的不对",
+             "你上面", "您上面", "老师上面", "上个问题"]
 
 
 def _short(t, n=30):
@@ -262,23 +293,31 @@ def recent_pending(triples_all, anchor_ts, days=RECENT_DAYS):
             evi = f"{ts[:10]} 学生/家长提问「{_short(t)}」，至今群内无老师回复"
         else:
             ts_t, _, t_t = triples_all[j]
-            if t_t and any(k in t_t for k in DEFER_KWS):
+            # 应允未答：老师回复命中延宕词，且不是在说排课/假期等正常安排（v4.1）
+            defer = (bool(t_t) and any(k in t_t for k in DEFER_KWS)
+                     and not any(x in t_t for x in DEFER_EXCLUDE))
+            if defer:
                 kind = "问题未解决"
                 evi = f"{ts[:10]} 提问「{_short(t)}」，老师 {ts_t[:10]} 应允「{_short(t_t, 18)}」后仍无下文"
             else:
                 d_rep = parse_dt(ts_t)
-                reask = False
-                for k in range(j + 1, n):           # 老师回复后的第一条学生提问：24h 内再问 = 没讲透
+                reask, reask_txt = False, ""
+                for k in range(j + 1, n):           # 老师回复后，学生再次追问
                     ts2, r2, t2 = triples_all[k]
                     if r2 != 2 or not t2 or is_noise(t2) or is_ack(t2) or not hits(t2, Q_ASK):
                         continue
                     d2 = parse_dt(ts2)
-                    if d_rep and d2 and d2 > d_rep and (d2 - d_rep).total_seconds() <= 24 * 3600:
-                        reask = True
+                    # v4.1 收紧：24h 内再问 **且** 明确表达仍然困惑（还是不会 / 没懂 / 不明白…）
+                    # 才算「没讲透」；否则只是师生正常的多轮深挖，不计入。
+                    if (d_rep and d2 and d2 > d_rep
+                            and (d2 - d_rep).total_seconds() <= 24 * 3600
+                            and any(x in t2 for x in REASK_KWS)):
+                        reask, reask_txt = True, t2
                     break
                 if reask:
                     kind = "问题未解决"
-                    evi = f"{ts[:10]} 提问「{_short(t)}」，老师已回复但 24 小时内学生再次追问，疑未讲透"
+                    evi = (f"{ts[:10]} 提问「{_short(t)}」，老师已回复，但学生当日再问"
+                           f"「{_short(reask_txt, 16)}」，疑未讲透")
         if kind:
             items.append({"at": (ts or "")[:10], "q": _short(t, 22), "kind": kind, "evi": evi})
         i = j + 1 if j < n else n

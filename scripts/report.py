@@ -462,6 +462,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 .wrap{max-width:1100px;margin:0 auto}
 h1{font-size:24px;margin:0 0 4px}
 .sub{color:#8a9099;font-size:13px;margin-bottom:14px}
+.datanote{background:#fff7e6;border:1px solid #ffd591;border-left:4px solid #ff8f1f;border-radius:8px;padding:9px 13px;font-size:12.5px;color:#8a5300;margin:-6px 0 14px;line-height:1.6}
 .kpis{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
 .kpi{background:#fff;border:1px solid #e6e8eb;border-radius:10px;padding:14px 18px;flex:1;min-width:130px}
 .kpi .n{font-size:26px;font-weight:700}
@@ -731,6 +732,9 @@ def main():
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
     ap.add_argument("--course", default=None, help="课程名（课程维度），如 高二数学清北层日E邵")
     ap.add_argument("--window", default=WINDOW_DEFAULT)
+    # 可选：在报告顶部打一条醒目横幅说明数据来源（如用合成/演示数据试跑时，
+    # 避免看报告的人拿演示话术去真实群里核对而找不到）。
+    ap.add_argument("--note", default=None, help="顶部数据来源/口径提示横幅（可选）")
     args = ap.parse_args()
     role, name = common.resolve_scope(args)
     is_edu = role == "edu"
@@ -868,6 +872,7 @@ def main():
 <body><div class="wrap">
 <h1>{name}（{role_cn}）· 学生学情分析{ '（双维度：按课程 / 按联席）' if is_edu else ('（课程维度 · 按联席下钻）' if is_course else '（联席维度 · 按课程下钻）') }</h1>
 <div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：{subject_line} ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+{ f'<div class="datanote">⚠️ {args.note}</div>' if args.note else '' }
 <div class="kpis">
   <div class="kpi"><div class="n">{len(rows)}</div><div class="l">{scope_label}学生（全量）</div></div>
   <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
