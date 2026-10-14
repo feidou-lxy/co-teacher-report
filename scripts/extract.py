@@ -466,6 +466,8 @@ def main():
                 "urge_n": 0, "urge_ok": 0, "urge_fail": [],
                 "fix_n": 0, "fix_ok": 0, "fix_fail": [],
                 "ask_lv": "无", "tea_pos": 0, "tea_neg": 0,
+                # 学生成绩（v4.4）：窗口内无聊天 → 无成绩证据
+                "exam": {"latest": None, "history": [], "level": "未知", "why": ""},
                 "recent3": {"days": RECENT_DAYS, "since": "", "anchor": "",
                             "items": [], "missed_n": 0, "open_n": 0},
                 "fine": {},
@@ -495,6 +497,8 @@ def main():
         parent = hits(" ".join(sub_stu), PARENT)
         hw_neg = hits(all_txt, ["没写", "没做", "不会做", "漏交"])
         att_leave = hits(all_txt, ["请假", "回放", "没来", "缺课"])
+        # 学生成绩（v4.4）：只匹配、不生成；认不出返回「未知」（见 common.extract_exam）
+        exam = common.extract_exam(triples, stu, subject=common.subject_of(g.get("groupName", "")))
         # 配合度：仅用实质消息判定；致谢最多计 4 分，避免「收到/谢谢」把配合度刷满
         student_coop = 0 if n_stu_sub == 0 else 1 + min(4, stu_self // 4)
         parent_coop = 0 if n_stu_sub == 0 else 1 + min(4, (parent + min(pos, 4)) // 2)
@@ -679,6 +683,8 @@ def main():
             "fix_n": fix_n, "fix_ok": fix_ok, "fix_fail": fix_fail,
             "ask_lv": ask_lv,
             "tea_pos": tea_pos, "tea_neg": tea_neg,   # 老师反馈（学习分层第三类证据）
+            # 学生成绩（v4.4，学习分层第四类证据）：群聊里定期收集的月考/期中成绩，认不出即「未知」
+            "exam": exam,
             # 近 3 天待回应（v3.9）：忘记回复 / 问题未解决，报告与待办共同消费
             "recent3": rt,
             # 细粒度薄弱题型（v4.2）：知识点 → 具体方法/题型（带原文出处）

@@ -5,6 +5,7 @@
 """
 import json
 import os
+import re
 import sys
 import urllib.request
 import urllib.parse
@@ -129,96 +130,311 @@ def ensure_py_deps():
     return
 
 
+# ============================================================================
+# 学习分层（v3.8 引入 · v4.4 重校口径）
+# ----------------------------------------------------------------------------
+# 四档：需重点关注 ≤-3 ｜ 需关注 -2~-1 ｜ 正常 0~+1 ｜ 良好 ≥+2
+# 四类证据：① 课堂小黑板作答 ② 作业闭环 ③ 群里老师反馈 ④ 学生成绩（月考/期中）
+#
+# v4.4 为什么要重校（真实 58 群 / 三位学生回归实测）：
+#   旧口径下「老师指出问题 ≥3 处 → -2」按**绝对次数**计，而真实数学群里老师高强度纠错
+#   是教学常态（三位学生分别在 2/8/8 次课里被指出 11/12/9 处）→ 人人触发、人人扣分；
+#   加上真实窗口内往往**没有催交/批改记录**（唯一正分来源缺席），结果所有学生都掉进
+#   「需重点关注」，四档退化成一档、徽章失去区分度。故 v4.4 做三件事：
+#     1) 反馈改为**密度归一化**（每 10 轮小黑板 / 每 100 条可分析消息的指出率）
+#     2) 小黑板区分「**仅未完成收尾**」（课堂节奏 / 书写速度，不是能力）与「**实质错误**」
+#        —— 「未完成收尾」在真实语料里占错误标注的 25/33，属常态，不再按能力扣分
+#     3) 新增**学生成绩**作为最强证据，并对档位做托底 / 封顶
+# ============================================================================
+
+# —— 小黑板：这些「错误类型」其实是没写完，不记在能力账上 ——
+NO_FINISH_ERR = {"未完成收尾", "未完成", "未收尾", "未写完"}
+
+LEVEL_ORDER = ["red", "orange", "green", "blue"]        # 由差到好
+LEVEL_CN = {"red": "需重点关注", "orange": "需关注", "green": "正常", "blue": "良好"}
+LEVEL_RANK = {"red": 0, "orange": 1, "green": 2, "blue": 3}
+
+
+def level_by_score(score):
+    """累计得分 → 档位 key。"""
+    if score <= -3:
+        return "red"
+    if score <= -1:
+        return "orange"
+    if score >= 2:
+        return "blue"
+    return "green"
+
+
+# —— ④ 学生成绩：群聊里定期收集的月考 / 期中成绩 ——
+EXAM_NAME_KWS = ["月考", "期中", "期末", "一模", "二模", "三模", "结课测", "阶段测", "单元测",
+                 "周测", "联考", "摸底考", "开学考", "诊断考", "小测", "测验", "考试成绩", "测试成绩"]
+EXAM_FULL_KWS = ["满分", "总分", "卷面", "共", "总共"]
+EXAM_PAIR_RE = re.compile(r"(\d{2,3}(?:\.\d)?)\s*/\s*(\d{2,3})")        # 128/150
+EXAM_SCORE_RE = re.compile(r"(\d{2,3}(?:\.\d)?)\s*分")                  # 128分
+EXAM_BARE_RE = re.compile(r"(?<![\d.%/])(\d{2,3})(?![\d.%/])(?!\s*(?:人|名|位|个|题|分钟|小时|天|次))")
+EXAM_FULL_RE = re.compile(r"(?:满分|总分|卷面)\s*[:：]?\s*(\d{2,3})")
+EXAM_RANK_RE = re.compile(r"(?:第\s*(\d{1,3})\s*名|排名\s*[:：]?\s*(\d{1,3}))")
+EXAM_TOTAL_RE = re.compile(r"(?:/\s*(\d{2,4})|共\s*(\d{2,4})\s*人|总人数\s*[:：]?\s*(\d{2,4})|(\d{2,4})\s*人)")
+# 「得分/满分」形态里第二个数只有这些才可能是卷面满分（避免把「排名 210/900」当成分数）
+EXAM_PLAUSIBLE_FULL = {60, 70, 100, 120, 150, 200, 300, 750}
+# 分数前的「非人名」词：出现在数字前也不算他人姓名
+EXAM_NON_NAME = ["成绩", "得分", "分数", "总分", "满分", "考了", "本次", "这次", "我的", "我们",
+                 "全班", "平均", "年级", "班平", "老师", "同学", "排名", "名次", "以上", "大概",
+                 "约", "为", "是", "得", "考", "测", "卷"]
+EXAM_SUBJ_FULL = {"数学": 150, "语文": 150, "英语": 150, "物理": 100, "化学": 100,
+                  "生物": 100, "政治": 100, "历史": 100, "地理": 100}
+# 成绩关键词附近的「事务性」表述（考试范围 / 时间 / 报名…不算成绩）
+EXAM_SKIP_KWS = ["范围", "时间", "安排", "报名", "几点", "考场", "记得", "准备", "复习", "加油"]
+
+
+def _exam_level(pct):
+    """得分率 → 成绩档（高 ≥85% ｜ 中 ≥65% ｜ 偏低 <65%）。"""
+    if pct is None:
+        return "未知"
+    if pct >= 0.85:
+        return "高"
+    if pct >= 0.65:
+        return "中"
+    return "偏低"
+
+
+def _exam_attributed(sent, name, value_str):
+    """判断句子里的分数是否属于该生（避免把「成绩收集」里别人的分数算到本人头上）。
+
+    规则：① 句内出现本人姓名 → 是；② 分数紧邻的 2~4 个汉字是考试名/非人名词 → 是；
+    ③ 该词是别的人名（如「李四 140」）→ 否；④ 分数前没有名字 → 单人群语境下归本人。
+    """
+    if name and name in sent:
+        return True
+    if value_str:
+        m = re.search(r"([\u4e00-\u9fa5]{2,4})\s*[:：]?\s*" + re.escape(value_str), sent)
+        if m:
+            tok = m.group(1)
+            if any(k in tok for k in EXAM_NAME_KWS) or any(k in tok for k in EXAM_NON_NAME):
+                return True
+            return False
+    return True
+
+
+def extract_exam(triples, stu_name, subject=""):
+    """从聊天记录里识别该生的**成绩**（月考 / 期中 / 成绩收集）。
+
+    🔒 只做匹配、不生成任何文本；认不出就返回「未知」，**绝不用裸数字硬凑**。
+    保守识别（宁缺勿滥）：
+      · 必须命中考试名关键词（月考/期中/期末/联考/测验…），且不含「范围/时间/报名」等事务词
+      · 分数形态按可信度取：`128/150` → `128分` → 裸数字（裸数字需排除「48 人 / 第 8 名」这类）
+      · 必须能归因到本人（句内出现姓名，或分数前不是别人的名字），避免成绩收集里的他人成绩
+      · 排除「满分／总分／卷面」后面的数字（那是卷面分，不是学生得分）
+      · 无满分时按学科推断（数学 150，其余 100）并在 why 里标注「按 X 制推断」
+    返回 {"latest": {...}|None, "history": [...], "level": "高|中|偏低|未知", "why": "..."}
+    """
+    name = norm_name(stu_name)
+    found = []
+    for t, _role, text in (triples or []):
+        txt = text or ""
+        if not txt:
+            continue
+        for sent in re.split(r"[。！？；;\n]", txt):
+            s = (sent or "").strip()
+            if not s or len(s) > 120:
+                continue
+            kws = [k for k in EXAM_NAME_KWS if k in s]
+            if not kws or any(k in s for k in EXAM_SKIP_KWS):
+                continue
+            full = None
+            mf = EXAM_FULL_RE.search(s)
+            if mf:
+                try:
+                    full = int(mf.group(1))
+                except ValueError:
+                    full = None
+            rank = total = None
+            mr = EXAM_RANK_RE.search(s)
+            if mr:
+                rank = int(mr.group(1) or mr.group(2))
+                mt = EXAM_TOTAL_RE.search(s)
+                if mt:
+                    tv = next((x for x in mt.groups() if x), None)
+                    total = int(tv) if tv else None
+            # —— 分数候选：按可信度优先 ——
+            value = None
+            mp = EXAM_PAIR_RE.search(s)
+            if mp:
+                try:
+                    v2, f2 = float(mp.group(1)), int(mp.group(2))
+                except ValueError:
+                    v2 = f2 = None
+                if v2 is not None and f2 in EXAM_PLAUSIBLE_FULL:
+                    value, full = v2, f2
+            if value is None:
+                ms = EXAM_SCORE_RE.search(s)
+                if ms and not any(k in s[max(0, ms.start() - 4):ms.start()] for k in EXAM_FULL_KWS):
+                    value = float(ms.group(1))
+            if value is None and rank is None:
+                mb = EXAM_BARE_RE.search(s)
+                if mb and not any(k in s[max(0, mb.start() - 4):mb.start()] for k in EXAM_FULL_KWS):
+                    value = float(mb.group(1))
+            if value is None and rank is None:
+                continue
+            if not _exam_attributed(s, name, (f"{value:g}" if value is not None else None)):
+                continue
+            assumed = False
+            pct = None
+            if value is not None:
+                f = full or EXAM_SUBJ_FULL.get(subject, 100)
+                if f and value > f:      # 超出卷面 → 大概率不是分数（作业分 / 题号）
+                    continue
+                if f:
+                    assumed = full is None
+                    pct = value / f
+            elif rank and total:
+                pct = 1 - (rank / total)      # 名次换成分位（越靠前越高）
+            found.append({"date": (t or "")[:10], "label": kws[0], "value": value,
+                          "full": (full or (EXAM_SUBJ_FULL.get(subject, 100) if value is not None else None)),
+                          "rank": rank, "total": total, "pct": pct, "assumed": assumed,
+                          "at": t or "", "evi": clip_txt(s, 60)})
+    if not found:
+        return {"latest": None, "history": [], "level": "未知", "why": ""}
+    found.sort(key=lambda x: (x["at"] or "", x["label"]))
+    latest = found[-1]
+    lv = _exam_level(latest["pct"])
+    if latest["value"] is not None:
+        why = f"{latest['label']} {latest['value']:g}/{latest['full']:g}"
+        if latest["pct"] is not None:
+            why += f"（得分率 {latest['pct']:.0%}）"
+        why += f"· {latest['date']}"
+        if latest["assumed"]:
+            why += f"（无满分标注，按 {latest['full']:g} 分制推断）"
+    else:
+        why = f"{latest['label']} 第 {latest['rank']} 名"
+        if latest["total"]:
+            why += f"/{latest['total']}"
+        if latest["pct"] is not None:
+            why += f"（前 {1 - latest['pct']:.0%}）"
+        why += f"· {latest['date']}"
+    return {"latest": latest, "history": found, "level": lv, "why": why}
+
+
 def learning_level(s, board):
-    """学习情况分层（v3.8）：综合三类证据判档 —— ① 课堂小黑板作答 ② 作业闭环 ③ 老师反馈。
+    """学习分层（v4.4）：综合四类证据判档 —— ① 小黑板 ② 作业闭环 ③ 老师反馈 ④ 学生成绩。
 
     report.py 统一使用本口径，避免多处漂移。
-    返回 (档位key, 档位中文, 依据列表[(来源, 文本)])
-    档位：需重点关注 / 需关注 / 正常 / 良好
+    返回 (档位key, 档位中文, 依据列表[(来源, 文本, 加减分)])
     """
     ev, score = [], 0
-    # ① 课堂小黑板（最硬的学习证据）
+
+    def add(src, text, d=0):
+        nonlocal score
+        score += d
+        ev.append((src, text, d))
+
+    # ---------------- ④ 学生成绩（最强证据；用于档位托底 / 封顶，故先算） ----------------
+    exam = s.get("exam") or {}
+    ex_lv = exam.get("level") or "未知"
+    ex_why = exam.get("why") or ""
+    floor_key = cap_key = None
+    if ex_lv == "高":
+        floor_key = "blue"
+        add("成绩", f"{ex_why} → 成绩好，学习效果以成绩为准（档位托底「良好」）", 3)
+    elif ex_lv == "中":
+        add("成绩", f"{ex_why} → 成绩中等", 1)
+    elif ex_lv == "偏低":
+        cap_key = "orange"
+        add("成绩", f"{ex_why} → 成绩偏低，即使作业/配合到位，学习效果仍不足（封顶「需关注」）", -3)
+    else:
+        add("成绩", "窗口内未见成绩信息（月考 / 期中成绩收集）", 0)
+
+    # ---------------- ① 课堂小黑板（最硬的学习证据） ----------------
     if board and board.get("details"):
-        ds = board.get("details", [])
+        ds = board.get("details") or []
         rounds = board.get("rounds") or len(ds)
-        sc = board.get("status_counts", {})
-        full = sc.get("完整作答", 0)
-        part = sc.get("部分作答", 0)
-        blank = sc.get("空白未提交", 0) + sc.get("空白", 0)
-        errs = board.get("error_types", []) or []
-        trend = board.get("trend", "")
+        r = max(1, rounds)
         lc = board.get("lesson_count") or len(board.get("lessons") or [])
         head = f"{lc} 次课 · {rounds} 轮"
-        r = max(1, rounds)
-        if blank / r >= 0.4:
-            score -= 3
-            ev.append(("小黑板", f"{head}中 {blank} 轮空白未提交"))
-        elif part / r >= 0.6:
-            score -= 2
-            ev.append(("小黑板", f"{head}中 {part} 轮未收尾"))
-        elif part / r >= 0.4:
-            score -= 1
-            ev.append(("小黑板", f"{head}中 {part} 轮未收尾"))
-        elif full / r >= 0.7:
-            score += 2
-            ev.append(("小黑板", f"{head}中 {full} 轮完整作答"))
-        elif full / r >= 0.5:
-            score += 1
-            ev.append(("小黑板", f"{head}中 {full} 轮完整作答"))
-        if len(errs) >= 2:
-            score -= 1
-        if errs:
-            ev.append(("小黑板", "典型错误：" + "、".join(errs[:2])))
+        blank = [d for d in ds if (d.get("status") or "") in ("空白未提交", "空白")]
+        real_err = [d for d in ds if [e for e in (d.get("errors") or []) if e not in NO_FINISH_ERR]]
+        unfin = [d for d in ds if d not in blank and d not in real_err]
+        clean = [d for d in ds if d.get("status") == "完整作答" and not (d.get("errors") or [])
+                 and (d.get("correct") in ("正确", "基本正确"))]
+        rb, rr, ru, rf = len(blank) / r, len(real_err) / r, len(unfin) / r, len(clean) / r
+        add("小黑板", f"{head}作答分布：空白 {len(blank)}（{rb:.0%}）｜实质错误 {len(real_err)}（{rr:.0%}）"
+                      f"｜仅未完成收尾 {len(unfin)}（{ru:.0%}）｜完整且无错 {len(clean)}（{rf:.0%}）", 0)
+        if rb >= 0.4:      # 参与度
+            add("小黑板", f"空白未提交 {len(blank)} 轮（{rb:.0%} ≥40%，属参与度问题）", -2)
+        elif rb >= 0.2:
+            add("小黑板", f"空白未提交 {len(blank)} 轮（{rb:.0%} ≥20%）", -1)
+        if rr >= 0.3:      # 能力：只认剔除「未完成收尾」后的实质错误
+            add("小黑板", f"存在实质错误 {len(real_err)} 轮（{rr:.0%} ≥30%，能力证据）", -2)
+        elif rr >= 0.2:
+            add("小黑板", f"存在实质错误 {len(real_err)} 轮（{rr:.0%} ≥20%，能力证据）", -1)
+        if ru >= 0.85:     # 节奏：只在极端时轻提示，不按能力计
+            add("小黑板", f"仅未完成收尾 {len(unfin)} 轮（{ru:.0%} ≥85%，课堂节奏 / 书写速度问题）", -1)
+        if rf >= 0.6:      # 正分：完整作答且无错
+            add("小黑板", f"完整作答且无错 {len(clean)} 轮（{rf:.0%} ≥60%）", 2)
+        elif rf >= 0.4:
+            add("小黑板", f"完整作答且无错 {len(clean)} 轮（{rf:.0%} ≥40%）", 1)
+        trend = board.get("trend", "")
         if trend == "下滑":
-            score -= 1
-            ev.append(("小黑板", "作答趋势下滑"))
+            add("小黑板", "作答趋势下滑", -1)
         elif trend == "逐步改善":
-            score += 1
-            ev.append(("小黑板", "作答趋势逐步改善"))
+            add("小黑板", "作答趋势逐步改善", 1)
+        errs = [e for e in (board.get("error_types") or []) if e not in NO_FINISH_ERR]
+        if errs:
+            add("小黑板", "典型错误：" + "、".join(errs[:3]), 0)
     else:
-        ev.append(("小黑板", "暂无小黑板数据"))
-    # ② 作业闭环（催交 → 是否交 / 批改 → 是否改）：做对要加分，否则人人被判重点关注
+        add("小黑板", "暂无小黑板读图数据", 0)
+
+    # ---------------- ② 作业闭环（催交 → 是否交 / 批改 → 是否改） ----------------
     un, uo = s.get("urge_n", 0), s.get("urge_ok", 0)
     fn, fo = s.get("fix_n", 0), s.get("fix_ok", 0)
     if un > uo:
         miss = un - uo
-        score -= 2 if miss >= 2 else 1
-        ev.append(("作业", f"催交 {un} 次、{miss} 次未见提交"))
+        add("作业", f"催交 {un} 次、{miss} 次未见提交", -2 if miss >= 2 else -1)
     elif un:
-        score += 1
-        ev.append(("作业", f"催交 {un} 次均已提交"))
+        add("作业", f"催交 {un} 次均已提交", 1)
+    else:
+        add("作业", "窗口内无催交记录", 0)
     if fn > fo:
         miss = fn - fo
-        score -= 2 if miss >= 2 else 1
-        ev.append(("作业", f"批改 {fn} 次、{miss} 次未见改正"))
+        add("作业", f"批改 {fn} 次、{miss} 次未见改正", -2 if miss >= 2 else -1)
     elif fn:
-        score += 1
-        ev.append(("作业", f"批改 {fn} 次均已改正"))
-    if s.get("hw_neg", 0) >= 2:
-        score -= 1
-        ev.append(("作业", f"自述「没写 / 不会做」{s['hw_neg']} 处"))
-    # ③ 老师反馈（群里老师对该生的评价）
-    tp, tn = s.get("tea_pos", 0), s.get("tea_neg", 0)
-    if tn >= 3:
-        score -= 2
-    elif tn == 2:
-        score -= 1
-    if tn:
-        ev.append(("老师反馈", f"指出问题 {tn} 处"))
-    if tp >= 2:
-        score += 1
-    if tp:
-        ev.append(("老师反馈", f"正面评价 {tp} 处"))
-    # 档位
-    if score <= -3:
-        key, cn = "red", "需重点关注"
-    elif score <= -1:
-        key, cn = "orange", "需关注"
-    elif score >= 2:
-        key, cn = "blue", "良好"
+        add("作业", f"批改 {fn} 次均已改正", 1)
     else:
-        key, cn = "green", "正常"
-    return key, cn, ev
+        add("作业", "窗口内无批改记录", 0)
+    if s.get("hw_neg", 0) >= 2:
+        add("作业", f"自述「没写 / 不会做」{s['hw_neg']} 处（≥2）", -1)
+
+    # ---------------- ③ 群里老师反馈（v4.4：密度归一化，不再按绝对次数） ----------------
+    tp, tn = s.get("tea_pos", 0), s.get("tea_neg", 0)
+    rounds = (board or {}).get("rounds") or 0
+    n_text = s.get("n_text", 0) or 0
+    if rounds:
+        dens, base = tn / max(1, rounds) * 10, f"{rounds} 轮小黑板"
+    elif n_text:
+        dens, base = tn / max(1, n_text) * 100, f"{n_text} 条可分析消息"
+    else:
+        dens, base = 0.0, "无基数"
+    if dens >= 10:
+        add("老师反馈", f"指出问题 {tn} 处（密度 {dens:.1f}/10 单位 · {base} ≥10）", -2)
+    elif dens >= 5:
+        add("老师反馈", f"指出问题 {tn} 处（密度 {dens:.1f}/10 单位 · {base} ≥5）", -1)
+    else:
+        add("老师反馈", f"指出问题 {tn} 处（密度 {dens:.1f}/10 单位 · {base}，未超基线）", 0)
+    if tp >= 3:
+        add("老师反馈", f"正面评价 {tp} 处（≥3）", 2)
+    elif tp >= 1:
+        add("老师反馈", f"正面评价 {tp} 处（≥1）", 1)
+
+    # ---------------- 落档（成绩托底 / 封顶） ----------------
+    key = level_by_score(score)
+    if floor_key and LEVEL_RANK[floor_key] > LEVEL_RANK[key]:
+        ev.append(("成绩", f"按成绩托底：不低于「{LEVEL_CN[floor_key]}」", 0))
+        key = floor_key
+    if cap_key and LEVEL_RANK[cap_key] < LEVEL_RANK[key]:
+        ev.append(("成绩", f"按成绩封顶：不高于「{LEVEL_CN[cap_key]}」", 0))
+        key = cap_key
+    return key, LEVEL_CN[key], ev
 
 
 def att_stats(a):
