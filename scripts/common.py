@@ -239,6 +239,186 @@ def att_stats(a):
     return n, eff, att, pb_only, pb, absent, no_pb
 
 
+# ============================================================================
+# 细粒度薄弱题型（v4.2）
+# ----------------------------------------------------------------------------
+# 背景：原先「薄弱知识点」只到 `立体几何/空间向量`、`直线和圆` 这一层（课程大类），
+# 对联席没有可操作性。v4.2 把它下钻一层 —— 「直线和圆」下面到底是「含参直线过定点」
+# 还是「斜率是否存在的分类讨论」有问题，得说清楚。
+#
+# 下面这张表只是**识别维度**（题型名 → 关键词），不产生任何内容：
+# 每条结论都必须落到某条真实消息或某轮真实小黑板读图，并带原文出处（evi）供核对。
+# 关键词取自真实语料的实际说法（老师/学生的原话）。
+# ============================================================================
+FINE_TYPES = {
+    "立体几何/空间向量": [
+        ("建系与点坐标书写", ["点坐标", "坐标写错", "写错", "建系", "坐标系"]),
+        ("点到平面距离（投影法）", ["点到平面的距离", "投影", "垂足"]),
+        ("异面直线夹角／线面角／二面角", ["异面直线", "线面角", "二面角", "所成角"]),
+        ("外接球／内切球", ["外接球", "内切球"]),
+        ("截面与展开", ["截面", "一刀切"]),
+        ("基底法与共面向量", ["基底", "共面", "系数和"]),
+        ("法向量求法", ["法向量"]),
+    ],
+    "直线和圆": [
+        ("含参直线过定点", ["含参", "过定点", "定点"]),
+        ("斜率是否存在（分类讨论）", ["斜率不存在", "斜率", "两种情况", "分类讨论"]),
+        ("弦长公式", ["弦长"]),
+        ("点到直线距离", ["点到直线", "圆心到直线"]),
+        ("切线与对称转化", ["切线", "对称"]),
+        ("圆的一般式与圆心坐标", ["圆心坐标", "一般式", "标准式", "配方"]),
+        ("面积与最值转化", ["最大值", "最值", "面积"]),
+    ],
+    "圆锥曲线": [
+        ("联立方程与韦达定理", ["韦达", "联立", "判别式"]),
+        ("离心率", ["离心率"]),
+        ("定点定值问题", ["定值", "定点"]),
+        ("点差法", ["点差"]),
+    ],
+    "函数与导数": [
+        ("复合函数求导", ["复合函数", "复合"]),
+        ("单调性与极值", ["单调", "极值"]),
+        ("导数的几何意义", ["切线", "求导"]),
+    ],
+    "三角函数": [
+        ("图象与性质", ["三角函数", "周期", "诱导", "正弦", "余弦"]),
+    ],
+    "解三角形": [
+        ("正余弦定理应用", ["正弦定理", "余弦定理"]),
+    ],
+    "概率统计": [
+        ("计数与分布", ["概率", "排列", "组合", "统计"]),
+    ],
+    "计算/粗心": [
+        ("计算与化简错误", ["算错", "计算错误", "算不出来", "化简", "抄错", "符号"]),
+        ("漏解／漏讨论情况", ["漏", "少考虑", "少一种", "没考虑"]),
+    ],
+}
+
+# 老师「指出具体问题」的语气词 —— 必须明确指向学生的错 / 卡点（v4.2 收紧，去掉过泛词）
+TEA_POINT_KWS = ["你错", "错误的原因", "写错", "算错", "抄错", "没有彻底理解", "没理解", "少考虑",
+                 "要注意", "一定要考虑", "再好好想", "是不是写错", "是不是算错", "问题所在",
+                 "没看出来", "做错", "你是不是写", "你怎么写", "你这一步", "你上面"]
+# 老师这句话若含「假设 / 询问」语气 → 不是在指出问题（如「看有哪里是否做错」）
+TEA_POINT_EXCLUDE = ["是否", "如果", "假如", "会不会", "对不对", "有没有", "要是"]
+# 学生表达困惑 / 卡点的语气词
+STU_LOST_KWS = ["不会", "不懂", "没懂", "不明白", "卡住", "求思路", "怎么做", "怎么算",
+                "为什么", "看不懂", "没看出", "哪里错", "急急急"]
+# 正面语境 —— 学生自述「做得好的地方 / 已掌握」时提到的题型属**优势**，不能当薄弱点
+POSITIVE_KWS = ["做得比较好", "做得不错", "比较顺", "已经掌握", "都会了", "思路是对的",
+                "做对了", "答对了", "完全正确", "没什么问题", "没有问题", "比较熟练"]
+# 群通知 / 事务性消息（不参与薄弱点提取）
+NOTICE_KWS = ["上课通知", "课表", "讲义", "报名", "扫码", "教室", "群公告", "放假", "调课安排",
+              "作业记得", "记得完成", "记得交", "上课时间", "考试范围"]
+
+
+def is_notice(text):
+    """群通知 / 事务性消息（不参与薄弱知识点提取）。"""
+    return any(k in (text or "") for k in NOTICE_KWS)
+
+
+def is_positive(text):
+    """正面语境（自述已掌握 / 做得较好）。"""
+    return any(k in (text or "") for k in POSITIVE_KWS)
+
+
+def is_tea_point(text):
+    """是否是老师「具体指出问题」的句子（不能带假设/询问语气）。"""
+    s = text or ""
+    if any(k in s for k in TEA_POINT_EXCLUDE):
+        return False
+    return any(k in s for k in TEA_POINT_KWS)
+
+
+def classify_fine(text, best_only=False):
+    """把一段文本归类到「知识点 → 具体题型」。
+
+    best_only=True 时**只返回最具体的一个**（按命中关键词长度判断）——
+    否则「没有彻底理解复合函数的求导」会同时命中「复合函数求导」和「导数的几何意义」，
+    同一条证据被算作两个薄弱点（真实数据实测的重复问题）。
+    """
+    out = []
+    for topic, items in FINE_TYPES.items():
+        for item, kws in items:
+            hit = [k for k in kws if k in text]
+            if hit:
+                out.append((topic, item, max(len(k) for k in hit)))
+    if best_only and out:
+        t, i, _ = max(out, key=lambda x: x[2])
+        return [(t, i)]
+    return [(t, i) for t, i, _ in out]
+
+
+def clip_txt(t, n=38):
+    import re as _re
+    return _re.sub(r"\s+", " ", (t or "")).strip()[:n]
+
+
+def fine_from_board(board, per_topic=5):
+    """小黑板读图 → 细粒度薄弱点。只取「有错 / 卡点 / 未完成」的轮次。
+
+    每轮读图结论自带 `problem`（具体题目）与 `stuck_at`（卡点），正是最细的证据。
+    返回 {知识点: [{"item","kind","at","evi","count"}]}
+    """
+    if not board:
+        return {}
+    res = {}
+    for d in board.get("details", []) or []:
+        st = d.get("status") or ""
+        ok = d.get("correct") or ""
+        errs = d.get("errors") or []
+        stuck = (d.get("stuck_at") or "").strip()
+        if st == "完整作答" and ok == "正确" and not errs:
+            continue                              # 完整且正确 → 不算薄弱证据
+        topic = d.get("topic") or d.get("topic_knowledge") or "未归类"
+        prob = d.get("problem") or ""
+        # 题型名：优先用读图给出的卡点原文，其次用题面里命中的题型词
+        item = ""
+        for t2, it2 in classify_fine(prob + " " + stuck):
+            if t2 == topic or not item:
+                item = it2
+                break
+        if not item:
+            # 没命中题型词表时，直接用读图给出的**卡点原文**（最具体、可回溯），
+            # 并加「课堂作答卡点：」前缀，与命中词表的题型名区分开。
+            item = (f"课堂作答卡点：{stuck}" if stuck
+                    else f"课堂作答卡点：{clip_txt(prob, 18) or '未完成'}")
+        evi = f"原题：{clip_txt(prob, 26)}" if prob else "小黑板作答"
+        if stuck:
+            evi += f"｜卡点：{clip_txt(stuck, 22)}"
+        elif errs:
+            evi += "｜错误：" + "、".join(errs[:2])
+        res.setdefault(topic, []).append(
+            {"item": item, "kind": "小黑板", "at": d.get("lesson_date") or "", "evi": evi, "count": 1})
+    # 同类归并
+    merged = {}
+    for topic, rows in res.items():
+        agg = {}
+        for r in rows:
+            k = r["item"]
+            if k in agg:
+                agg[k]["count"] += 1
+            else:
+                agg[k] = r
+        merged[topic] = list(agg.values())[:per_topic]
+    return merged
+
+
+def merge_fine(*maps):
+    """合并多个 {知识点: [条目]}，同 (知识点, 题型) 归并（count 相加、保留首条出处）。"""
+    out = {}
+    for m in maps:
+        for topic, rows in (m or {}).items():
+            slot = out.setdefault(topic, {})
+            for r in rows:
+                k = r.get("item") or "—"
+                if k in slot:
+                    slot[k]["count"] = slot[k].get("count", 1) + r.get("count", 1)
+                else:
+                    slot[k] = dict(r)
+    return {t: list(v.values()) for t, v in out.items()}
+
+
 def att_sentence(a):
     """出勤一句话（v3.8）：如「出勤 4/5 次（含回放 2 次），缺课 1 次，第 5 节既没到课也没看回放」。"""
     if not a:

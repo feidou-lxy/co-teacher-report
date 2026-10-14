@@ -280,6 +280,37 @@ def board_focus(board):
     return None
 
 
+def render_fine(fine, fallback_chips, err_tip=""):
+    """细粒度薄弱点渲染（v4.2）：**知识点 → 具体题型/方法**，每条附原文出处，可回群核对。
+
+    这是「薄弱知识点」的替代呈现（不再用课程大类 chips，那对联席没有可操作性）：
+    如「直线和圆」下面到底是「含参直线过定点」还是「圆的一般式与圆心坐标」写错。
+
+    有细粒度证据时**只呈现细粒度**（聊天侧「错误类型」与其同源、更粗，不再单列，避免用户
+    反馈的「三部分内容重复」）；确实下钻不到题型时，才退回粗知识点 chips ＋ 一句聊天高频错因兜底。
+    """
+    if not fine:
+        _tip = (f'<div class="note">聊天高频错因：{err_tip}</div>'
+                if err_tip and err_tip not in ("—", "") else "")
+        return (f'<div class="kv"><span class="k">薄弱知识点</span><span class="chips">{fallback_chips}</span></div>'
+                + _tip +
+                '<div class="note">窗口内未捕捉到可下钻到题型的明确证据，暂只列知识点范围（多来自课堂提问，老师未在群里具体点出问题）。</div>')
+    kind_cls = {"老师指出": "tea", "学生提问": "stu", "小黑板": "bd"}
+    blocks = []
+    for topic, rows in fine.items():
+        lis = ""
+        for r in rows:
+            k = r.get("kind") or ""
+            cnt = r.get("count", 1)
+            cnt_html = f'<span class="fcnt">×{cnt}</span>' if cnt > 1 else ""
+            lis += (f'<li><span class="fitm">{r.get("item", "")}</span>'
+                    f'<span class="fsrc {kind_cls.get(k, "")}">{k}</span>{cnt_html}'
+                    f'<span class="fevi">{r.get("at", "")} 「{r.get("evi", "")}」</span></li>')
+        blocks.append(f'<div class="fine-t">{topic}</div><ul class="fine-l">{lis}</ul>')
+    return ('<div class="fine"><div class="fine-h">🎯 具体薄弱点（下钻到题型 / 方法，每条附原文出处，可回群核对）</div>'
+            + "".join(blocks) + '</div>')
+
+
 def board_block(sm):
     """学生卡「学习情况」内的佐证子块：课堂小黑板逐轮读图结论（v3.8 按**课次**组织）。
 
@@ -312,7 +343,7 @@ def board_block(sm):
     rows = ""
     for d in ds:
         cls = {"完整作答": "ok", "部分作答": "pb", "空白": "no"}.get(d.get("status"), "")
-        tk = d.get("topic_knowledge", "") or "—"
+        tk = d.get("topic_knowledge") or d.get("topic") or "—"
         err = "；".join(d.get("errors") or []) or "—"
         stuck = d.get("stuck_at", "") or "—"
         ld = d.get("lesson_date") or "—"
@@ -346,24 +377,20 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         adv = "学习意愿强、沟通配合好，无明显情绪风险" if s["q"] >= 5 else "沟通配合好，关系良好"
     else:
         adv = "—"
-    # 小黑板是「学习情况」的直接依据：其错误类型并入错误类型、正确作答佐证优势，
-    # 关联知识点与聊天高频交叉验证薄弱点（口径先对齐到聊天高频的标准词表）
-    board_errs, board_ok = [], False
+    # 小黑板是「学习情况」的直接依据：其正确作答佐证优势；关联知识点与聊天高频交叉验证薄弱点
+    # （口径先对齐到聊天高频的标准词表）。小黑板的具体错误逐条列在下方「课堂小黑板」块的
+    # 「典型错误」行 —— 不再并入顶部错因串，避免与 ① 具体薄弱点重复（v4.2）。
+    board_ok = False
     std_keys = list(CHAT_TOPIC_KEYS.keys())
     board_err_topics = []
     if board:
         for d in board.get("details", []):
-            for e in d.get("errors", []):
-                if e and e not in board_errs:
-                    board_errs.append(e)
             if d.get("status") == "完整作答" and d.get("correct") in ("正确", "基本正确"):
                 board_ok = True
         for t in (board.get("error_topics") or []):
             t2 = align_topic(t, std_keys)
             if t2 and t2 not in board_err_topics:
                 board_err_topics.append(t2)
-    if board_errs:
-        err_html = (err_html + "；" if err_html not in ("—", "") else "") + "小黑板：" + "、".join(board_errs)
     if board_ok:
         adv = (adv + "；" if adv not in ("—", "") else "") + "课堂小黑板有完整作答且正确，解题落地能力较好"
     # 薄弱知识点：聊天高频话题 × 小黑板实证 交叉验证（双证据更精准）
@@ -420,10 +447,9 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     blk3_title = "③ 教务 To-Do（面向学生的跟进）" if edu else "③ 联席跟进 Action"
     cadence_label = "沟通节奏" if edu else "追踪节奏"
     imp = IMPROVE.get(s["top_topics"][0], "该生相关薄弱点正确率提升、疑问闭环") if s["top_topics"] else "学生整体状态稳定"
-    # 错误类型（聊天侧）本质是「薄弱知识点」的另一种表述（都由 top_topics 映射），不再单列一行，
-    # 以免与①的薄弱点、小黑板的典型错误重复；改为挂在薄弱知识点行尾作一句说明。
-    err_tip = (f'<span class="note">表现：{err_html}</span>'
-               if err_html not in ("—", "") else "")
+    # 细粒度薄弱点（v4.2）：聊天侧（extract 已算）+ 小黑板侧（读图卡点）合并，替代原来的粗知识点 chips
+    fine = common.merge_fine(s.get("fine") or {}, common.fine_from_board(board))
+    fine_html = render_fine(fine, weak_chips, err_html)
     return f"""
     <div class="card" data-co="{co}" data-name="{r['stu']}">
       <div class="chead">
@@ -433,7 +459,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
       </div>
       <div class="cmeta">近窗 {(s['oldest'] or '—')[:10]} ~ {(s['newest'] or '—')[:10]} ｜ 可分析 {s['n_text']} 条（生/家长 {s['n_stu']}，其中礼节 {s.get('n_ack', 0)} · 师 {s['n_tea']}）｜ 语音 {s['voice']} 条</div>
       <div class="blk"><div class="blk-h">① 学习情况<span class="blk-sub">分层结论见卡片右上角 · 依据如下</span></div>
-        <div class="kv"><span class="k">薄弱知识点</span><span class="chips">{weak_chips}{err_tip}</span></div>
+        {fine_html}
         <div class="kv"><span class="k">优势</span><span class="v">{adv}</span></div>
         {board_block(board)}
         <details class="lvdet"><summary>学习分层判定依据（{lv_cn}）· 点击展开</summary>
@@ -508,6 +534,19 @@ th{color:#8a9099;font-weight:600}
 .blk-sub{font-size:11.5px;font-weight:400;color:#a0a6ae;margin-left:8px}
 .chip.dual{background:#ffeded;color:#cf1322;font-weight:600;box-shadow:inset 0 0 0 1px #ffccc7}
 .chip.kb{background:#fff7e6;color:#d46b08;box-shadow:inset 0 0 0 1px #ffd591}
+.fine{margin:6px 0 8px}
+.fine-h{font-size:11.5px;font-weight:700;color:#8a9099;margin-bottom:4px}
+.fine-t{font-size:12.5px;font-weight:700;color:#3a5bdb;margin:8px 0 3px}
+.fine-l{margin:0;padding:0;list-style:none}
+.fine-l li{font-size:12.5px;line-height:1.65;margin-bottom:3px;padding-left:11px;position:relative}
+.fine-l li:before{content:"·";position:absolute;left:2px;color:#c3c8d1;font-weight:700}
+.fitm{font-weight:600;color:#1f2329}
+.fsrc{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:7px;margin:0 4px}
+.fsrc.tea{background:#fdecec;color:#e54545}
+.fsrc.stu{background:#fff3e0;color:#c47b00}
+.fsrc.bd{background:#eef2ff;color:#3a5bdb}
+.fcnt{font-size:11px;color:#a0a6ae;margin-right:5px}
+.fevi{color:#8a9099;font-size:11.5px}
 .sub-blk{margin-top:8px;padding:8px 10px;background:#fafbfc;border:1px solid #eef0f3;border-radius:8px}
 .sb-h{font-size:12px;font-weight:700;color:#5a6472;margin-bottom:6px}
 details.bdet{margin-top:6px;border-top:1px dashed #eef0f3;padding-top:6px}

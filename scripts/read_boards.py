@@ -134,7 +134,10 @@ def aggregate(analysis_list, boards=None):
         # 小黑板关联知识点：kb_topics=涉及的全部，error_topics=有错误轮次实证的（薄弱）
         kb, err_kb = [], []
         for d in sm["details"]:
-            for t in split_topics(d.get("topic_knowledge")):
+            # topic_knowledge 为空时退回 topic：读图 / 人工填表常只给出 topic（题目模块），
+            # 若不退回，kb_topics / error_topics 会整体为空，报告的「小黑板实证薄弱」就断链。
+            _ts = split_topics(d.get("topic_knowledge")) or split_topics(d.get("topic"))
+            for t in _ts:
                 if t not in kb:
                     kb.append(t)
                 if d.get("errors") and t not in err_kb:

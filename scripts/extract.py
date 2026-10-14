@@ -122,8 +122,10 @@ TOPICS = {
 # 被引用内容常常只是 [图片]/[文件]，此时整条消息的正文为空 —— 但旧实现会把
 # `「张子墨：[图片]」- - - - - -` 整串当成一句「学生提问」，从而在近 3 天待回应里
 # 产生假条目（真实数据实测）。故统一剥离引用头，只留正文。
-QUOTE_HEAD_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*[-—]{2,}\s*")
-QUOTE_ONLY_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*[-—]{2,}\s*$")
+# ⚠️ 分隔符实际是「- - - -」（连字符之间有空格），必须写成 (?:[-—]\s*){2,}；
+# 早期版本用 [-—]{2,} 直接匹配连续连字符，真实数据里**一条都匹配不上**（实测 58 群）。
+QUOTE_HEAD_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*(?:[-—]\s*){2,}")
+QUOTE_ONLY_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*(?:[-—]\s*){2,}\s*$")
 
 
 def strip_quote(t):
@@ -258,6 +260,10 @@ def _short(t, n=30):
     return re.sub(r"\s+", " ", (t or "")).strip()[:n]
 
 
+# 分句：细粒度薄弱点必须逐句判断（长消息里优缺点混在一条，整条判断会误判）
+_SENT_SPLIT = re.compile(r"[。！？；!?;\n]+")
+
+
 def recent_pending(triples_all, anchor_ts, days=RECENT_DAYS):
     """近 N 天「待回应」清单（v3.9）：以窗口内最新一条消息为基准往前推 N 天。
 
@@ -325,6 +331,59 @@ def recent_pending(triples_all, anchor_ts, days=RECENT_DAYS):
             "items": items[:8],
             "missed_n": sum(1 for x in items if x["kind"] == "忘记回复"),
             "open_n": sum(1 for x in items if x["kind"] == "问题未解决")}
+
+
+def fine_weaknesses(triples_all, per_topic=4, per_student=8):
+    """细粒度薄弱题型（v4.2 · 聊天侧）：把「直线和圆」这类粗知识点，下钻到
+    「含参直线过定点 / 斜率是否存在的分类讨论」这类**具体方法或题型**。
+
+    证据只来自两类真实发言（词表见 `common.FINE_TYPES` / `TEA_POINT_KWS` / `STU_LOST_KWS`）：
+      ① **老师指出**（「你这题错在…」「没有彻底理解…」）—— 已确认的薄弱点，优先展示；
+      ② **学生卡住**（「这一步不会 / 为什么…」）—— 疑似薄弱点。
+    每条都带**原文出处**（原文片段 + 日期），报告里逐条可见、可回到群里核对。
+    返回 {知识点: [{"item","kind","at","evi","count"}]}
+    """
+    buckets = {}
+    for ts, r, t in triples_all:
+        if not t or is_noise(t) or is_ack(t) or common.is_notice(t):
+            continue
+        # ⚠️ 逐句判断，不整条判断：一条长消息（如学生的「复盘总结」）可以既列优点又列问题，
+        # 整条判断会把「做得比较好的地方：直线与圆基础题型…」这种**优势**误判成薄弱点（真实数据实测）。
+        for sent in _SENT_SPLIT.split(t):
+            sent = sent.strip()
+            if len(sent) < 4 or common.is_positive(sent):
+                continue
+            if r == 1:                                # 老师：必须「具体指出问题」（不带假设/询问语气）
+                if not common.is_tea_point(sent):
+                    continue
+                kind, pri = "老师指出", 0
+            elif r == 2:                              # 学生：必须「表达困惑 / 提问」
+                if not (any(k in sent for k in common.STU_LOST_KWS)
+                        or sent.endswith(("?", "？"))):
+                    continue
+                kind, pri = "学生提问", 1
+            else:
+                continue
+            for topic, item in common.classify_fine(sent, best_only=True):
+                slot = buckets.setdefault(topic, {}).setdefault(
+                    item, {"item": item, "kind": kind, "pri": pri, "at": (ts or "")[:10],
+                           "evi": common.clip_txt(sent, 44), "count": 0})
+                slot["count"] += 1
+                if pri < slot["pri"]:                 # 老师指出 → 换作展示依据（更可信）
+                    slot.update({"pri": pri, "kind": kind, "at": (ts or "")[:10],
+                                 "evi": common.clip_txt(sent, 44)})
+    out = {}
+    for topic, items in buckets.items():
+        rows = sorted(items.values(), key=lambda x: (x["pri"], -x["count"]))
+        out[topic] = [{k: v for k, v in r.items() if k != "pri"} for r in rows[:per_topic]]
+    # 全局上限：只保留证据最强的若干条（老师指出优先 → 出现次数多者优先），
+    # 避免卡片被铺满；顺序同时决定报告里的展示顺序。
+    flat = [(t, r) for t, rows in out.items() for r in rows]
+    flat.sort(key=lambda x: (0 if x[1]["kind"] == "老师指出" else 1, -x[1]["count"]))
+    keep = {}
+    for t, r in flat[:per_student]:
+        keep.setdefault(t, []).append(r)
+    return keep
 
 
 def pair_after(triples, trig_kws, resp_kws, within_h=72.0):
@@ -409,6 +468,7 @@ def main():
                 "ask_lv": "无", "tea_pos": 0, "tea_neg": 0,
                 "recent3": {"days": RECENT_DAYS, "since": "", "anchor": "",
                             "items": [], "missed_n": 0, "open_n": 0},
+                "fine": {},
             }
             continue
         all_txt = " ".join(t for _, t in texts)
@@ -621,6 +681,8 @@ def main():
             "tea_pos": tea_pos, "tea_neg": tea_neg,   # 老师反馈（学习分层第三类证据）
             # 近 3 天待回应（v3.9）：忘记回复 / 问题未解决，报告与待办共同消费
             "recent3": rt,
+            # 细粒度薄弱题型（v4.2）：知识点 → 具体方法/题型（带原文出处）
+            "fine": fine_weaknesses(triples_all),
         }
 
     json.dump(students, open(f"{wd}/analysis.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
