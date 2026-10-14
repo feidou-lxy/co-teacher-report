@@ -259,21 +259,32 @@ FINE_TYPES = {
         ("截面与展开", ["截面", "一刀切"]),
         ("基底法与共面向量", ["基底", "共面", "系数和"]),
         ("法向量求法", ["法向量"]),
+        # —— v4.3：下面三项由真实课堂题目（题干原话）补充，此前一律落到「未归类」——
+        ("向量线性相关／点集判定", ["线性相关", "点集", "Λ", "λ1", "不全为零"]),
+        ("动点与多结论判断", ["动点", "运动", "判断四个结论", "正确结论的序号",
+                              "四个叙述", "结论正确的是", "结论中正确", "四个结论"]),
+        ("平行与垂直的证明", ["线面平行", "面面垂直", "∥平面", "平行于平面", "证平行", "证垂直"]),
     ],
     "直线和圆": [
         ("含参直线过定点", ["含参", "过定点", "定点"]),
         ("斜率是否存在（分类讨论）", ["斜率不存在", "斜率", "两种情况", "分类讨论"]),
-        ("弦长公式", ["弦长"]),
+        ("弦长／截线问题", ["弦长", "截得", "所截", "公共弦", "弦"]),
         ("点到直线距离", ["点到直线", "圆心到直线"]),
         ("切线与对称转化", ["切线", "对称"]),
         ("圆的一般式与圆心坐标", ["圆心坐标", "一般式", "标准式", "配方"]),
         ("面积与最值转化", ["最大值", "最值", "面积"]),
+        # —— v4.3：同上，由真实课堂题目补充 ——
+        ("存在性与构造", ["存在点", "是否存在", "使四边形", "存在A", "存在M", "存在一点"]),
+        ("轨迹与阿波罗尼斯圆", ["阿波罗尼斯", "轨迹", "PA=√2PB", "MA=2MO", "满足PA"]),
+        ("两圆／两定点最值", ["两圆", "PA+PB", "PA-PB", "|PA|", "两定点", "距离之和"]),
+        ("平行线间距离", ["平行直线", "两平行线", "平行线"]),
     ],
     "圆锥曲线": [
         ("联立方程与韦达定理", ["韦达", "联立", "判别式"]),
         ("离心率", ["离心率"]),
         ("定点定值问题", ["定值", "定点"]),
         ("点差法", ["点差"]),
+        ("定义与轨迹判定", ["距离之和", "距离之差", "轨迹", "定直线", "定点F"]),
     ],
     "函数与导数": [
         ("复合函数求导", ["复合函数", "复合"]),
@@ -310,6 +321,11 @@ POSITIVE_KWS = ["做得比较好", "做得不错", "比较顺", "已经掌握", 
 # 群通知 / 事务性消息（不参与薄弱点提取）
 NOTICE_KWS = ["上课通知", "课表", "讲义", "报名", "扫码", "教室", "群公告", "放假", "调课安排",
               "作业记得", "记得完成", "记得交", "上课时间", "考试范围"]
+
+# 题干是「密集数学词汇」文本，这些词在聊天口语里是有效信号，但在题干里遍地都是
+# （「定点 B(6,2)」「投影」「斜率 k」「关于…对称」…），会让小黑板侧大量误命中。
+# 故**仅在小黑板侧**屏蔽它们，聊天侧照旧使用。
+BOARD_KW_BLOCK = {"定点", "投影", "斜率", "对称", "轨迹"}
 
 
 def is_notice(text):
@@ -354,34 +370,48 @@ def clip_txt(t, n=38):
     return _re.sub(r"\s+", " ", (t or "")).strip()[:n]
 
 
-def fine_from_board(board, per_topic=5):
-    """小黑板读图 → 细粒度薄弱点。只取「有错 / 卡点 / 未完成」的轮次。
+def fine_from_board(board, per_topic=6):
+    """小黑板逐轮读图 → 细粒度薄弱点（v4.2 起**全量轮次**参与，不再只取一轮）。
 
     每轮读图结论自带 `problem`（具体题目）与 `stuck_at`（卡点），正是最细的证据。
-    返回 {知识点: [{"item","kind","at","evi","count"}]}
+
+    口径（v4.3 收紧，避免把「没作答」误当「知识点薄弱」）：
+      · 跳过 `空白未提交` —— 没作答就没有知识点证据，属出勤 / 参与度，由作答分布与学习分层承接
+      · 跳过 topic 为空 /「其他」/「未归类」—— 问卷、调查表等非学科内容
+      · 跳过「完整作答 ＋ 正确 ＋ 无错」—— 无薄弱证据
+    题型名优先取 FINE_TYPES 命中项（**优先落在本题知识点下**），其次取读图给出的**卡点原文**，
+    两者都没有才退化为题面摘要 —— **绝不硬凑题型名**。
+    返回 {知识点: [{"item","kind","at","evi","count"}]}，同 (知识点, 题型) 归并计数。
     """
     if not board:
         return {}
     res = {}
+    sev = {}
     for d in board.get("details", []) or []:
         st = d.get("status") or ""
         ok = d.get("correct") or ""
         errs = d.get("errors") or []
         stuck = (d.get("stuck_at") or "").strip()
-        if st == "完整作答" and ok == "正确" and not errs:
-            continue                              # 完整且正确 → 不算薄弱证据
-        topic = d.get("topic") or d.get("topic_knowledge") or "未归类"
         prob = d.get("problem") or ""
-        # 题型名：优先用读图给出的卡点原文，其次用题面里命中的题型词
-        item = ""
-        for t2, it2 in classify_fine(prob + " " + stuck):
-            if t2 == topic or not item:
-                item = it2
-                break
+        topic = (d.get("topic") or d.get("topic_knowledge") or "").strip()
+        if st == "空白未提交" or topic in ("", "其他", "未归类"):
+            continue
+        if st == "完整作答" and ok == "正确" and not errs:
+            continue
+        # 题型名：在题面 + 卡点里找词表命中项，**同知识点的命中优先、其次命中的关键词更长者优先**。
+        # BOARD_KW_BLOCK 里的泛词在题干语境下不可靠，小黑板侧一律不采信（聊天侧不受影响）。
+        blob = f"{prob} {stuck}"
+        best = None
+        for t2, items2 in FINE_TYPES.items():
+            for it2, kws in items2:
+                hit = [k for k in kws if k in blob and k not in BOARD_KW_BLOCK]
+                if hit:
+                    score = (1 if t2 == topic else 0, max(len(k) for k in hit))
+                    if best is None or score > best[0]:
+                        best = (score, it2)
+        item = best[1] if best else ""
         if not item:
-            # 没命中题型词表时，直接用读图给出的**卡点原文**（最具体、可回溯），
-            # 并加「课堂作答卡点：」前缀，与命中词表的题型名区分开。
-            item = (f"课堂作答卡点：{stuck}" if stuck
+            item = (f"课堂作答卡点：{clip_txt(stuck, 20)}" if stuck
                     else f"课堂作答卡点：{clip_txt(prob, 18) or '未完成'}")
         evi = f"原题：{clip_txt(prob, 26)}" if prob else "小黑板作答"
         if stuck:
@@ -389,8 +419,13 @@ def fine_from_board(board, per_topic=5):
         elif errs:
             evi += "｜错误：" + "、".join(errs[:2])
         res.setdefault(topic, []).append(
-            {"item": item, "kind": "小黑板", "at": d.get("lesson_date") or "", "evi": evi, "count": 1})
-    # 同类归并
+            {"item": item, "kind": "小黑板", "at": d.get("lesson_date") or "",
+             "evi": evi, "count": 1})
+        # 严重度：读图明确判「有错」> 有卡点/待判 > 仅未完成收尾（用于同题型内挑代表条目）
+        _s = 2 if ok == "有错" else (1 if stuck else 0)
+        k2 = (topic, item)
+        if _s > sev.get(k2, -1):
+            sev[k2] = _s
     merged = {}
     for topic, rows in res.items():
         agg = {}
@@ -399,8 +434,9 @@ def fine_from_board(board, per_topic=5):
             if k in agg:
                 agg[k]["count"] += 1
             else:
-                agg[k] = r
-        merged[topic] = list(agg.values())[:per_topic]
+                agg[k] = dict(r)
+        items = sorted(agg.values(), key=lambda r: (-r["count"], -sev.get((topic, r["item"]), 0)))
+        merged[topic] = items[:per_topic]
     return merged
 
 

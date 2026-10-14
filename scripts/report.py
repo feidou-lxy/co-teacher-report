@@ -450,8 +450,20 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     # 细粒度薄弱点（v4.2）：聊天侧（extract 已算）+ 小黑板侧（读图卡点）合并，替代原来的粗知识点 chips
     fine = common.merge_fine(s.get("fine") or {}, common.fine_from_board(board))
     fine_html = render_fine(fine, weak_chips, err_html)
+    # v4.3：把「哪一类学生」预先算成 data-* 标记，供顶部 KPI 卡片点击筛选（前端零计算）
+    _att_absent = common.att_stats(r["att"])[5] if r.get("att") else 0
+    kflag = {
+        "slow": 1 if r["slow"] else 0,
+        "unres": 1 if s.get("unresolved") else 0,
+        "inter": 1 if s.get("interact_lv") in ("bad", "warn") else 0,
+        "urge": 1 if s.get("urge_n", 0) > s.get("urge_ok", 0) else 0,
+        "fix": 1 if s.get("fix_n", 0) > s.get("fix_ok", 0) else 0,
+        "absent": 1 if _att_absent else 0,
+        "recent3": 1 if rt_items else 0,
+    }
+    kattr = " ".join(f'data-{k}="{v}"' for k, v in kflag.items())
     return f"""
-    <div class="card" data-co="{co}" data-name="{r['stu']}">
+    <div class="card" data-co="{co}" data-name="{r['stu']}" {kattr}>
       <div class="chead">
         <div class="cname">{r['stu']}{bt_tag}</div>
         <div class="cgroup">{r['course_raw']}{co_tag}</div>
@@ -626,6 +638,18 @@ details.lvdet .lvevs{margin-top:6px}
 .tab.active{background:#3a5bdb;color:#fff;border-color:#3a5bdb}
 .tab.active .tcount{color:#dce3ff}
 .ckpis{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+/* v4.3：KPI 小卡 = 可点击筛选入口 */
+.kpi.kbl{cursor:pointer;transition:transform .15s,box-shadow .15s}
+.kpi.kbl:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(58,91,219,.16)}
+.kpi.kbl:active{transform:translateY(0)}
+.kpi.kbl.on{outline:2px solid #3a5bdb;outline-offset:1px;box-shadow:0 6px 16px rgba(58,91,219,.24)}
+.kpihint{font-size:11.5px;color:#8a9099;margin:-6px 0 16px}
+.kpicnt{color:#3a5bdb;font-weight:700;margin-left:6px}
+details.meth{margin:20px 0 8px;border-top:1px solid #eef0f3;padding-top:12px}
+details.meth>summary{cursor:pointer;font-size:15px;font-weight:700;color:#3a5bdb;list-style:none;outline:none}
+details.meth>summary::-webkit-details-marker{display:none}
+details.meth>summary:before{content:"▸ "}
+details.meth[open]>summary:before{content:"▾ "}
 .dimswitch{position:sticky;top:0;z-index:30;background:#f5f6f8;padding:10px 0 4px;display:flex;gap:8px;align-items:center}
 .dimlabel{font-size:13px;color:#8a9099;font-weight:600;margin-right:4px}
 .dimb{border:1px solid #d8dce3;background:#fff;color:#3a5bdb;font-size:13px;font-weight:600;padding:8px 16px;border-radius:10px;cursor:pointer}
@@ -716,7 +740,6 @@ def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, ed
     show_co_tag=True（课程维度）：学生卡标注所属联席，便于一门课跨多个联席时区分归属。"""
     c_slow = sum(1 for r in crows if r["s"].get("resp_slow"))
     c_unres = sum(1 for r in crows if r["s"]["unresolved"])
-    c_msgs = sum(r["s"]["n_text"] for r in crows)
     c_absent = sum(1 for r in crows if r["att"] and r["att"]["absentCount"] > 0)
     c_topic = Counter()
     for r in crows:
@@ -736,28 +759,36 @@ def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, ed
     cards = "".join(card_html(r, edu=edu, show_co_tag=show_co_tag,
                               board=(boards_map or {}).get(common.norm_name(r["stu"]))) for r in crows)
     todo_head = "教务 To-Do" if edu else "联席 To-Do"
+
+    # v4.3：KPI 小卡 = 可点击筛选入口（点一下只留这一类学生，再点恢复全部）。
+    # 「可分析消息」已按用户要求下线（它对跟进动作没有指导意义，且与卡片内的「可分析 N 条」重复）。
+    def ktile(n, label, key, cls="", hint=""):
+        return (f'<div class="kpi kbl {cls}" data-k="{key}" title="{hint}" '
+                f'onclick="kpiFilter(this,\'{sec_id}\',\'{key}\')">'
+                f'<div class="n">{n}</div><div class="l">{label}</div></div>')
+
     if edu:
-        # 教务：出勤为核心关切 → KPI 末位放「有缺勤」
-        kpi_extra = f'<div class="kpi orange"><div class="n">{c_absent}</div><div class="l">有缺勤(后台)</div></div>'
+        # 教务：出勤为核心关切 → 末位放「有缺勤」
+        kpi_extra = ktile(c_absent, "有缺勤(后台)", "absent", "orange", "后台课节考勤有缺勤记录")
     else:
-        # 联席 / 课程：为学习效果负责 → KPI 末位放「互动不足」「催交未交」「批改未改」
+        # 联席 / 课程：为学习效果负责 → 末位放「互动不足」「催交未交」「批改未改」
         c_weak_inter = sum(1 for r in crows if r["s"].get("interact_lv") in ("bad", "warn"))
         c_urge_fail = sum(1 for r in crows if r["s"].get("urge_n", 0) > r["s"].get("urge_ok", 0))
         c_fix_fail = sum(1 for r in crows if r["s"].get("fix_n", 0) > r["s"].get("fix_ok", 0))
-        kpi_extra = (f'<div class="kpi orange"><div class="n">{c_weak_inter}</div><div class="l">互动不足</div></div>'
-                     f'<div class="kpi orange"><div class="n">{c_urge_fail}</div><div class="l">催交未交</div></div>'
-                     f'<div class="kpi orange"><div class="n">{c_fix_fail}</div><div class="l">批改未改</div></div>')
+        kpi_extra = (ktile(c_weak_inter, "互动不足", "inter", "orange", "互动状态判定为「不积极 / 沉默」")
+                     + ktile(c_urge_fail, "催交未交", "urge", "orange", "老师在群里催交过、其后未见学生「已交」回应")
+                     + ktile(c_fix_fail, "批改未改", "fix", "orange", "老师要求订正过、其后未见学生「已改」回应"))
     disp = 'style="display:block"' if is_all else 'style="display:none"'
     return f'''
 <div class="grp" id="{sec_id}" {disp}>
   {cofilter}
   <div class="ckpis">
-    <div class="kpi"><div class="n">{len(crows)}</div><div class="l">学生数</div></div>
-    <div class="kpi"><div class="n">{c_msgs}</div><div class="l">可分析消息</div></div>
-    <div class="kpi red"><div class="n">{c_slow}</div><div class="l">响应迟缓群</div></div>
-    <div class="kpi orange"><div class="n">{c_unres}</div><div class="l">未解疑问群</div></div>
+    {ktile(len(crows), "学生数", "__all__", "", "点击恢复显示全部学生")}
+    {ktile(c_slow, "响应迟缓群", "slow", "red", "学生提问后 ≥24 小时才见老师回复")}
+    {ktile(c_unres, "未解疑问群", "unres", "orange", "会话尾部仍有未获回应的提问")}
     {kpi_extra}
   </div>
+  <div class="kpihint">💡 点击上方任一统计卡，可只看这一类学生；再次点击（或点「学生数」）恢复全部。<span class="kpicnt" id="kpiCnt-{sec_id}"></span></div>
   <div class="section"><h3>高频知识点（{title}）</h3>
     <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{topic_rows}</table></div>
   <div class="section"><h3>逐学生表现 &amp; {todo_head}（需关注置顶）</h3>{cards}</div>
@@ -812,7 +843,8 @@ def main():
             _subj.append(sj)
     subject_line = " / ".join(_subj) or "—"
 
-    total_msgs = sum(r["s"]["n_text"] for r in rows)
+    # v4.3：「可分析消息（近窗）」KPI 已按用户要求下线 —— 对跟进动作无指导意义，
+    # 且每张卡片 meta 行里已有「可分析 N 条」，属同源重复。
     slow_n = sum(1 for r in rows if r["slow"])
     unres_n = sum(1 for r in rows if r["s"]["unresolved"])
     # 近 3 天待回应（v3.9）：忘记回复 / 问题未解决的全局提醒（顶部横幅 + KPI）
@@ -914,7 +946,6 @@ def main():
 { f'<div class="datanote">⚠️ {args.note}</div>' if args.note else '' }
 <div class="kpis">
   <div class="kpi"><div class="n">{len(rows)}</div><div class="l">{scope_label}学生（全量）</div></div>
-  <div class="kpi"><div class="n">{total_msgs}</div><div class="l">可分析消息（近窗）</div></div>
   <div class="kpi red"><div class="n">{slow_n}</div><div class="l">响应迟缓群（聊天分析）</div></div>
   <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
   <div class="kpi {'red' if rt_n_stu else 'green'}"><div class="n">{rt_n_stu}</div><div class="l">近3天待回应（{rt_n_items} 项）</div></div>
@@ -928,7 +959,7 @@ def main():
 {panels}
 <div class="section"><h2>三、整体画像：高频知识点（全量）</h2>
   <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{glob_topic_rows}</table></div>
-<div class="section"><h2>四、方法论与口径说明</h2>
+<details class="meth"><summary>四、方法论与口径说明（点击展开）</summary>
 <p class="note">
 • 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 取每群最近消息（倒序，单群上限 500 条），文本与语音转写均纳入。<br>
 • 分析窗口：仅分析 <b>{args.window} 至今</b>的聊天内容。<br>
@@ -942,7 +973,7 @@ def main():
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
 • 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
 • <b>近 3 天待回应（v3.9 新增 · v4.0 改为顶部折叠入口）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。全量结果<b>汇总在报告顶部的「🚨 近 3 天待回应 N 项」入口条</b>（给管理者 / 教务的统一视图，<b>默认收起，点击展开</b>明细表：学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时入口条显示绿色「检查通过」。<br>
-</p></div>
+</p></details>
 </div>
 <script>
 function showDim(d){{
@@ -969,6 +1000,29 @@ function coFilter(sel){{
   sec.querySelectorAll('.card').forEach(function(c){{
     c.style.display = (v==='__all__' || c.getAttribute('data-co')===v) ? 'block' : 'none';
   }});
+}}
+// v4.3：KPI 小卡点击筛选 —— 点「响应迟缓群 / 未解疑问群 / 互动不足 / 催交未交 / 批改未改 / 有缺勤」
+// 只保留对应学生；点「学生数」或再次点击当前项 → 恢复全部。
+function kpiFilter(el, secId, key){{
+  var sec=document.getElementById(secId); if(!sec) return;
+  var wasOn=el.classList.contains('on');
+  sec.querySelectorAll('.kpi.kbl').forEach(function(x){{x.classList.remove('on');}});
+  var showAll = (key==='__all__') || wasOn;
+  if(showAll){{
+    sec.querySelectorAll('.card').forEach(function(c){{c.style.display='block';}});
+    var cnt=document.getElementById('kpiCnt-'+secId);
+    if(cnt) cnt.textContent='';
+    return;
+  }}
+  el.classList.add('on');
+  var n=0;
+  sec.querySelectorAll('.card').forEach(function(c){{
+    var hit=(c.getAttribute('data-'+key)==='1');
+    c.style.display = hit ? 'block' : 'none';
+    if(hit) n++;
+  }});
+  var cnt=document.getElementById('kpiCnt-'+secId);
+  if(cnt) cnt.textContent='已筛选：' + el.querySelector('.l').textContent + ' · ' + n + ' 人';
 }}
 function doSearch(val){{
   var q=(val||'').trim().toLowerCase();
