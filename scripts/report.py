@@ -946,6 +946,27 @@ details.meth[open]>summary:before{content:"▾ "}
 .tadv-ev .in{padding:8px 13px;max-height:420px;overflow:auto}
 .tadv-ev .fevi{color:#a09a8c;font-size:11.5px}
 .tadv-note{padding:7px 13px;font-size:11px;color:#a09a8c;background:#fffcf5;line-height:1.75;border-top:1px dashed #ffe0b2}
+/* v4.13：Tab② 「下节课可重点关注的学生」子模块 */
+.tadv-focus{border-top:1px dashed #ffe0b2;padding:10px 13px 11px;background:#fffdf8}
+.fadv-h{font-size:13px;font-weight:700;color:#ad6800;margin:0 0 4px}
+.fadv-s{font-size:12px;color:#6b7280;line-height:1.75;margin-bottom:8px}
+.fadv-s b{color:#cf1322}
+.foc-tab{width:100%;border-collapse:collapse;font-size:12.5px}
+.foc-tab th,.foc-tab td{border-bottom:1px solid #f6f1e7;padding:6px 9px;text-align:left;vertical-align:top}
+.foc-tab th{color:#8a9099;font-weight:600;font-size:11.5px;background:#fffcf5;white-space:nowrap}
+.foc-tab td.fst{font-weight:700;color:#1f2329;white-space:nowrap}
+.foc-tab td.fw{min-width:132px}
+.foc-tab td.fact{color:#7c5c1e;line-height:1.7}
+.foc-tab td.fev{color:#a09a8c;font-size:11.5px;line-height:1.65;max-width:310px}
+.foc-tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;margin:1px 4px 1px 0;white-space:nowrap}
+.foc-tag.bad{color:#cf1322;background:#fff1f0;border:1px solid #ffccc7}
+.foc-tag.warn{color:#ad6800;background:#fff7e6;border:1px solid #ffe0b2}
+.foc-tag.bd{color:#0958d9;background:#f0f5ff;border:1px solid #d6e4ff}
+.foc-more{margin-top:6px}
+.foc-more>summary{cursor:pointer;list-style:none;padding:4px 0;font-size:11.5px;color:#ad6800;font-weight:600;outline:none}
+.foc-more>summary::-webkit-details-marker{display:none}
+.foc-more[open]>summary{border-bottom:1px dashed #ffe0b2;margin-bottom:4px}
+.fadv-note{font-size:11px;color:#a0a6ae;margin-top:7px;line-height:1.7}
 /* v4.12：预警卡（v4.8 §4.4 落地）—— 无学生卡的在册学生，「哪一轴缺、哪一轴正常」摊开写 */
 .warnzone{margin:0 0 14px;border:1px solid #f6cfcf;border-radius:10px;padding:12px 14px;background:#fffafa}
 .warnzone-h{font-size:13.5px;font-weight:700;color:#cf1322;margin:0 0 10px;line-height:1.6}
@@ -1251,6 +1272,150 @@ def _collect_items(crows, boards_map, max_evi=2):
     return out
 
 
+# ============================================================
+# v4.13：Tab② 新增「👀 下节课可重点关注的学生」模块
+#
+# 主讲课上能做的动作只有两件 —— ① 点名把沉默的人拉进互动 ② 盯课堂练习落实。
+# 因此本模块**只收三类已被数据证实的情况**，不新增任何判定逻辑：
+#   ① 互动状态（extract 四维之一 interact_lv）—— 与 Tab③「联席跟进 Action」里
+#      「课上多给一次点名提问 / 小黑板任务」**同源同口径**，两处不会互相打架；
+#   ② 小黑板课堂作答：空白未提交 / 多轮未收尾（读图 status_counts，与 board_focus 同一判定）；
+#   ③ 小黑板实证错误（fine_from_board 的 hard —— 「真的做错」，非「没写完」）。
+# 每行都附原文依据，可回群 / 回图逐条核对。
+# ============================================================
+_FOCUS_SEV = {"bad": 0, "warn": 1}
+_FOCUS_CLS = {"bad": "bad", "warn": "warn", "blank": "bd", "unfin": "bd", "hard": "bd"}
+_FOCUS_ACT = {
+    "bad": "主动点名 —— 先抛一个他大概率答得上的问题，把人带进课堂节奏",
+    "warn": "多给一次点名提问 / 小黑板任务，把人调动起来",
+}
+# 入榜门槛（v4.13）：**只收「课上互动不足」的学生** —— 主讲一节课能额外点的就几个人，
+# 门槛必须聚焦，否则人人上榜等于没筛（实测本课 48 人里 26 人群内互动不足，宽门槛会命中大半）。
+#   · bad  = 沉默不回复 / 近期沉默（窗口内本人实质发言 0 条，或已沉默 ≥14 天）
+#   · warn = 不积极（本人实质发言 ≤3 条）；「一般」（4~11 条）属正常参与，已排除。
+# 小黑板的「未提交 / 未收尾 / 实证错误」**不作为入榜条件**（那属于「该知识点讲什么」，
+# 由上方优先级表承载），只作为**附加理由与排序权重** —— 互动差且课上也没落实的排最前。
+_FOCUS_WARN_OK = {"不积极"}
+
+
+def focus_students(crows, boards_map, limit=6):
+    """筛出「下节课课上值得重点关注」的学生（v4.13）。
+
+    返回 (shown, total, summary_text)：shown = 前 limit 人，total = 互动不足总人数，
+    summary = 一句话分布小结。无符合者返回 ([], 0, "")。
+
+    排序（互动差 + 课堂也没落实 = 最该盯）：
+      ① bad 优先于 warn；
+      ② 有课堂作答问题（未提交／未收尾／实证错误）的优先；
+      ③ 本人最新发言越早（沉默越久）越靠前，再比实质发言条数。
+    """
+    out = []
+    for r in crows:
+        s = r["s"]
+        bd = (boards_map or {}).get(common.norm_name(r["stu"]))
+        # ① 入榜门槛：互动状态（extract 四维）
+        ilv = s.get("interact_lv")
+        iact = (s.get("interact") or "").strip() or "不足"
+        if not (ilv == "bad" or (ilv == "warn" and iact in _FOCUS_WARN_OK)):
+            continue
+        kinds, why, evi = [ilv], [], []
+        why.append(f"互动「{iact}」")
+        if s.get("interact_evi"):
+            evi.append(s["interact_evi"])
+        # ② 小黑板课堂作答：附加理由（不作门槛），用于排前与说明
+        if bd:
+            sc = bd.get("status_counts") or {}
+            rounds = bd.get("rounds") or len(bd.get("details") or [])
+            pb = sc.get("部分作答", 0)
+            blank = sc.get("空白未提交", 0) + sc.get("空白", 0)
+            if blank >= 1 and blank >= pb:
+                kinds.append("blank")
+                why.append(f"小黑板 {blank} 轮未提交")
+                evi.append(f"小黑板读图：{blank} 轮空白未提交（共 {rounds} 轮）")
+            elif pb >= 2 and pb >= max(2, rounds * 0.4):
+                kinds.append("unfin")
+                why.append(f"课堂作答 {pb}/{rounds} 轮未收尾")
+                evi.append(f"小黑板读图：{pb} 轮部分作答（共 {rounds} 轮）")
+            hard = [(t, it) for t, its in (common.fine_from_board(bd) or {}).items()
+                    for it in its if it.get("hard")]
+            if hard:
+                kinds.append("hard")
+                why.append("、".join(sorted({t for t, _ in hard})[:2]) + " 实证错误")
+                evi.append("小黑板实证错误：" + "、".join(
+                    f'{it.get("item")}（{it.get("at") or "—"}）' for _, it in hard[:2]))
+        out.append(dict(
+            stu=r["stu"], co=r.get("co") or "未分配联席",
+            sev=_FOCUS_SEV[ilv], lead=ilv, kinds=kinds, why=why, evi=evi,
+            has_board=bool({"blank", "unfin", "hard"} & set(kinds)),
+            board_lead=next((k for k in ("blank", "unfin", "hard") if k in kinds), "hard"),
+            # 「沉默不回复」（窗口内 0 条实质发言）比「近期沉默」（只是最近没说话）更值得先点
+            sub=(0 if iact == "沉默不回复" else 1),
+            newest=(s.get("newest") or ""), strength=(s.get("n_stu_sub") or 0),
+        ))
+    if not out:
+        return [], 0, ""
+    out.sort(key=lambda x: (x["sev"], 0 if x["has_board"] else 1, x["sub"],
+                            x["newest"], x["strength"], x["stu"]))
+    n_bad = sum(1 for x in out if x["sev"] == 0)
+    n_warn = len(out) - n_bad
+    n_board = sum(1 for x in out if x["has_board"])
+    summary = (f'全组 <b>{len(crows)}</b> 人中 <b>{len(out)}</b> 人群内互动不足'
+               f'（沉默不回复／近期沉默 {n_bad} · 实质发言 ≤3 条的 {n_warn}），'
+               f'其中 <b>{n_board}</b> 人课堂作答也有问题（未提交／未收尾／实证错误）——'
+               f'这些人既没在群里出现、课上也没落实，最该被主动点到。')
+    return out[:limit], len(out), summary
+
+
+def _focus_html(crows, boards_map, limit=6):
+    """渲染「👀 下节课可重点关注的学生」块（Tab② 内嵌）。无数据返回空串。"""
+    shown, total, summary = focus_students(crows, boards_map, limit=limit)
+    if not shown:
+        return ""
+    more = total - len(shown)
+    _bact = {"blank": "当场确认小黑板是漏做还是漏交，留一步让他补",
+             "unfin": "讲这道题时盯他写完最后一步",
+             "hard": "讲该题型时点他确认是否真的会"}
+
+    def _row(x):
+        tags = "".join(
+            f'<span class="foc-tag {_FOCUS_CLS[k]}">{w}</span>'
+            for k, w in zip(x["kinds"], x["why"]))
+        act = _FOCUS_ACT[x["lead"]]
+        if x["has_board"]:
+            act += "；" + _bact[x["board_lead"]]
+        ev = " ｜ ".join(e for e in x["evi"] if e)
+        return (f'<tr><td class="fst">{x["stu"]}</td>'
+                f'<td class="fw">{tags}</td>'
+                f'<td class="fact">{act}</td>'
+                f'<td class="fev">{ev or "—"}</td></tr>')
+
+    body = "".join(_row(x) for x in shown)
+    more_html = ""
+    if more > 0:
+        rest, _, _ = focus_students(crows, boards_map, limit=10 ** 6)
+        more_html = (f'<details class="foc-more"><summary>展开其余 {more} 人'
+                     f'（同一口径排序，共 {total} 人）</summary>'
+                     f'<table class="foc-tab"><tr><th>学生</th><th>关注理由</th>'
+                     f'<th>课上可以做的事</th><th>依据（可核对）</th></tr>'
+                     + "".join(_row(x) for x in rest[len(shown):]) + '</table></details>')
+    return (
+        '<div class="tadv-focus">'
+        '<div class="fadv-h">👀 下节课可重点关注的学生</div>'
+        f'<div class="fadv-s">{summary}'
+        f'下表列最该先动的 {len(shown)} 人'
+        + (f'，其余 {more} 人见折叠。' if more > 0 else '。') + '</div>'
+        '<table class="foc-tab"><tr><th>学生</th><th>关注理由</th>'
+        '<th>课上可以做的事</th><th>依据（可核对）</th></tr>'
+        + body + '</table>'
+        + more_html
+        + '<div class="fadv-note">名单只复述已有证据（群聊互动状态 ／ 小黑板逐轮读图），'
+          '不评价学习态度、不预测成绩。「互动不足」＝窗口内本人实质发言 ≤3 条或已沉默，'
+          '不等于学生不用功（「一般」＝实质发言 4~11 条，属正常参与，已排除在名单外）。'
+          '排序＝先互动、后练习：互动沉默且课堂作答也有问题的排最前。'
+          '互动状态与 Tab③「联席跟进 Action」同源，两处口径一致。</div>'
+        '</div>')
+
+
 def teaching_advice(crows, boards_map, n_any=None):
     """渲染「🎓 主讲备课建议」区块。无任何证据时返回空串（不渲染空壳）。"""
     n_any = n_any if n_any is not None else len(crows)
@@ -1355,6 +1520,7 @@ def teaching_advice(crows, boards_map, n_any=None):
         + ('<b>本视角未接入小黑板读图数据，「实证错误」维度为空，请以群聊高频为准。</b>'
            if n_bd == 0 else '')
         + '</div>'
+        + _focus_html(crows, boards_map)
         + (f'<details class="tadv-ev"><summary>📎 展开题型与原文出处'
            f'（{len(rank)} 个知识点 · 可回群 / 回图逐条核对）</summary>'
            f'<div class="in">{ev_html}</div></details>' if ev_html else '')
