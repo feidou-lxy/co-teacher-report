@@ -299,6 +299,29 @@ python <skill>/scripts/board_cache.py merge <工作区>/board_batches/result_*.j
 - **联席四维（v3.7）** 在 `analysis.json` / `analysis_merged.json` 中落地为字段：`interact` / `interact_lv` / `interact_evi`（互动状态）、`urge_n` / `urge_ok` / `urge_fail`（催交→提交）、`fix_n` / `fix_ok` / `fix_fail`（批改→订正）、`ask_lv`（提问意愿）。配对规则：老师发出催交/订正要求后 **72 小时**内学生给出对应回应记为「已响应」；6 小时内的重复催只计一次。数据以 `four_dims()` 渲染成 4 张横排小卡展示在卡片第②块「配合度」内。
 - **购课类型**：展示在学生姓名之后（`直播` / `回放` / `试听（插班）` / `测试`）。来源为花名册字段 `cIncomeProductType`（后台「我的学生」列表的「购课类型」列）；取值映射来自字典接口 `GET /sysDictionary/findSysDictionary?type=productType`（1=直播 2=回放 3=试听（插班）4=测试）。报告学生卡标题同步展示该标签。
 
+### 报告整体结构（v4.10 改为三大 Tab）
+
+报告从「长页 + 顶部预警块」改为**三大 Tab**，顶部 KPI 卡常驻且**全部可点击**：
+
+| Tab | 内容 |
+|---|---|
+| ① 🚨 失联预警 | 在册全覆盖统计条 ＋ 分档（失联 / 出勤但无沟通 / 单向沟通 / 低互动）的**档位人数与名单** |
+| ② 🎓 备课建议 & 高频知识点 | **总分结构**：主讲备课建议（总，在上）→ 高频知识点数据明细（分，在下） |
+| ③ 📋 学生学情 & To-Do | 近 3 天待回应入口条 ＋ 搜索框 ＋ 分组 Tab ＋ KPI 筛选卡 ＋ 逐生卡片 |
+
+**顶部 KPI 点击行为**（`topKpi(kind)`）：
+
+- **失联 / 出勤但无沟通** → 切到 Tab① 并展开对应档位名单（定位 `#covTier-<档位名>`）。
+- **响应迟缓群 / 待回复群 / 近 3 天待回应 / 在册学生数** → 切到 Tab③ 并筛出对应学生（复用 `kpiFilter`）。
+
+**实现要点（改代码时务必注意）**：
+
+- Tab2 与 Tab3 **各生成一套分组**，id 前缀不同以免互相冲掉：Tab2 = `t-c-*` / `t-co-*`，Tab3 = `c-*` / `co-*`。
+- 分组切换统一走 **`showTabIn(panelId, prefix, idx)`**（旧 `showTab('course', ...)` 已废弃）；维度切换走 **`showDim(where, d)`**，`where` = `t2` / `t3`。
+- 原「三、整体画像：高频知识点（全量）」章节**已取消** —— 它与 Tab2 的「全部」分组完全重合，留着会一页两份相同结论。
+- 搜索（`doSearch`）只作用于 Tab3（只有这里按学生卡片组织）。
+- `build_section()` 已拆为 **`build_topic_block()`**（Tab2：建议＋表格）与 **`build_card_block()`**（Tab3：筛选卡＋学生卡）。
+
 ### 高频知识点与主讲备课建议（v4.9 新增）
 
 **「高频知识点」表已改为双源**：此前只统计聊天文本命中（`extract.top_topics`），
