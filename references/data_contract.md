@@ -4,7 +4,7 @@
 > 接口换了（现在 7 个拼凑 → 将来研发统一封装），只重写一个适配器文件，分析层零改动。
 >
 > **谁写谁读**：
-> `adapt_legacy.py`（现有链路）/ `adapt_api.py`（新接口，待建）→ 写 `<workdir>/snapshot/`
+> `adapt_legacy.py`（旧链路）/ `adapt_api.py`（**新接口链路，v4.11 已落地**）→ 写 `<workdir>/snapshot/`
 > `coverage.py` / `extract.py` / `report.py` → **只读** `snapshot/`，不碰原始产物。
 
 ---
@@ -65,25 +65,27 @@
 | `stuNameNorm` | str | 派生 | `common.norm_name()` | 归一化姓名，**join 主键** |
 | `stuSeq` | str | ✔ | `stuSeq` | 学号 |
 | `productName` | str | ✔ | `productName` | 完整课程名，含 `2026Q-SX-` 前缀 |
-| `productStudentId` | int | ✔ | `productStudentId` | 课程内学生 ID（出勤接口认它） |
-| `ProductId` | int | ✔ | `ProductId` | 课程 ID |
-| `coTeacherName` | str | ✔ | `coTeacherName` | 联席 |
-| `classTeacherName` | str | ✔ | `classTeacherName` | 教务 |
-| `teacherName` | str | ○ | `teacherName` | 主讲 |
+| `productStudentId` | int | ○ | 旧接口 `productStudentId` | 课程内学生 ID。**新接口不提供**；经核查**全流程无下游消费**（出勤按 `ProductId` 拉取），仅旧链路透传 |
+| `ProductId` | int | ✔ | 接口 `productId` | 课程 ID（出勤接口认它） |
+| `coTeacherName` | str | ✔ | 接口 `coTeacherName` | 联席 |
+| `classTeacherName` | str | ✔ | 接口 `classTeacherName` | 教务 |
+| `teacherName` | str | ○ | 旧接口 `teacherName` | 主讲。**新接口不提供**（无下游消费） |
 | `subjectName` | str | 派生 | `common.subject_of()` | 学科（数学/物理…） |
-| `buyType` | str | ○ | `cIncomeProductType` | 购课类型中文（直播/回放/试听/测试） |
-| `schoolName` | str | ○ | `schoolName` | 校区 |
-| **`roomId`** | str\|null | ○ | **待研发补** | 学生↔群映射；**为 null 是本轮最大缺口来源** |
-| `enrollStatus` | int | ○ | `productStatus`/`attendStatus` | 在册状态 |
+| `buyType` | str | ○ | 接口 `purchaseType` | 购课类型中文（**新接口直接给「直播/回放」**；旧接口给数字码 `cIncomeProductType`，适配器已反推对齐） |
+| `schoolName` | str | ○ | 旧接口 `schoolName` | 校区。新接口不提供（无下游消费） |
+| **`roomId`** | str\|null | ○ | **新接口 `roomId`** | 学生↔群映射。实测覆盖 **84%~86%**；为 null 者由 `coverage` 结合出勤判档 |
+| `roomIdSource` | str\|null | 派生 | — | `api`（接口直给）/ `fill_groupname`（群名匹配补全，见 §6.1）/ `null`（无群） |
+| `enrollStatus` | int | ○ | 派生 | 在册状态；新接口已按 `product_student_status=1` 过滤 → 名单内一律 `1` |
 
 ### 2.2 `groups[]` — 群标识
 
 | 字段 | 类型 | | 说明 |
 |---|---|---|---|
-| `roomId` | str | ✔ | 群 ID，全局唯一 |
-| `studentName` | str | ✔ | 群对应学生（来自群名或映射） |
+| `roomId` | str | ✔ | 群 ID，全局唯一（实测无重复） |
+| `studentName` | str | ✔ | 群对应学生（接口链路由 roster 派生，旧链路来自群名） |
 | `studentNameNorm` | str | 派生 | 归一化，join 主键 |
-| `groupName` | str | ✔ | 群名（**仅作展示，不用于判课程**） |
+| `groupName` | str | ○ | 群名。**新接口不提供**（置空串）；本字段**不参与任何判定**，报告一律用 `productName` |
+| `roomIdSource` | str | 派生 | `api` / `fill_groupname`（见 §6.1） |
 | `productName` | str | ○ | 后台课程名（v4.7 起一律取后台值，废弃群名解析） |
 | `coTeacherName` / `classTeacherName` / `ownerName` / `subjectName` | str | ○ | 归属字段 |
 
@@ -269,17 +271,62 @@ assert #coverage(失联+出勤但无沟通+单向沟通+低互动+正常) == #ro
 
 ---
 
-## 6. 接口映射
+## 6. 接口映射（v4.11 实况）
 
-| 契约字段 | 现有链路（`adapt_legacy.py`） | 新接口（`adapt_api.py`，待研发） |
+> 研发已按本契约封装前两步。**实际只做到「第 1 点」**：拿在读学生 + 购课类型 + 联席 / 教务 + roomId。
+> 第 2、3 点（聊天、出勤）**仍走旧接口**，第 4 点（小黑板）仍是本地素材 —— 与分析层无关。
+
+| 契约字段 | 旧链路（`adapt_legacy.py`） | 新链路（`adapt_api.py`） |
 |---|---|---|
-| `roster[]` | `cStudentFile/getCStudentFileList` | `POST /coReport/getRoster` |
-| `roster[].roomId` | ❌ 无 → 群名内姓名匹配 | `GET /coReport/studentRoomMap` |
-| `groups[]` | `wxworkSessionStat/getList`（**有损**：只收录有响应时效记录的群） | 同上 |
-| `groupActivity[]` | 由 `chats.json` 现算 | `GET /coReport/groupActivity` |
-| `chats{}` | `wxworkChat/getChatList`（分页拉满全量） | `GET /coReport/chatList`（+`speakerRole`/`isStudentSelf`） |
-| `attendance[]` | `cClassAttend/getCClassAttendList` | `POST /coReport/attendance` |
-| `boards[]` | 本地读图（`board_cache.py` 增量缓存） | 不变（本地素材） |
+| `roster[]` | `cStudentFile/getCStudentFileList`（全机构拉取后按角色筛） | ✅ **`GET /api/ai/getCourseStudents?productName=`**<br>✅ **`GET /api/ai/getCoTeacherStudents?coTeacherName=`** |
+| `roster[].roomId` | ❌ 无 → 群名内姓名匹配（**有损**） | ✅ 接口直给（`purchaseType` 同源） |
+| `groups[]` | `wxworkSessionStat/getList`（**有损**：只收录有响应时效记录的群） | 由 `roster` 的 `roomId` **派生**（不再依赖群列表） |
+| `groupActivity[]` | 由 `chats.json` 现算 | 同旧（用 roomId 拉全量消息后现算） |
+| `chats{}` | `wxworkChat/getChatList`（分页拉满全量） | **同旧**（按 `groups[].roomId` 逐群拉） |
+| `attendance[]` | `cClassAttend/getCClassAttendList`（按 `ProductId`） | **同旧** |
+| `boards[]` | 本地读图（`board_cache.py` 增量缓存） | 同旧（本地素材） |
+| **教务维度** | `cStudentFile` + `classTeacherName` 筛 | ⚠️ **暂无接口**（研发只做了课程 / 联席两个维度） |
+
+### 6.1 ⚠️ 新接口的一处**关联缺陷**（实测，已兜底）
+
+接口的 `roomId` 取自「学生课程关系 → 服务群」，**并非全覆盖，且会漏掉真实存在的群**。
+
+实测课程 `2026Q-SX-高二数学清北层日E邵`（56 人）：
+
+| 项 | 值 |
+|---|---|
+| 接口直给 roomId | 47 / 56 = 84% |
+| 旧链路群名匹配 | 37 / 58 = 64% |
+| **两者都有 roomId 的一致性** | **54 一致 / 0 冲突**（同 ID 体系，可信） |
+| 接口漏掉的真实群 | **黄五琦**（群名「黄五琦（W）-高二数学清北层**E邵**-26」，**缺「日」字**，108 条消息、后台课程名与本人一致） |
+
+> **成因**：群名与后台课程名不一致（缺字 / 写了别的层级）时，服务群关联不上 → `roomId` 返回空串。
+> **影响**：漏 1 个群 = 漏 1 个学生的全部沟通证据 → 会被误判成「出勤但无沟通」甚至「失联」。
+> **兜底**：`pull_roster.py --fill` 用群列表的「群名内姓名」补一次，**只补接口返回空值的学生**，
+> 补全项标 `roomIdSource: "fill_groupname"` 并进 `meta.degraded[]`，来源可追溯。
+> **建议**：向研发反馈该关联规则；短期建议始终带 `--fill` 跑。
+
+### 6.2 接口返回格式（实测）
+
+```json
+{"code": 0, "msg": "获取成功",
+ "data": {"total": 56, "list": [
+   {"productId": 5552,
+    "productName": "2026Q-SX-高二数学清北层日E邵",
+    "studentSeq": "2025021900004",
+    "studentName": "刘静怡",
+    "purchaseType": "直播",
+    "coTeacherName": "张巍",
+    "classTeacherName": "罗绂燕",
+    "roomId": "wrdyXFEQAAtXuveEx5zOOBjHW_C-mUtA"}]}}
+```
+
+- 鉴权：请求头 `X-Token`（**仅校验登录态，不校验 Casbin 权限**）。⚠️ 与旧接口的 `x-token` 大小写不同，`common.api()` 统一用小写、HTTP 头不区分大小写，实测两者都通。
+- **全量返回、不分页**；`code=0` 才是成功（HTTP 200 不代表业务成功）。
+- 筛选项（接口侧已完成，适配器**不再重复过滤**）：课程未删除、`is_classin_callback=2`、
+  在读 `product_student_status=1`、购课类型 `product_type=1/2`（不含试听）。
+- 相比旧花名册：课程视角 58 → **56 人**（剔除 2 名已不在读）；联席视角 81 → **81 人**，
+  仅 1 人轮换（旧有张奕鑫[已退课]，新有曾子瑜）→ **在读口径更准**。
 
 ---
 

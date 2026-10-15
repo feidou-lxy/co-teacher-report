@@ -525,7 +525,12 @@ def main():
         hw_neg = hits(all_txt, ["没写", "没做", "不会做", "漏交"])
         att_leave = hits(all_txt, ["请假", "回放", "没来", "缺课"])
         # 学生成绩（v4.4）：只匹配、不生成；认不出返回「未知」（见 common.extract_exam）
-        exam = common.extract_exam(triples, stu, subject=common.subject_of(g.get("groupName", "")))
+        # ⚠️ v4.11：学科优先取**后台课程名 productName**（含「数学」等学科词）—— 新接口链路
+        #    的 groups.json 不提供群名，只读 groupName 会得到空学科，进而让成绩满分推断
+        #    退化为 100 分制、算错得分率。groupName 仅作兜底。
+        _subj = (common.subject_of(g.get("productName") or "")
+                 or common.subject_of(g.get("groupName") or ""))
+        exam = common.extract_exam(triples, stu, subject=_subj)
         # 配合度：仅用实质消息判定；致谢最多计 4 分，避免「收到/谢谢」把配合度刷满
         student_coop = 0 if n_stu_sub == 0 else 1 + min(4, stu_self // 4)
         parent_coop = 0 if n_stu_sub == 0 else 1 + min(4, (parent + min(pos, 4)) // 2)

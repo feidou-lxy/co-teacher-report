@@ -1,7 +1,12 @@
 # 学生管理后台 API 契约（stadminv2.xqmsx.cn）
 
-本文件记录「联席学情报告」技能逆向得到的学生管理后台接口。所有接口域名前缀为
-`https://stadminv2.xqmsx.cn/api`，鉴权头为 `x-token: <JWT>`（来自登录后 Cookie 里的 token 字段）。
+本文件记录「联席学情报告」技能用到的学生管理后台接口。所有接口域名前缀为
+`https://stadminv2.xqmsx.cn/api`。
+
+- **推荐接口**（研发封装，v4.11）：`GET /ai/getCourseStudents` / `GET /ai/getCoTeacherStudents`
+  —— 见 §2，鉴权头 `X-Token`。
+- **逆向接口**（旧链路仍用）：鉴权头 `x-token`（来自登录后 Cookie 的 token 字段）。
+  两个头名大小写不同但 HTTP 头不区分大小写，实测都能通。
 
 > ⚠️ 安全提示：早期探测发现 `wxworkSessionStat/getList` 与 `wxworkChat/getChatList` 在未带
 > token 时仍可访问（越权风险）。脚本统一带 token 调用；如发现该风险，应反馈给平台方修复。
@@ -17,7 +22,67 @@
 
 ---
 
-## 2. 学生花名册
+## 2. 在读学生（研发封装 · v4.11 首选）★
+
+> **这是唯一由研发按需求封装的接口**，课程 / 联席两个维度已上线，**优先用它取花名册**。
+> 它一次返回「在读学生 + 购课类型 + 联席 + 教务 + **roomId**」，把旧链路最缺的
+> 「学生 ↔ 群映射」补齐了（旧链路只能用群名反查，且群列表接口本身有损）。
+> 旧接口（§3 `cStudentFile`）保留：**教务维度**与兜底仍需它。
+
+```
+GET /ai/getCourseStudents?productName=<课程名>          课程维度
+GET /ai/getCoTeacherStudents?coTeacherName=<联席姓名>     联席维度
+```
+
+- 鉴权：请求头 `X-Token: <登录Token>`（**仅校验登录态，不校验 Casbin API 权限**）。
+- 参数**精确匹配**：课程须带前缀全串（`2026Q-SX-高二数学清北层日E邵`），联席须与后台姓名完全一致。
+- 中文参数须 URL 编码（交给请求库的 `params` 处理）。
+- **筛选规则（接口侧已完成，调用方不要重复过滤）**：
+  - 课程：未删除 且 `is_classin_callback=2`；**不限制** `product_status`；同名课程全部返回（按 `productId` 区分）。
+  - 联席：课程满足 `product_status=1`（**进行中的课程**）、`is_classin_callback=2`、未删除；
+    按学生课程关系中的联席匹配姓名；同名联席数据全部返回。
+  - 共同：仅未删除、**在读 `product_student_status=1`** 的学生课程关系；购课类型限 `product_type=1/2`
+    （**直播 / 回放，不含试听**）；同一学生报读多门课会返回多条。
+- **全量返回、不分页**，按课程 ID + 学生课程关系 ID 升序；无数据时 `list=[]`、`total=0`。
+- `roomId` 选择规则：由学生课程关系关联服务群，仅取**已匹配且未解散**的群
+  （`biz_status=1`、`status=0`）；多个群取 `last_message_time` 最新，时间同则按群记录 ID 倒序；
+  均无时间也按 ID 倒序；**无匹配群返回空字符串**。
+
+返回格式：
+
+```json
+{"code": 0, "msg": "获取成功",
+ "data": {"total": 56, "list": [
+   {"productId": 5552,
+    "productName": "2026Q-SX-高二数学清北层日E邵",
+    "studentSeq": "2025021900004",
+    "studentName": "刘静怡",
+    "purchaseType": "直播",
+    "coTeacherName": "张巍",
+    "classTeacherName": "罗绂燕",
+    "roomId": "wrdyXFEQAAtXuveEx5zOOBjHW_C-mUtA"}]}}
+```
+
+- `code=0` 成功、`code=7` 失败（原因见 `msg`）。**HTTP 200 不代表业务成功，必须同时判 `code`**。
+- `purchaseType`：中文 `直播` / `回放`。⚠️ 与旧花名册的数字码 `cIncomeProductType` 不同，
+  适配器已反推对齐（直播=1、回放=2），下游无需改动。
+- `coTeacherName` / `classTeacherName`：无有效关联老师时为空串。
+- `roomId`：无群时为空串。**该字段并非全覆盖，且实测会漏掉真实存在的群** —— 详见 `data_contract.md` §6.1。
+
+实测（2026-10-15）：
+
+| 维度 | 输入 | 返回 | roomId 非空 |
+|---|---|---|---|
+| 课程 | `2026Q-SX-高二数学清北层日E邵` | 56 人（1 门课） | 47（84%） |
+| 联席 | `张巍` | 81 人（4 门课） | 68（84%） |
+
+⚠️ **教务维度（按 `classTeacherName`）尚无对应接口**，暂时只能走 §3 的旧花名册接口
+（全机构拉取后按 `classTeacherName` 过滤）。建议向研发补
+`GET /ai/getClassTeacherStudents?classTeacherName=<教务姓名>`（照抄联席维度即可）。
+
+---
+
+## 3. 学生花名册（旧接口 · 教务维度仍用）
 
 `POST /cStudentFile/getCStudentFileList`
 
@@ -37,11 +102,11 @@
 - `cIncomeProductType` **购课类型**（1=直播 2=回放 3=试听（插班）4=测试）——后台「我的学生」列表的「购课类型」列
 - `proBroadcastType` 课程播放类型（1=直播课 2=录播课）——对应「课程类型」列
 
-> 花名册与「我的学生」列表同源（一对一，一个学生一条记录）。购课类型/课程类型的**中文映射**见第 7 节字典接口。
+> 花名册与「我的学生」列表同源（一对一，一个学生一条记录）。购课类型/课程类型的**中文映射**见第 8 节字典接口。
 
 ---
 
-## 3. 群聊列表（含响应时效）
+## 4. 群聊列表（含响应时效）
 
 `GET /wxworkSessionStat/getList`
 
@@ -107,7 +172,7 @@
 
 ---
 
-## 4. 群聊消息
+## 5. 群聊消息
 
 `GET /wxworkChat/getChatList?roomId=<room>&page=N&pageSize=500`
 
@@ -121,7 +186,7 @@
 
 ---
 
-## 5. 逐节课出勤（后台权威）
+## 6. 逐节课出勤（后台权威）
 
 `GET /cClassAttend/getCClassAttendList?page=&pageSize=500&productId=<X>`
 
@@ -142,14 +207,14 @@
 
 ---
 
-## 6. 学生详情（可选，人工深读用）
+## 7. 学生详情（可选，人工深读用）
 
 `GET /cStudentFile/findProductStats?productStudentId=<X>` → `data.classStats[]`（与出勤表同源）、
 `data.comms[]`（沟通记录，实测多为空）、`data.parentNeedsList[]`。
 
 ---
 
-## 7. 数据字典（枚举中文映射）
+## 8. 数据字典（枚举中文映射）
 
 `GET /sysDictionary/findSysDictionary?type=<type>`
 → `data.resysDictionary.sysDictionaryDetails[]`，每项 `{ value, label }`。
