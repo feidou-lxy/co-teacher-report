@@ -24,3 +24,6 @@ _skilltest/
 Thumbs.db
 .vscode/
 .idea/
+
+# 本机读图缓存（含学生姓名，绝不入库 / 不分发）
+.cache/

@@ -102,6 +102,23 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 12. `read_boards.py` — 逐张读图做结构化分析（作答完整度 / 正确错误 / 问题定位）→ `board_analysis.json` → 聚合 `boards_summary.json`
     （未配置视觉模型时，先生成 `board_analysis_template.json` 待填清单，人工/代理回填后再跑本步聚合；详见「小黑板读图」小节）
 
+⭐ **v4.8 起请优先走 `board_cache.py`（读图缓存 · 增量读图）**：同一张图**只读一次**，跨课程 / 跨月份 / 跨会话复用 ——
+第二轮课通常只多出几十张新图，不必把上千张全部重读。三步替代原来的「全量读图」：
+
+```bash
+# ① 扫图 → 已读过的直接复用，只把「没读过的」分好批
+python <skill>/scripts/board_cache.py sync --boards "$HOME/Desktop/邵清北课上小黑板" \
+       --workdir <工作区> --batch-size 28 [--roster <工作区>/students.json]
+#    产出：<工作区>/board_analysis.json（缓存命中，直接可聚合）
+#          <工作区>/board_todo.json + board_batches/batch_N.json（**只有新图**，交给读图）
+# ② 读图（只读 todo 里的新图）→ result_N.json
+# ③ 读完把结果写回缓存（下次自动命中）
+python <skill>/scripts/board_cache.py merge <工作区>/board_batches/result_*.json
+```
+
+缓存位：`<skill>/.cache/board_reads.json`（**本地缓存，不进 git**）；键=图片绝对路径，校验位=文件大小+mtime，
+**图片被替换 / 重新导出会自动失效并重读**。查规模：`python <skill>/scripts/board_cache.py stats`。
+
 `--co` / `--edu` / `--course` 三选一为主维度，不可同用（课程视角可另加 `--co` 做课程内子筛选）。
 
 若需分步调试，可单独调用各脚本（均支持 `--workdir` / `--co` / `--edu` / `--window` 等参数，
@@ -304,6 +321,14 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
     **聊天记录 ＋ 每次课每一轮的小黑板读图结果一起归纳**出来的，只读一轮 / 一次课会直接把结论做偏（曾只读了
     3 张 / 63 张，导致 8 次课 29 轮被压成 1 次课 1 轮）。图中若**同时有印刷题目与手写作答**，只依据手写部分判断；
     **带红笔痕迹的是联席批改痕迹，不要当成学生作答**；只有空白题目 / 问卷、没有学生笔迹 → 记 `空白未提交`。
+  - ⭐ **读图缓存（v4.8 新增 · 增量读图，强烈建议默认走这条）**：读图是全流程最贵的一步，**同一张图不该读第二次**。
+    `board_cache.py sync` 先按「**图片绝对路径 + 文件大小 + mtime**」查 `<skill>/.cache/board_reads.json`：
+    - **命中** → 直接复用历史结论写进 `<工作区>/board_analysis.json`（零成本，不再调用读图）；
+    - **未命中** → 写进 `board_todo.json` 并按 `--batch-size` 自动切成 `board_batches/batch_N.json`，**只需要读这些新图**；
+    - 读完执行 `board_cache.py merge <result_*.json>` 把结论**写回缓存**，下一轮自动命中。
+    - 缓存是**只增不改**的本地文件（`.cache/` 已在 `.gitignore`，含学生姓名，**不要入库、不要分发**）；图片被替换（size/mtime 变）会自动失效重读。
+    - 典型收益：某课程本轮 1363 张图，其中 658 张已读 → 复用后**只需读 705 张**；第二轮课若只多上一次课，通常只读几十张。
+    - ⚠️ **缓存只解决「读图」成本，不改变「必须全量」的原则**：新图仍要全量读（每次课 × 每一轮都不能漏）。
   - **图片多时先分批**：按「学生 × 课次」切成若干批，每批写一个 `batch_N.json`（含 `student/round/lesson/lesson_date/path`），
     并行读图后各自产出 `result_N.json`，再合并成 `board_analysis.json` —— 比单线程逐张读快得多，且每批都能自检
     「条数 = 输入条数、`path` 一一对应」。

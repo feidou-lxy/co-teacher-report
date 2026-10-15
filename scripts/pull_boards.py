@@ -31,18 +31,11 @@ import common
 PAT = re.compile(r"^(\d+)_(?:[（(]?([WZ])[）)]?\s*-)?(.+?)(\d*)\.png$", re.I)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--workdir", default=".")
-    ap.add_argument("--boards", required=True, help="小黑板图片根目录（从桌面拖入其绝对路径）")
-    ap.add_argument("--course", default=None)
-    ap.add_argument("--co", default=None)
-    args = ap.parse_args()
+def scan(root):
+    """扫描小黑板根目录 → ({归一化姓名: [rec, ...]}, 图片总数)。
 
-    root = os.path.expanduser(args.boards)
-    if not os.path.isdir(root):
-        sys.exit(f"未找到小黑板目录：{root}（请确认路径，必要时用绝对路径）")
-
+    抽成独立函数，便于 board_cache.py 复用（增量读图）。
+    """
     boards = {}
     n_img = 0
     for dirpath, _dirs, files in os.walk(root):
@@ -77,6 +70,22 @@ def main():
 
     for k in boards:
         boards[k].sort(key=lambda r: r["round"])
+    return boards, n_img
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--workdir", default=".")
+    ap.add_argument("--boards", required=True, help="小黑板图片根目录（从桌面拖入其绝对路径）")
+    ap.add_argument("--course", default=None)
+    ap.add_argument("--co", default=None)
+    args = ap.parse_args()
+
+    root = os.path.expanduser(args.boards)
+    if not os.path.isdir(root):
+        sys.exit(f"未找到小黑板目录：{root}（请确认路径，必要时用绝对路径）")
+
+    boards, n_img = scan(root)
 
     out = os.path.join(args.workdir, "boards.json")
     json.dump(boards, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

@@ -88,12 +88,16 @@ def main():
     wd = common.workdir(args)
     token = common.load_token(wd)
 
-    # 月维度：窗口起始月第一天
+    # 月维度：窗口起始月第一天（过去月已聚合，覆盖完整）
     month_first = f"{args.month}-01"
     rows = pull_dimension(token, "month", month_first, args.year, args.term)
-    # 日维度：补当前月（当天）
-    today = datetime.date.today().isoformat()
-    rows += pull_dimension(token, "day", today, args.year, args.term)
+    # 当前月「月维度」后台尚未聚合（返回 0）：改为**逐日**补当月 1 号 ~ 今天，
+    # 否则会把当月 1~(今天-1) 号有活动、但今天无活动的群漏掉（实测一门课因此少 8 个群）。
+    today = datetime.date.today()
+    for d in range(1, today.day + 1):
+        rows += pull_dimension(token, "day",
+                               f"{today.year}-{today.month:02d}-{d:02d}",
+                               args.year, args.term)
 
     # 按 roomId 去重（co/edu/课程 三视角共用机构级群列表）
     by_room = {}
