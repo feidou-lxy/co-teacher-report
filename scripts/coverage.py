@@ -136,6 +136,7 @@ def main():
 
         # 沟通轴（近 chat-days 天）
         sub_recent, msg_recent, last_ts = 0, 0, None
+        n_tea_recent = 0          # 近窗老师发言数（预警卡「单向沟通」要摊开写）
         if room and room in chats:
             group_state = "found"
             for m in chats[room].get("messages") or []:
@@ -144,7 +145,9 @@ def main():
                     continue
                 msg_recent += 1
                 last_ts = m.get("ts")
-                if m.get("role") == 2 and not is_ack(m.get("text")):
+                if m.get("role") == 1:
+                    n_tea_recent += 1
+                elif m.get("role") == 2 and not is_ack(m.get("text")):
                     sub_recent += 1
             chat_state = "has" if msg_recent else "empty"
         elif room:
@@ -158,6 +161,7 @@ def main():
             att_state = "n/a"
             att_txt = "出勤接口无记录"
             learn = False
+            n_att, n_les = 0, 0
         else:
             n_att = att.get("attendCount") or 0
             n_les = att.get("lessonCount") or 0
@@ -168,6 +172,10 @@ def main():
         brows = board_by_norm.get(norm) or []
         board_state, board_txt, board_ok = _board_state(brows, bool(boards))
         learn = learn or board_ok
+        # v4.12：给预警卡留「数字」而非只留文案（判定逻辑一行未改，仅把已算出的量存下来）
+        _bvalid = [r for r in brows if (r.get("status") or "").strip() not in BOARD_BLANK]
+        board_n, board_all = len(_bvalid), len(brows)
+        board_rounds = len({r.get("round") for r in brows if r.get("round")})
 
         # ---------- 分档 ----------
         if chat_state in ("empty", "n/a"):
@@ -195,6 +203,9 @@ def main():
             "stuName": stu.get("stuName"),
             "stuNameNorm": norm,
             "roomId": room,
+            # v4.12：联席 / 教务归属（来自花名册），供预警卡按维度归属与「谁的学生」标注
+            "coTeacherName": stu.get("coTeacherName"),
+            "classTeacherName": stu.get("classTeacherName"),
             "group": group_state,
             "chat": chat_state,
             "attendance": att_state,
@@ -202,6 +213,11 @@ def main():
             "tier": tier,
             "cause": cause,
             "evidence": " ｜ ".join(ev),
+            # ---- v4.12 结构化量（预警卡直接消费；不影响任何分档判定）----
+            "msgRecent": msg_recent, "subRecent": sub_recent, "msgTeacher": n_tea_recent,
+            "lastMsg": last_ts,
+            "nAtt": n_att, "nLes": n_les,
+            "boardN": board_n, "boardAll": board_all, "boardRounds": board_rounds,
         }
         counts[tier] += 1
 

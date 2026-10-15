@@ -79,6 +79,9 @@ def main():
     ap.add_argument("--boards", required=True, help="小黑板图片根目录（从桌面拖入其绝对路径）")
     ap.add_argument("--course", default=None)
     ap.add_argument("--co", default=None)
+    # v4.12：本步骤是纯本地扫图，与视角无关（course/co/edu 都接受、都不做过滤），
+    # 但为保持与 run_all.py / 其它取数脚本「同一套 scope 参数」的一致，补上 --edu。
+    ap.add_argument("--edu", default=None)
     args = ap.parse_args()
 
     root = os.path.expanduser(args.boards)

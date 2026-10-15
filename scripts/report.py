@@ -574,6 +574,100 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     </div>"""
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# v4.12：预警卡 —— 把「无学生卡」的在册学生（失联 / 出勤但无沟通）摊开写清
+# ══════════════════════════════════════════════════════════════════════════
+# 依据 v4.8 结构方案 §4.4：预警卡**不是空卡**，而是把「哪一轴缺、哪一轴正常」
+# 摊开写清楚，并给出具体动作；每条证据都可回后台 / 回文件夹逐字核对。
+#
+# 🔒 防伪铁律（用户强要求，也是过去最容易出的伪结论）：
+#    学习轴一旦有证据（出勤 / 小黑板作答）→ **只写「企微沟通通道失效」**，
+#    绝不写「学生流失」。实测本课 6 名「出勤但无沟通」学生全部正常上课
+#    （刘庭岩出勤 5/5、小黑板作答 21/29 张），若写「流失」就是完全错误的结论。
+WARN_TIER_CLS = {"失联": "t1", "出勤但无沟通": "t2"}
+
+
+def _warn_comm_axis(v, chat_days):
+    """沟通轴一句话：群在不在、有没有人说话（可回后台逐条核对）。"""
+    group, msg = v.get("group"), v.get("msgRecent") or 0
+    if group == "missing":
+        return "企微服务群<b>未采集到</b>（接口未返回该生 roomId，群列表里也没有对应群）"
+    if msg == 0:
+        return f"企微服务群已建，但近 {chat_days} 天<b>群内 0 条消息</b>（联席 · 教务 · 学生家长均未发言）"
+    return (f"近 {chat_days} 天 {msg} 条消息（老师 {v.get('msgTeacher') or 0} 条 · "
+            f"学生·家长实质发言 {v.get('subRecent') or 0} 条）")
+
+
+def _warn_learn_axis(v):
+    """学习轴一句话：出勤 ＋ 小黑板。返回 (出勤文案, 小黑板文案, 是否有学习证据)。"""
+    n_att, n_les = v.get("nAtt") or 0, v.get("nLes") or 0
+    bn, ball, br = v.get("boardN") or 0, v.get("boardAll") or 0, v.get("boardRounds") or 0
+    att_txt = f"出勤 <b>{n_att}/{n_les}</b>" if n_les else "出勤接口无记录"
+    if bn > 0:
+        return att_txt, f"课堂小黑板作答 <b>{bn}/{ball} 张</b>（{br} 轮）", True
+    if ball > 0:                      # 有图但全是「空白未提交」→ 人到了没写，不作学习证据
+        return att_txt, f"课堂小黑板 {ball} 张<b>均为空白未提交</b>", n_att > 0
+    return att_txt, "小黑板无记录", n_att > 0
+
+
+def warn_card_html(v, chat_days=14, show_co_tag=False):
+    """单张预警卡（左红边）—— 只渲染「未进入学生学情分析」的在册学生。"""
+    tier = v.get("tier") or "失联"
+    stu = v.get("stuName") or "—"
+    course = v.get("_course") or common.course_name(v.get("productName"), "")
+    bn = v.get("boardN") or 0
+    has_ev = _warn_learn_axis(v)[2]
+    comm_txt = _warn_comm_axis(v, chat_days)
+    att_txt, board_txt, _ = _warn_learn_axis(v)
+
+    # ---- 结论（防伪核心）----
+    if tier == "出勤但无沟通":
+        concl = ("企业微信沟通通道失效：学生<b>在正常上课</b>（有出勤记录），"
+                 "但企微侧完全没有触达 —— 缺的是通道，不是学生。")
+        if bn > 0:
+            concl += f" 课堂小黑板有 <b>{bn} 张有效作答</b>，据此可确认<b>并非流失</b>。"
+        act = ("① 教务<b>当日电话触达家长</b>：先说明孩子的课堂表现（有出勤 / 有作答），"
+               "再确认服务群是漏建还是拉错；② 建群 / 纠正群后，联席在群内做一次"
+               "<b>点名课堂反馈</b>，把通道真正用起来；③ 下次课前确认家长已进群、能收到消息。")
+    elif has_ev:
+        concl = ("企业微信沟通通道失效：学习侧有实证（学生在正常上课），"
+                 "但群内零沟通、家长也未触达 —— <b>并非学生流失</b>。")
+        act = ("① 教务<b>当日电话触达家长</b>，同步孩子课堂表现（说明课堂参与正常）；"
+               "② 联席在群内做一次点名反馈，把群用起来；③ 下次课前确认家长已进群。")
+    else:
+        concl = ("无沟通<b>且</b>无学习痕迹：既无企微群消息，也无出勤 / 小黑板记录 —— "
+                 "属<b>最需人工介入</b>的一档，先核实就读状态再定性。")
+        act = ("① 教务<b>先核实就读状态</b>（是否已退课 / 跨班 / 从未建群）；"
+               "② 若仍在读 → 立即建群并电话触达；③ 若已退课 → 从在册名单与预警中移除。")
+
+    side_badge = ('<span class="lvbadge sm green">学习侧正常</span>' if has_ev
+                  else '<span class="lvbadge sm red">学习侧无痕迹</span>')
+    co_tag = (f'<span class="ctag">联席：{v.get("coTeacherName")}</span>'
+              if (show_co_tag and v.get("coTeacherName")) else "")
+    src = ("在册花名册 ✓ ｜ 群列表 " + ("✓" if v.get("group") == "found" else "✗ 未采集到")
+           + " ｜ 聊天 " + ("✓" if v.get("chat") == "has" else "✗ 无记录")
+           + " ｜ 小黑板 " + (f"✓ {bn} 张" if bn
+                              else ("△ 有图但均空白未提交" if (v.get("boardAll") or 0) else "✗ 无记录")))
+    return f'''
+    <div class="card warncard" data-name="{stu}" data-warn="1" data-slow="0" data-unres="0"
+         data-inter="0" data-urge="0" data-fix="0" data-absent="0" data-recent3="0"
+         data-tier="{tier}">
+      <div class="chead">
+        <div class="cname">{stu}<span class="wtag {WARN_TIER_CLS.get(tier, 't1')}">{tier}</span></div>
+        <div class="cgroup">{course}{co_tag}</div>
+        <div class="cstatus">{side_badge}</div>
+      </div>
+      <div class="warnrow"><span class="warnk">沟通轴</span><span class="warnv">{comm_txt}</span></div>
+      <div class="warnrow"><span class="warnk">学习轴</span><span class="warnv">{att_txt} ｜ {board_txt}
+        {f'→ <b>学生在正常上课</b>' if has_ev else '→ 无学习侧证据'}</span></div>
+      <div class="warnconcl">🚩 <b>结论</b>：{concl}</div>
+      <div class="warnact">✅ <b>建议动作</b>：{act}</div>
+      <div class="warnsrc">📎 数据来源：{src}</div>
+      <div class="warnnote">本卡对象＝<b>在册但未进入学生学情分析</b>的学生（无任何聊天记录，故没有常规学生卡）。
+        判定口径与分档说明见「🚨 失联预警」Tab。</div>
+    </div>'''
+
+
 CSS = """
 *{box-sizing:border-box}
 body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f6f8;color:#1f2329;margin:0;padding:24px}
@@ -852,6 +946,21 @@ details.meth[open]>summary:before{content:"▾ "}
 .tadv-ev .in{padding:8px 13px;max-height:420px;overflow:auto}
 .tadv-ev .fevi{color:#a09a8c;font-size:11.5px}
 .tadv-note{padding:7px 13px;font-size:11px;color:#a09a8c;background:#fffcf5;line-height:1.75;border-top:1px dashed #ffe0b2}
+/* v4.12：预警卡（v4.8 §4.4 落地）—— 无学生卡的在册学生，「哪一轴缺、哪一轴正常」摊开写 */
+.warnzone{margin:0 0 14px;border:1px solid #f6cfcf;border-radius:10px;padding:12px 14px;background:#fffafa}
+.warnzone-h{font-size:13.5px;font-weight:700;color:#cf1322;margin:0 0 10px;line-height:1.6}
+.warnzone-h .warnzone-s{font-size:11.5px;font-weight:400;color:#8a9099;margin-left:6px}
+.card.warncard{border-left:4px solid #e54545;background:#fffafa;margin-bottom:12px}
+.wtag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:8px;margin-left:6px;color:#fff;vertical-align:1px}
+.wtag.t1{background:#e54545}
+.wtag.t2{background:#ff8f1f}
+.warnrow{display:flex;gap:10px;font-size:13px;line-height:1.7;margin:5px 0;align-items:flex-start}
+.warnk{flex:0 0 62px;color:#8a9099;font-weight:600}
+.warnv{flex:1}
+.warnconcl{font-size:13px;line-height:1.75;background:#fdecec;border-radius:6px;padding:7px 11px;margin:8px 0}
+.warnact{font-size:13px;line-height:1.75;background:#fff7e6;border-radius:6px;padding:7px 11px;margin:0 0 8px}
+.warnsrc{font-size:11.5px;color:#8a9099;line-height:1.6}
+.warnnote{font-size:11px;color:#a0a6ae;margin-top:6px;line-height:1.6}
 """
 
 
@@ -1296,14 +1405,18 @@ def build_topic_block(sec_id, crows, title, is_all, boards_map=None):
 
 
 def build_card_block(sec_id, crows, title, show_filter, co_opts, is_all,
-                     edu=False, show_co_tag=False, boards_map=None):
-    """Tab3 的一个分组：KPI 筛选卡 ＋ 逐学生卡片。
+                     edu=False, show_co_tag=False, boards_map=None,
+                     warn_items=None, chat_days=14):
+    """Tab3 的一个分组：KPI 筛选卡 ＋ 预警卡 ＋ 逐学生卡片。
 
     show_filter=True 时渲染「筛选联席」下拉（教务·按课程维度 / 课程维度用）。
     edu=True（教务视角）：学生卡第④块为「教务 To-Do」；否则为「联席跟进 Action」。
     show_co_tag=True（课程维度）：学生卡标注所属联席，便于一门课跨多个联席时区分归属。
+    warn_items（v4.12）：该分组下「在册但无任何聊天记录」的学生（失联 / 出勤但无沟通），
+        渲染为左红边**预警卡** —— 他们进不了常规学生卡（没有聊天数据），却是最该被看见的一批人。
     """
-    if not crows:
+    warn_items = warn_items or []
+    if not crows and not warn_items:
         return ""
     c_slow = sum(1 for r in crows if r["s"].get("resp_slow"))
     c_unres = sum(1 for r in crows if r["s"]["unresolved"])
@@ -1312,6 +1425,17 @@ def build_card_block(sec_id, crows, title, show_filter, co_opts, is_all,
     cards = "".join(card_html(r, edu=edu, show_co_tag=show_co_tag,
                               board=(boards_map or {}).get(common.norm_name(r["stu"]))) for r in crows)
     todo_head = "教务 To-Do" if edu else "联席 To-Do"
+
+    # v4.12：预警卡区（无常规学生卡的在册学生）—— 排在普通学生卡之前（最紧急先看）
+    warns = "".join(warn_card_html(v, chat_days=chat_days, show_co_tag=show_co_tag)
+                    for v in warn_items)
+    warnzone = ""
+    if warns:
+        warnzone = (f'<div class="warnzone"><div class="warnzone-h">'
+                    f'⚠️ 未进入学情分析的在册学生 · 预警卡（{len(warn_items)} 人）'
+                    f'<span class="warnzone-s">这些学生没有任何聊天记录，故无常规学生卡；'
+                    f'本区把「哪一轴缺、哪一轴正常」摊开写清，并给出可直接执行的动作</span></div>'
+                    f'{warns}</div>')
 
     # v4.3：KPI 小卡 = 可点击筛选入口（点一下只留这一类学生，再点恢复全部）。
     # 「可分析消息」已按用户要求下线（它对跟进动作没有指导意义，且与卡片内的「可分析 N 条」重复）。
@@ -1331,17 +1455,23 @@ def build_card_block(sec_id, crows, title, show_filter, co_opts, is_all,
         kpi_extra = (ktile(c_weak_inter, "互动不足", "inter", "orange", "互动状态判定为「不积极 / 沉默」")
                      + ktile(c_urge_fail, "催交未交", "urge", "orange", "老师在群里催交过、其后未见学生「已交」回应")
                      + ktile(c_fix_fail, "批改未改", "fix", "orange", "老师要求订正过、其后未见学生「已改」回应"))
+    # v4.12：预警入口 —— 只筛出预警卡（这类学生没有常规学生卡，用独立 KPI 才能一键定位）
+    warn_tile = (ktile(len(warn_items), "未触达预警", "warn", "red",
+                       "无任何聊天记录的在册学生（失联 / 出勤但无沟通），以预警卡呈现")
+                 if warn_items else "")
     disp = 'style="display:block"' if is_all else 'style="display:none"'
     return f'''
 <div class="grp" id="{sec_id}" {disp}>
   {cofilter}
   <div class="ckpis">
-    {ktile(len(crows), "学生数", "__all__", "", "点击恢复显示全部学生")}
+    {ktile(len(crows), "学生数", "__all__", "", "点击恢复显示全部学生（含预警卡）")}
+    {warn_tile}
     {ktile(c_slow, "响应迟缓群", "slow", "red", "学生提问后 ≥24 小时才见老师回复")}
     {ktile(c_unres, "未解疑问群", "unres", "orange", "会话尾部仍有未获回应的提问")}
     {kpi_extra}
   </div>
   <div class="kpihint">💡 点击上方任一统计卡，可只看这一类学生；再次点击（或点「学生数」）恢复全部。<span class="kpicnt" id="kpiCnt-{sec_id}"></span></div>
+  {warnzone}
   <div class="section"><h3>逐学生表现 &amp; {todo_head}（需关注置顶）</h3>{cards}</div>
 </div>'''
 
@@ -1423,6 +1553,24 @@ def main():
                          co=co, att=s.get("att")))
     rows.sort(key=lambda x: (-x["score"][0], -x["score"][1], -x["score"][2]))
 
+    # ---------- v4.12：预警卡对象 ----------
+    # 常规学生卡来自 analysis_merged（**只有有聊天记录的学生**才在里面），
+    # 因此「在册但一条聊天记录都没有」的学生（失联 / 出勤但无沟通）在 Tab③ 里是**完全缺席**的 ——
+    # 而他们恰恰是最该被看见的一批人。这里把他们从 coverage 里捞出来，渲染为左红边预警卡。
+    _body_norms = {common.norm_name(k) for k in A}
+    warn_all = []
+    for _v in (cov or {}).values():
+        _nm = _v.get("stuNameNorm") or common.norm_name(_v.get("stuName") or "")
+        if _nm and _nm not in _body_norms:
+            _c, _craw = course_of("", _v.get("productName"))
+            warn_all.append(dict(_v, _course=_c, _course_raw=_craw))
+    warn_all.sort(key=lambda v: ({"失联": 0, "出勤但无沟通": 1}.get(v.get("tier"), 9),
+                                 v.get("_course") or "", v.get("stuName") or ""))
+    warn_by_course, warn_by_co = {}, {}
+    for _v in warn_all:
+        warn_by_course.setdefault(_v.get("_course"), []).append(_v)
+        warn_by_co.setdefault(_v.get("coTeacherName") or "未分配联席", []).append(_v)
+
     # 动态学科：从纳入的群中提取（角色只带某科时即显示该科，避免写死「高二数学」）
     _subj = []
     for r in rows:
@@ -1460,18 +1608,28 @@ def main():
         # v4.10：Tab2（数据明细）与 Tab3（学生卡）**各生成一套分组** —— 两个 Tab 各有独立的
         # 分组 Tab 与外层维度切换，互不干扰（id 前缀：Tab2 = t-c / t-co，Tab3 = c / co）。
         t2_c = [build_topic_block("c-all", rows, "全部课程", True, boards_map=boards_map)]
-        t3_c = [build_card_block("c-all", rows, "全部课程", True, co_all, True, True, boards_map=boards_map)]
+        t3_c = [build_card_block("c-all", rows, "全部课程", True, co_all, True, True,
+                                 boards_map=boards_map, warn_items=warn_all,
+                                 chat_days=args.chat_days)]
         for ci, ck in enumerate(course_order):
             cr = by_course[ck]
             t2_c.append(build_topic_block(f"c-{ci}", cr, ck, False, boards_map=boards_map))
             t3_c.append(build_card_block(f"c-{ci}", cr, ck, True,
-                                         Counter(r["co"] for r in cr), False, True, boards_map=boards_map))
+                                         Counter(r["co"] for r in cr), False, True,
+                                         boards_map=boards_map,
+                                         warn_items=warn_by_course.get(ck, []),
+                                         chat_days=args.chat_days))
         t2_co = [build_topic_block("co-all", rows, "全部联席", True, boards_map=boards_map)]
-        t3_co = [build_card_block("co-all", rows, "全部联席", False, None, True, True, boards_map=boards_map)]
+        t3_co = [build_card_block("co-all", rows, "全部联席", False, None, True, True,
+                                  boards_map=boards_map, warn_items=warn_all,
+                                  chat_days=args.chat_days)]
         for ci, ck in enumerate(co_order):
             cr = by_co[ck]
             t2_co.append(build_topic_block(f"co-{ci}", cr, ck, False, boards_map=boards_map))
-            t3_co.append(build_card_block(f"co-{ci}", cr, ck, False, None, False, True, boards_map=boards_map))
+            t3_co.append(build_card_block(f"co-{ci}", cr, ck, False, None, False, True,
+                                          boards_map=boards_map,
+                                          warn_items=warn_by_co.get(ck, []),
+                                          chat_days=args.chat_days))
 
         _cg = [(ck, len(by_course[ck]), sum(1 for r in by_course[ck] if r["slow"])) for ck in course_order]
         _og = [(ck, len(by_co[ck]), sum(1 for r in by_co[ck] if r["slow"])) for ck in co_order]
@@ -1502,19 +1660,25 @@ def main():
   {build_topic_block("c-all", rows, name, True, boards_map=boards_map)}
 </div>'''
         card_panels = f'''<div class="dim-panel" id="t3-course">
-  {build_card_block("c-all", rows, name, True, co_all, True, False, show_co_tag=True, boards_map=boards_map)}
+  {build_card_block("c-all", rows, name, True, co_all, True, False, show_co_tag=True,
+                    boards_map=boards_map, warn_items=warn_all, chat_days=args.chat_days)}
 </div>'''
         # 注：课程维度说明同上，不再单独渲染。
     else:
         # ===== 联席视角（仅按课程） =====
         course_order = [k for k, _ in Counter(r["course"] for r in rows).most_common()]
         t2 = [build_topic_block("c-all", rows, "全部课程", True, boards_map=boards_map)]
-        t3 = [build_card_block("c-all", rows, "全部课程", False, None, True, False, boards_map=boards_map)]
+        t3 = [build_card_block("c-all", rows, "全部课程", False, None, True, False,
+                               boards_map=boards_map, warn_items=warn_all,
+                               chat_days=args.chat_days)]
         _cg = []
         for ci, ck in enumerate(course_order):
             cr = [r for r in rows if r["course"] == ck]
             t2.append(build_topic_block(f"c-{ci}", cr, ck, False, boards_map=boards_map))
-            t3.append(build_card_block(f"c-{ci}", cr, ck, False, None, False, False, boards_map=boards_map))
+            t3.append(build_card_block(f"c-{ci}", cr, ck, False, None, False, False,
+                                       boards_map=boards_map,
+                                       warn_items=warn_by_course.get(ck, []),
+                                       chat_days=args.chat_days))
             _cg.append((ck, len(cr), sum(1 for r in cr if r["slow"])))
         topic_panels = f'''<div class="dim-panel" id="t2-course">
   <div class="tabs">{_tabs_html('t2-course', 't-c', len(rows), _cg)}</div>
@@ -1596,6 +1760,7 @@ def main():
 • <b>近 3 天待回应（v3.9 新增 · v4.0 改为顶部折叠入口）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。全量结果<b>汇总在报告顶部的「🚨 近 3 天待回应 N 项」入口条</b>（给管理者 / 教务的统一视图，<b>默认收起，点击展开</b>明细表：学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时入口条显示绿色「检查通过」。<br>
 • <b>主讲备课建议（v4.9 新增 · v4.10.1 收敛为单表）</b>：回答「主讲下节课该重点讲什么／什么题型」，按<b>覆盖学生数降序</b>排列（普遍性优先），同覆盖时<b>有小黑板实证错误的优先</b>（小黑板是学生真实作答，比「群里提过」硬）；每条给出「典型题型／卡点」，点开可看原文出处，直接用于备课选题。<b>本表即为双源呈现</b> —— 此前「高频知识点」表只统计聊天命中（<code>extract.top_topics</code>），小黑板的实证错误完全没进；现并列展示「群聊提及」（聊天中命中该知识点的学生数）与「小黑板实证」（读图判定该知识点<b>有错误／卡点</b>的学生数），「覆盖学生」为两源并集。⚠️ <b>v4.10.1 删除了原先并列的「高频知识点 · 数据明细」表</b> —— 它的列（知识点／群聊提及／小黑板实证／合计涉及／占比）与建议表完全重合（用户指出「这两部分重复了，保留上面的即可」），故建议表改为<b>显示全部知识点</b>，长尾（数列、解三角形等）不再截断。③ ⚠️ <b>题型证据分硬／软</b>：标「实证错误 N」= 读图判「有错」或存在<b>非「没写完」</b>类实质错误（真的不会）；标「仅未完成／卡点」= 只是没写完（课堂节奏／书写速度，非能力）—— 与 v4.4 学习分层口径一致，不混为一谈。<b>读图模型对同一件事有「未完成收尾」与「收尾未完成」两种词序，后者才是真实语料主流写法（实测 176 条错误标注中占 94 条），故判定统一用包含式匹配（<code>common.is_finish_err</code>），精确匹配会静默漏掉最常见的写法。</b>④ 反编造：题型名只能来自 <code>FINE_TYPES</code> 词表命中或字段原文（形如「课堂作答卡点：…」），无证据时如实说明、留空，<b>绝不硬凑题型名</b>；不预测考情、不生成内容。<br>
 • <b>总人数覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）</b>：报告主体的学生卡<b>只覆盖「有聊天记录」的学生</b>，而总人数名单往往明显更大 —— 差额恰恰是最需要预警的一批人，本区块专门收口。判定用<b>两轴</b>：① 沟通轴（聊天，取近 {args.chat_days} 天）② 学习轴（出勤，取报告窗口全窗口）。分档：<b>失联</b>＝无聊天记录且无出勤记录；<b>出勤但无沟通</b>＝无聊天记录但有出勤记录（学生在正常上课，缺的是企业微信沟通通道）；<b>单向沟通</b>＝有聊天记录但学生·家长实质发言为 0（仅老师输出）；<b>低互动</b>＝学生·家长实质发言 1~2 条。⚠️ <b>判定「失联」一律以出勤为准，不以群是否存在为准</b> —— 群列表接口 <code>wxworkSessionStat/getList</code> 只收录有响应时效记录的群，实测有损（教务视角名单 243 人、群仅 144，缺口分散在全部 7 门课，其中 93 人仍在正常出勤），若拿群判失联会一次性误报约四成学生。群「采到与否」仅作根因标签展示。两轴窗口必须分开：出勤本稀疏，若也只看近两周，会把已结课学生全部误判为「无出勤」→ 误报失联。<br>
+• <b>预警卡（v4.12 落地 · Tab③ 学生学情）</b>：常规学生卡来自「有聊天记录」的学生，<b>在册、却一条聊天记录都没有的学生在 Tab③ 原本完全缺席</b>。v4.12 把这批人（失联 / 出勤但无沟通）从覆盖率快照 <code>coverage.json</code> 里捞出来，以<b>左侧红边预警卡</b>呈现：把<b>沟通轴</b>（群在不在、有没有人说话）与<b>学习轴</b>（出勤 ＋ 小黑板作答）两句话摊开写清，给出<b>结论</b>与<b>可直接执行的动作</b>，并逐项标注<b>数据来源</b>（在册花名册 / 群列表 / 聊天 / 小黑板 各自 ✓ 或 ✗），便于回后台、回文件夹逐字核对。🔒 <b>防伪铁律</b>：学习轴一旦有证据（有出勤，或有小黑板作答）→ 结论只写「<b>企业微信沟通通道失效</b>」，<b>绝不写「学生流失」</b>（实测本课「出勤但无沟通」学生全部正常上课，如刘庭岩出勤 5/5、小黑板作答 21/29 张）；只有「既无沟通、也无出勤与小黑板」才写「无学习痕迹 · 需人工核实就读状态」。每组 KPI 另加一枚「<b>未触达预警</b>」入口，一键筛出这批学生的卡片。<br>
 </p></details>
 </div>
 <script>
