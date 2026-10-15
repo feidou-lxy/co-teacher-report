@@ -791,6 +791,10 @@ details.meth[open]>summary:before{content:"▾ "}
 .covbar{font-size:13px;color:#4b5563;background:#f7f9fc;border:1px solid #e6eaf2;border-radius:8px;padding:10px 13px;margin-bottom:12px;line-height:1.8}
 .covbar b{color:#1f2329}
 .covbar .hl{color:#cf1322;font-weight:700}
+/* v4.10.2：覆盖概览与判定口径默认折叠（只是换个默认可见性，内容不动） */
+.covhead{margin:0 0 12px}
+.covhead>summary{background:#f7f9fc;border:1px solid #e6eaf2}
+.covhead .covbar{border:none;background:transparent;padding:0;margin:0}
 .covtab{width:100%;border-collapse:collapse;font-size:13px}
 .covtab th,.covtab td{border-bottom:1px solid #eef0f3;padding:7px 9px;text-align:left;vertical-align:top}
 .covtab th{background:#fafbfc;color:#6b7280;font-weight:600;font-size:12px}
@@ -944,10 +948,15 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
         head += (f'<br>学生卡另详析 <b>{analyzed_n}</b> 人（按报告窗口统计）；'
                  f'其中 <b>{analyzed_n - recent_n}</b> 人窗口内有互动、但近 {chat_days} 天已沉默，'
                  f'同样计入上面的「无沟通」，属<b>需重新触达</b>对象。')
-    bar = f'<div class="covbar">{head}<br>' \
-          f'口径：沟通轴取近 {chat_days} 天，「无聊天记录」= 群未采集到 或 群内近 {chat_days} 天零消息；' \
-          f'学习轴取报告窗口全窗口出勤。判定「失联」以<b>出勤</b>为准，<b>不以群是否存在为准</b>' \
-          f'（群列表接口有损，实测会漏掉约四成学生）。</div>'
+    # v4.10.2：本段（在册 / 沟通概览 ＋ 判定口径）默认**折叠收起**（用户要求「这块说明隐藏」）。
+    # 档位人数与名单由下方档位表、分档名单承载，数字并未丢失；口径说明保留可展开，
+    # 以符合「结论可回查」的既有要求 —— 不删内容，只改默认可见性。
+    bar_inner = (f'{head}<br>'
+                 f'口径：沟通轴取近 {chat_days} 天，「无聊天记录」= 群未采集到 或 群内近 {chat_days} 天零消息；'
+                 f'学习轴取报告窗口全窗口出勤。判定「失联」以<b>出勤</b>为准，<b>不以群是否存在为准</b>'
+                 f'（群列表接口有损，实测会漏掉约四成学生）。')
+    bar = ('<details class="covlist covhead"><summary>📖 覆盖概览与判定口径 —— 点击展开核对</summary>'
+           f'<div class="in"><div class="covbar">{bar_inner}</div></div></details>')
 
     # ---- 档位总表 ----
     trows = []
