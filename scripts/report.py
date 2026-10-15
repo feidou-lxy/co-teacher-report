@@ -773,6 +773,34 @@ details.meth[open]>summary:before{content:"▾ "}
 .rtlist{margin:0;padding-left:16px}
 .rtlist li{font-size:12.5px;line-height:1.6;color:#4b5563;margin-bottom:4px}
 .rtlist .note{font-size:11.5px}
+/* v4.8 在册全覆盖与失联预警 */
+.covsec{background:#fff;border:1px solid #e6e8eb;border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.covsec h2{margin:0 0 10px;font-size:16px}
+.covbar{font-size:13px;color:#4b5563;background:#f7f9fc;border:1px solid #e6eaf2;border-radius:8px;padding:10px 13px;margin-bottom:12px;line-height:1.8}
+.covbar b{color:#1f2329}
+.covbar .hl{color:#cf1322;font-weight:700}
+.covtab{width:100%;border-collapse:collapse;font-size:13px}
+.covtab th,.covtab td{border-bottom:1px solid #eef0f3;padding:7px 9px;text-align:left;vertical-align:top}
+.covtab th{background:#fafbfc;color:#6b7280;font-weight:600;font-size:12px}
+.covtab tr:last-child td{border-bottom:none}
+.tierk{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:8px;white-space:nowrap;color:#fff}
+.tierk.t1{background:#e54545}
+.tierk.t2{background:#ff8f1f}
+.tierk.t3{background:#e0a80f}
+.tierk.t4{background:#3a5bdb}
+.tierk.t5{background:#2ba471}
+.tierk.t0{background:#c3c8d0}
+.covlist{margin-top:12px;border:1px solid #eceff3;border-radius:8px;overflow:hidden}
+.covlist>summary{cursor:pointer;list-style:none;padding:9px 13px;font-size:13px;font-weight:600;color:#3a5bdb;background:#fafbfc;outline:none}
+.covlist>summary::-webkit-details-marker{display:none}
+.covlist[open]>summary{border-bottom:1px solid #eceff3}
+.covlist .in{padding:10px 13px;max-height:430px;overflow:auto}
+.covlist table{width:100%;border-collapse:collapse;font-size:12.5px}
+.covlist th,.covlist td{border-bottom:1px solid #f1f3f6;padding:6px 8px;text-align:left;vertical-align:top}
+.covlist th{color:#8a9099;font-weight:600;font-size:11.5px;position:sticky;top:0;background:#fff}
+.covevi{color:#6b7280}
+.covcause{display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#f2f4f7;color:#6b7280;white-space:nowrap}
+.covdeg{margin-top:10px;font-size:11.5px;color:#8a9099;line-height:1.7}
 """
 
 
@@ -820,6 +848,144 @@ def recent3_banner(rows, edu=False):
             f'<div class="rtbody"><div class="rtsub">{who}；口径：以窗口内最新一条消息为基准往前 3 天，'
             f'学生/家长实质提问后无老师动作 = 忘记回复；老师应允（稍后/晚点…）后无下文或 24 小时内学生再次追问 = 问题未解决。</div>'
             f'<table><tr><th>学生</th><th>日期</th><th>类型</th><th>提问内容</th><th>依据</th><th>建议动作</th></tr>{trs}</table></div></details>')
+
+
+# ============================================================================
+# v4.8 在册全覆盖与失联预警
+# 口径（用户 2026-10-15 定稿）：
+#   失联         = 无聊天记录 且 无出勤记录
+#   出勤但无沟通  = 无聊天记录 且 有出勤记录
+#   单向沟通      = 有聊天记录，但学生·家长实质发言 = 0
+#   低互动        = 有聊天记录，学生·家长实质发言 1~2
+# ⚠️ 群「采到与否」只作 cause 根因标签，**不作分档依据** ——
+#    群列表接口有损（实测教务 243 在册 / 群仅 144），拿群判失联会一次性误报 93 人。
+#    故一律用「出勤」当「人还在不在」的判据。
+# ============================================================================
+TIER_CLS = {"失联": "t1", "出勤但无沟通": "t2", "单向沟通": "t3", "低互动": "t4", "正常": "t5"}
+TIER_DESC = {
+    "失联": "无聊天记录、也无出勤记录 → <b>立即逐一核实</b>是否退课 / 从未建群",
+    "出勤但无沟通": "学生在正常上课，但企微沟通通道未打通 → <b>补建 / 核对群，并主动触达家长</b>",
+    "单向沟通": "仅有老师单向输出，学生·家长无实质回应 → 换沟通方式，制造回应点",
+    "低互动": "学生·家长实质发言 1~2 条 → 关注并适度引导",
+    "正常": "沟通与出勤均正常",
+}
+CAUSE_CN = {
+    "group_missing": "企微群未采集到",
+    "group_empty": "群已建但零消息",
+    "single_way": "仅老师单向输出",
+    "ok": "",
+}
+COV_WARN_TIERS = ["失联", "出勤但无沟通"]   # 需要成单列名单的两档
+
+
+def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
+    """报告顶部的「在册全覆盖与失联预警」（v4.8）。
+
+    这一块回答的是：**在册名单里有多少人根本没进这份报告**，以及他们去哪了。
+    报告主体只覆盖「有聊天记录」的学生；本块把余下的人按「出勤 × 聊天」两轴收口，
+    避免「没群没聊天」的学生被静默漏掉 —— 而他们恰恰最需要预警。
+    """
+    if not cov:
+        return ""
+    tiers = Counter(v.get("tier") for v in cov.values())
+    causes = Counter(v.get("cause") for v in cov.values() if v.get("cause") != "ok")
+    lost_n = tiers.get("失联", 0)
+    anc_n = tiers.get("出勤但无沟通", 0)
+    no_chat = lost_n + anc_n
+    analyzed_n = analyzed_n or 0
+    courses = {v.get("productName") for v in cov.values()}
+    multi = len(courses) > 1
+
+    # ---- 头图一句话 ----
+    # ⚠️ 两个分母口径不同，必须写清，否则会「两边各算一次」导致数字打架：
+    #   预警口径 = 近 chat_days 天（沟通轴）
+    #   学生卡口径 = 报告窗口全窗口（analysis_merged）
+    recent_n = sum(tiers.get(t, 0) for t in ("单向沟通", "低互动", "正常"))
+    head = (f'在册 <b>{roster_n}</b> 人 ｜ 近 {chat_days} 天有沟通 <b>{recent_n}</b> 人'
+            f' ｜ 无沟通 <b>{no_chat}</b> 人')
+    if no_chat:
+        head += f'，其中 <span class="hl">{anc_n} 人在正常上课</span>、仅企业微信沟通通道未打通'
+    if analyzed_n and analyzed_n > recent_n:
+        head += (f'<br>学生卡另详析 <b>{analyzed_n}</b> 人（按报告窗口统计）；'
+                 f'其中 <b>{analyzed_n - recent_n}</b> 人窗口内有互动、但近 {chat_days} 天已沉默，'
+                 f'同样计入上面的「无沟通」，属<b>需重新触达</b>对象。')
+    bar = f'<div class="covbar">{head}<br>' \
+          f'口径：沟通轴取近 {chat_days} 天，「无聊天记录」= 群未采集到 或 群内近 {chat_days} 天零消息；' \
+          f'学习轴取报告窗口全窗口出勤。判定「失联」以<b>出勤</b>为准，<b>不以群是否存在为准</b>' \
+          f'（群列表接口有损，实测会漏掉约四成学生）。</div>'
+
+    # ---- 档位总表 ----
+    trows = []
+    for t in ["失联", "出勤但无沟通", "单向沟通", "低互动", "正常"]:
+        n = tiers.get(t, 0)
+        pct = f"{n / roster_n * 100:.1f}%" if roster_n else "—"
+        trows.append(
+            f'<tr><td><span class="tierk {TIER_CLS.get(t, "t0")}">{t}</span></td>'
+            f'<td><b>{n}</b></td><td>{pct}</td><td>{TIER_DESC.get(t, "")}</td></tr>')
+    tab = ('<table class="covtab"><tr><th>档位</th><th>人数</th><th>占比</th><th>说明与建议动作</th></tr>'
+           + "".join(trows) + '</table>')
+
+    # ---- 多课程时给课程 × 档位 ----
+    ctab = ""
+    if multi:
+        byc = {}
+        for v in cov.values():
+            byc.setdefault(v.get("productName") or "未知", Counter())[v.get("tier")] += 1
+        cr = []
+        for c, cc in sorted(byc.items(), key=lambda kv: -sum(kv[1].values())):
+            tot = sum(cc.values())
+            cr.append(f'<tr><td>{c}</td><td>{tot}</td>'
+                      f'<td><b style="color:#cf1322">{cc.get("失联", 0)}</b></td>'
+                      f'<td>{cc.get("出勤但无沟通", 0)}</td>'
+                      f'<td>{cc.get("单向沟通", 0)}</td><td>{cc.get("低互动", 0)}</td></tr>')
+        ctab = ('<details class="covlist" open><summary>按课程拆分（每个课程的在册与各档人数）</summary>'
+                '<div class="in"><table><tr><th>课程</th><th>在册</th><th>失联</th>'
+                '<th>出勤但无沟通</th><th>单向沟通</th><th>低互动</th></tr>'
+                + "".join(cr) + '</table></div></details>')
+
+    # ---- 分档名单（失联 / 出勤但无沟通 必列；另两档合并折叠）----
+    lists = ""
+    for t in COV_WARN_TIERS:
+        hits = sorted([v for v in cov.values() if v.get("tier") == t],
+                      key=lambda v: (v.get("productName") or "", v.get("stuName") or ""))
+        if not hits:
+            continue
+        rows = []
+        for v in hits:
+            cz = CAUSE_CN.get(v.get("cause") or "", "")
+            rows.append(f'<tr><td><b>{v.get("stuName")}</b></td>'
+                        f'<td class="covevi">{v.get("productName") or "—"}</td>'
+                        f'<td class="covevi">{cz and f"<span class=\'covcause\'>{cz}</span> " or ""}'
+                        f'{v.get("evidence") or ""}</td></tr>')
+        lists += (f'<details class="covlist"{" open" if t == "失联" else ""}>'
+                  f'<summary>{t} · {len(hits)} 人'
+                  f'{"（需立即处理）" if t == "失联" else "（学生在正常上课，缺的是沟通通道）"}</summary>'
+                  f'<div class="in"><table><tr><th>学生</th><th>课程</th><th>判定依据</th></tr>'
+                  + "".join(rows) + '</table></div></details>')
+
+    soft = [v for v in cov.values() if v.get("tier") in ("单向沟通", "低互动")]
+    if soft:
+        soft.sort(key=lambda v: (v.get("tier") or "", v.get("productName") or "", v.get("stuName") or ""))
+        rows = "".join(
+            f'<tr><td><span class="tierk {TIER_CLS.get(v.get("tier"), "t0")}">{v.get("tier")}</span></td>'
+            f'<td><b>{v.get("stuName")}</b></td><td class="covevi">{v.get("productName") or "—"}</td>'
+            f'<td class="covevi">{v.get("evidence") or ""}</td></tr>'
+            for v in soft)
+        lists += (f'<details class="covlist"><summary>单向沟通 / 低互动 · {len(soft)} 人（有群但互动不足）</summary>'
+                  '<div class="in"><table><tr><th>档位</th><th>学生</th><th>课程</th><th>判定依据</th></tr>'
+                  + rows + '</table></div></details>')
+
+    # ---- 根因 & 降级声明 ----
+    if causes:
+        lists += ('<div class="covdeg">根因分布：'
+                  + " ｜ ".join(f"{CAUSE_CN.get(k, k)} {n}" for k, n in causes.most_common())
+                  + '</div>')
+    if degraded:
+        items = "；".join(f'{d.get("field")}（{d.get("reason")}）' for d in degraded)
+        lists += f'<div class="covdeg">⚠️ 数据降级声明（缺失即明写，不做静默兜底）：{items}</div>'
+
+    return (f'<div class="covsec" id="covsec"><h2>🚨 在册全覆盖与失联预警</h2>'
+            f'{bar}{tab}{ctab}{lists}</div>')
 
 
 def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, edu=False, show_co_tag=False, boards_map=None):
@@ -893,6 +1059,7 @@ def main():
     # 可选：在报告顶部打一条醒目横幅说明数据来源（如用合成/演示数据试跑时，
     # 避免看报告的人拿演示话术去真实群里核对而找不到）。
     ap.add_argument("--note", default=None, help="顶部数据来源/口径提示横幅（可选）")
+    ap.add_argument("--chat-days", type=int, default=14, help="失联预警沟通轴窗口天数（默认近两周）")
     args = ap.parse_args()
     role, name = common.resolve_scope(args)
     is_edu = role == "edu"
@@ -907,6 +1074,17 @@ def main():
     # 小黑板逐轮读图结论（可选）：boards_summary.json 由 pull_boards + read_boards 产出，按「姓名」索引
     boards_path = os.path.join(wd, "boards_summary.json")
     boards_map = json.load(open(boards_path, encoding="utf-8")) if os.path.exists(boards_path) else {}
+
+    # v4.8 在册全覆盖（coverage.json 由 adapt_legacy.py + coverage.py 产出；缺失则不渲染该块，向后兼容）
+    cov_path = os.path.join(wd, "coverage.json")
+    cov = json.load(open(cov_path, encoding="utf-8")) if os.path.exists(cov_path) else {}
+    cov_meta = {}
+    _mp = os.path.join(wd, "snapshot", "meta.json")
+    if os.path.exists(_mp):
+        try:
+            cov_meta = json.load(open(_mp, encoding="utf-8"))
+        except Exception:
+            cov_meta = {}
 
     rows = []
     for stu, s in A.items():
@@ -1027,6 +1205,19 @@ def main():
 </div>'''
         edu_note = ""
 
+    # v4.8：在册全覆盖块（分母用 coverage 的在册人数，不再用「有聊天记录的人数」冒充全量）
+    roster_n = len(cov) or len(rows)
+    analyzed_n = len(rows)
+    _tiers = Counter(v.get("tier") for v in cov.values())
+    lost_n, anc_n = _tiers.get("失联", 0), _tiers.get("出勤但无沟通", 0)
+    cov_block = coverage_block(cov, roster_n, analyzed_n, args.chat_days, cov_meta.get("degraded"))
+    kpi_cov = ""
+    if cov:
+        kpi_cov = (f'<div class="kpi {"red" if lost_n else "green"}"><div class="n">{lost_n}</div>'
+                   f'<div class="l">失联（无出勤·无沟通）</div></div>'
+                   f'<div class="kpi orange"><div class="n">{anc_n}</div>'
+                   f'<div class="l">出勤但无沟通</div></div>')
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1037,12 +1228,14 @@ def main():
 <div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：{subject_line} ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 { f'<div class="datanote">⚠️ {args.note}</div>' if args.note else '' }
 <div class="kpis">
-  <div class="kpi"><div class="n">{len(rows)}</div><div class="l">{scope_label}学生（全量）</div></div>
+  <div class="kpi"><div class="n">{roster_n}</div><div class="l">{scope_label}学生（{'在册' if cov else '全量'}）</div></div>
+  {kpi_cov}
   <div class="kpi red"><div class="n">{slow_n}</div><div class="l">响应迟缓群（聊天分析）</div></div>
   <div class="kpi orange"><div class="n">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
   <div class="kpi {'red' if rt_n_stu else 'green'}"><div class="n">{rt_n_stu}</div><div class="l">近3天待回应（{rt_n_items} 项）</div></div>
 </div>
 {rt_banner}
+{cov_block}
 <div class="searchbar">
   <input id="stuSearch" class="searchinp" type="text" placeholder="🔍 输入学生姓名搜索（当前维度内实时筛选）" oninput="doSearch(this.value)">
   <span class="searchcnt" id="searchCnt"></span>
@@ -1069,6 +1262,7 @@ def main():
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
 • 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
 • <b>近 3 天待回应（v3.9 新增 · v4.0 改为顶部折叠入口）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。全量结果<b>汇总在报告顶部的「🚨 近 3 天待回应 N 项」入口条</b>（给管理者 / 教务的统一视图，<b>默认收起，点击展开</b>明细表：学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时入口条显示绿色「检查通过」。<br>
+• <b>在册全覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）</b>：报告主体的学生卡<b>只覆盖「有聊天记录」的学生</b>，而在册名单往往明显更大 —— 差额恰恰是最需要预警的一批人，本区块专门收口。判定用<b>两轴</b>：① 沟通轴（聊天，取近 {args.chat_days} 天）② 学习轴（出勤，取报告窗口全窗口）。分档：<b>失联</b>＝无聊天记录且无出勤记录；<b>出勤但无沟通</b>＝无聊天记录但有出勤记录（学生在正常上课，缺的是企业微信沟通通道）；<b>单向沟通</b>＝有聊天记录但学生·家长实质发言为 0（仅老师输出）；<b>低互动</b>＝学生·家长实质发言 1~2 条。⚠️ <b>判定「失联」一律以出勤为准，不以群是否存在为准</b> —— 群列表接口 <code>wxworkSessionStat/getList</code> 只收录有响应时效记录的群，实测有损（教务视角 243 人在册、群仅 144，缺口分散在全部 7 门课，其中 93 人仍在正常出勤），若拿群判失联会一次性误报约四成学生。群「采到与否」仅作根因标签展示。两轴窗口必须分开：出勤本稀疏，若也只看近两周，会把已结课学生全部误判为「无出勤」→ 误报失联。<br>
 </p></details>
 </div>
 <script>
@@ -1148,7 +1342,8 @@ function doSearch(val){{
 }}
 </script>
 </body></html>"""
-    out = f"{wd}/{name}_学情分析.html"
+    # 课程视角：--course 可传完整课程名（含 2026Q-SX- 前缀），文件名取简洁课程名，避免一串前缀不好认
+    out = f"{wd}/{common.course_name(name) if is_course else name}_学情分析.html"
     open(out, "w", encoding="utf-8").write(html)
     if is_edu:
         print(f"✅ HTML 生成完成（教务双维度）｜ 课程数 {len(course_order)} · 联席数 {len(co_order)} ｜ {out}")

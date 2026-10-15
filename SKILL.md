@@ -71,7 +71,7 @@ agent_created: true
 
 > 详细接口契约见 `references/api_contract.md`（含越权风险提示）。
 
-### 第 1~9 步：端到端运行
+### 第 1~11 步：端到端运行
 
 在 `<workdir>` 内执行编排脚本（token 已就位）：
 
@@ -94,13 +94,24 @@ python <skill>/scripts/run_all.py --course 高二数学211层六C肖 --window 20
 6. `extract.py` — 信号提取（窗口过滤、**细粒度薄弱题型 v4.2**、**群内发言人分布 v4.5**、配合度、未闭环疑问、**联席四维**、**近 3 天待回应**、**学生成绩 v4.4**），**并按角色生成 To-Do**（联席=四维口径 / 教务=家长沟通口径）→ `analysis.json`
 7. `leave_notes.py` — 从聊天捞学生/家长自述的请假缘由 → `leave_notes.json`
 8. `merge.py` — 出勤 + 请假备注并入分析 → `analysis_merged.json`
-9. `report.py` — 生成 3 块式 HTML 报告（联席按课程切换 / 课程单课程按联席下钻 / 教务双维度）→ `<姓名>_学情分析.html`
+9. **`adapt_legacy.py`（v4.8 新增）** — 把上面这些原始产物折算成**「中间契约」快照** → `snapshot/*.json`。
+   这是「取数层」与「分析层」之间的稳定层：**分析层只读 snapshot，不认识任何后台接口**；
+   将来研发统一封装接口后，只需再写一个 `adapt_api.py` 输出同一份快照，分析层与报告**一行都不用改**。
+   字段定义见 `references/data_contract.md`。缺失字段一律写进 `snapshot/meta.json` 的 `degraded[]`，**绝不静默兜底**。
+10. **`coverage.py`（v4.8 新增）** — 读快照算**在册覆盖率与四档预警** → `coverage.json`。
+   报告主体只覆盖「有聊天记录」的学生，本步把余下的人（恰恰最需要预警）按「出勤 × 聊天」两轴收口。
+11. `report.py` — 生成 3 块式 HTML 报告（联席按课程切换 / 课程单课程按联席下钻 / 教务双维度），
+   并在顶部渲染**「🚨 在册全覆盖与失联预警」**区块 → `<姓名|课程名>_学情分析.html`
 
-**提供 `--boards <小黑板目录>` 时，追加两步：**
+**提供 `--boards <小黑板目录>` 时，另追加两步（`pull_boards` + `read_boards`）：**
 
-11. `pull_boards.py` — 扫描小黑板图片目录，建立「学生 → 逐轮」索引 → `boards.json`
-12. `read_boards.py` — 逐张读图做结构化分析（作答完整度 / 正确错误 / 问题定位）→ `board_analysis.json` → 聚合 `boards_summary.json`
+12. `pull_boards.py` — 扫描小黑板图片目录，建立「学生 → 逐轮」索引 → `boards.json`
+13. `read_boards.py` — 逐张读图做结构化分析（作答完整度 / 正确错误 / 问题定位）→ `board_analysis.json` → 聚合 `boards_summary.json`
     （未配置视觉模型时，先生成 `board_analysis_template.json` 待填清单，人工/代理回填后再跑本步聚合；详见「小黑板读图」小节）
+
+> ⚠️ 顺序注意：`adapt_legacy.py` 会读 `board_analysis.json` 一并折算进快照，
+> 所以**带小黑板时必须先跑读图**（`run_all.py` 已按此顺序编排：
+> pull_students → … → merge → pull_boards/read_boards → adapt_legacy → coverage → report）。
 
 ⭐ **v4.8 起请优先走 `board_cache.py`（读图缓存 · 增量读图）**：同一张图**只读一次**，跨课程 / 跨月份 / 跨会话复用 ——
 第二轮课通常只多出几十张新图，不必把上千张全部重读。三步替代原来的「全量读图」：
@@ -288,6 +299,43 @@ python <skill>/scripts/board_cache.py merge <工作区>/board_batches/result_*.j
 - **联席四维（v3.7）** 在 `analysis.json` / `analysis_merged.json` 中落地为字段：`interact` / `interact_lv` / `interact_evi`（互动状态）、`urge_n` / `urge_ok` / `urge_fail`（催交→提交）、`fix_n` / `fix_ok` / `fix_fail`（批改→订正）、`ask_lv`（提问意愿）。配对规则：老师发出催交/订正要求后 **72 小时**内学生给出对应回应记为「已响应」；6 小时内的重复催只计一次。数据以 `four_dims()` 渲染成 4 张横排小卡展示在卡片第②块「配合度」内。
 - **购课类型**：展示在学生姓名之后（`直播` / `回放` / `试听（插班）` / `测试`）。来源为花名册字段 `cIncomeProductType`（后台「我的学生」列表的「购课类型」列）；取值映射来自字典接口 `GET /sysDictionary/findSysDictionary?type=productType`（1=直播 2=回放 3=试听（插班）4=测试）。报告学生卡标题同步展示该标签。
 
+### 在册全覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）
+
+**为什么需要**：报告主体的学生卡只覆盖**有聊天记录**的学生，而在册名单往往明显更大 ——
+差额恰恰是最需要预警给老师的一批人，旧版把他们静默漏掉了。本区块专门收口这批人。
+
+**判定用两轴，且两轴窗口必须分开：**
+
+| 轴 | 取数 | 窗口 | 理由 |
+|---|---|---|---|
+| 沟通轴（聊天 / 实质发言） | `chats.json` | **近 14 天**（`--chat-days`，默认 14） | 全月窗口会把「近期才沉默」掩盖掉 |
+| 学习轴（出勤 / 小黑板） | `attendance_clean.json` / `board_analysis.json` | **报告窗口全窗口** | 出勤本稀疏，只看近 14 天会把已结课学生全判「无出勤」→ 误报失联 |
+
+**四档口径**：
+
+| 档 | 判定 | 动作 |
+|---|---|---|
+| **失联** | 无聊天记录 **且** 无出勤记录 | 最高优先级，逐一核实是否退课 / 从未建群 |
+| **出勤但无沟通** | 无聊天记录 **且** 有出勤记录 | 学生在正常上课，缺的是企微沟通通道 → 补建 / 核对群并主动触达 |
+| **单向沟通** | 有聊天记录，但学生·家长实质发言 = 0（仅老师输出） | 换沟通方式，制造回应点 |
+| **低互动** | 有聊天记录，学生·家长实质发言 1~2 条 | 关注并适度引导 |
+
+> 「无聊天记录」= 群**未采集到** 或 群内近 14 天**零消息**（两者都算，但只作根因标签 `cause` 展示）。
+
+⚠️ **红线：判「失联」一律以出勤为准，不以群是否存在为准。**
+群列表接口 `wxworkSessionStat/getList` 只收录有响应时效记录的群，**天然有损** ——
+实测教务视角 243 人在册、群仅 144（缺口分散在全部 7 门课，其中 **93 人仍在正常出勤**）。
+若拿群判失联，会**一次性误报约四成学生**、报告直接失去可信度。
+所以「群采到与否」只作 `cause` 根因标签（`group_missing` / `group_empty`），**不参与分档**。
+
+⭐ **学习证据 = 出勤 或 小黑板**。真人数据存在「无出勤记录但有小黑板作答」的学生，只看出勤会误判失联。
+
+**守恒校验**（`coverage.py` 内置断言，不通过即报错）：
+`#在册 == #coverage`，且 `#失联 + #出勤但无沟通 + #单向沟通 + #低互动 + #正常 == #在册`（每人有且只有一档）。
+
+**头图两个分母口径不同，报告里已写明**：预警按近 14 天，学生卡按报告窗口 ——
+故「学生卡详析人数」可能与「近 14 天有沟通人数」不等，差额 = 窗口内互动过、但近 14 天已沉默的人（同样计入「无沟通」）。
+
 ### 课程维度（v3.6 新增 · v4.7 课程名口径改为后台字段）
 
 - **取数**：`--course <课程名>`（如 `高二数学211层六C肖`）。花名册按 `productName` 含课程名筛出该课程**全部学生**（跨多个联席，各自 `coTeacherName`）；群列表同样**按后台课程名 `productName` 筛选**（**不做 owner 过滤**，因为课程跨联席）。可加 `--co <联席名>` 只保留该联席负责的部分。
@@ -364,8 +412,16 @@ python <skill>/scripts/board_cache.py merge <工作区>/board_batches/result_*.j
 ├── boards.json              # （可选）小黑板图片索引（提供 --boards 时）
 ├── board_analysis.json      # （可选）逐张读图结构化结论
 ├── boards_summary.json      # （可选）小黑板逐生聚合结论（①学习情况佐证消费）
+├── snapshot/                # （v4.8）「中间契约」快照：meta / roster / groups /
+│                            #   groupActivity / chats / attendance / boards —— 分析层只读这里
+├── coverage.json            # （v4.8）在册覆盖率 + 四档预警（报告顶部预警区消费）
 └── <姓名|课程名>_学情分析.html    # ← 主交付（联席按课程切换 / 课程按联席下钻 / 教务双维度）
 ```
+
+**分层约定（v4.8）**：`pull_*` 是「取数层」（会随后台接口变化），
+`adapt_legacy.py` / 将来的 `adapt_api.py` 是**可替换的适配器**，
+`snapshot/` 是**稳定的中间契约**，`coverage.py` / `extract.py` / `report.py` 是**不动的分析层**。
+接口变了只改适配器 —— 详见 `references/data_contract.md`。
 
 ## 注意事项
 
