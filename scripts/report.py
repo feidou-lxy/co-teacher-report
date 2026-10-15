@@ -1173,9 +1173,10 @@ def teaching_advice(crows, boards_map, n_any=None):
         line += (f' 可同步安排 <b>「{_s["topic"]}」</b>'
                  f'（{_s["un"]} 人，{round(100 * _s["un"] / n_any)}%）。')
 
-    # ---- 优先级表 ----
+    # ---- 优先级表（v4.10.1：显示全部知识点，长尾不再截断 —— 上方的「高频知识点」明细表
+    # 已删除，这里成为唯一承载知识点清单的地方，故必须完整）----
     rows = ""
-    for i, x in enumerate(rank[:8], 1):
+    for i, x in enumerate(rank, 1):
         its = "、".join(
             f'{k} <span class="mute">{len(v["stu"])}人</span>'
             + (f'<b class="hard">实证错误 {len(v["hard_stu"])}</b>' if v["hard_stu"] else '')
@@ -1190,7 +1191,7 @@ def teaching_advice(crows, boards_map, n_any=None):
     # ---- 可核对的证据（折叠）----
     ev_html = ""
     kind_cn = {"小黑板": "bd", "老师指出": "tea", "学生提问": "stu"}
-    for x in rank[:8]:
+    for x in rank:
         lis = ""
         for item, e in x["items"][:6]:
             ks = "／".join(sorted(e["kinds"]))
@@ -1228,22 +1229,9 @@ def teaching_advice(crows, boards_map, n_any=None):
         '</div>')
 
 
-def _topic_table_html(crows, boards_map):
-    """双源高频知识点表（v4.9）：返回 (表行 HTML, 小黑板读图覆盖人数)。"""
-    tagg = _collect_topics(crows, boards_map)
-    n_bd = sum(1 for r in crows if (boards_map or {}).get(common.norm_name(r["stu"])))
-    rank = sorted(tagg.items(),
-                  key=lambda kv: (-len(kv[1]["chat"] | kv[1]["board"]), -len(kv[1]["err"]), kv[0]))
-    rows = "".join(
-        f'<tr><td>{t}</td>'
-        f'<td>{len(d["chat"]) or "—"}</td>'
-        f'<td>{len(d["err"]) or "—"}'
-        + (f' <span class="mute">/涉及 {len(d["board"])}</span>' if d["board"] else '')
-        + f'</td>'
-          f'<td><b>{len(d["chat"] | d["board"])}</b></td>'
-          f'<td>{round(100 * len(d["chat"] | d["board"]) / len(crows))}%</td></tr>'
-        for t, d in rank)
-    return rows, n_bd
+# 注（v4.10.1）：原 `_topic_table_html()` 已删除 —— 它渲染的「高频知识点 · 数据明细」表
+# 与「主讲备课建议」表的列（覆盖学生 / 群聊提及 / 小黑板实证）完全重合，属同源重复。
+# 高频知识点信息由备课建议表直接承载（且已改为显示全部知识点，长尾不丢）。
 
 
 def _cofilter_html(sec_id, crows, show_filter, co_opts):
@@ -1258,22 +1246,24 @@ def _cofilter_html(sec_id, crows, show_filter, co_opts):
 
 
 def build_topic_block(sec_id, crows, title, is_all, boards_map=None):
-    """Tab2 的一个分组：**总—分结构** —— 备课建议（总，在上）→ 高频知识点表（分，在下）。
+    """Tab2 的一个分组：**主讲备课建议**（下节课重点讲什么）。
 
-    v4.9：用户要求把「主讲备课建议」放在「高频知识点」上方，形成「先结论、后数据」的阅读顺序。
+    v4.10.1：原先建议下方还挂了一张「高频知识点 · 数据明细」表，但它的列
+    （知识点 / 群聊提及 / 小黑板实证 / 合计涉及 / 占比）与建议表的
+    「建议重点讲 / 覆盖学生 / 群聊提及 / 小黑板实证」**完全重合**（用户指出「这两部分重复」），
+    故整表删除，只保留备课建议；建议表本身已改为**显示全部知识点**，长尾（数列、解三角形等）不丢。
     """
     if not crows:
         return ""
     disp = 'style="display:block"' if is_all else 'style="display:none"'
-    advice = teaching_advice(crows, boards_map)
-    rows, n_bd = _topic_table_html(crows, boards_map)
+    adv = teaching_advice(crows, boards_map)
+    if not adv:
+        adv = ('<div class="tadv"><div class="tadv-h">🎓 主讲备课建议 · 下节课重点讲什么</div>'
+               f'<div class="tadv-sum">本组（{title}）暂无可用于备课建议的证据 —— '
+               '聊天与小黑板均未捕捉到明确知识点（多为暂无群聊记录或未提供小黑板读图素材）。</div></div>')
     return f'''
 <div class="grp" id="t-{sec_id}" {disp}>
-  {advice}
-  <div class="section"><h3>高频知识点 · 数据明细（{title}）</h3>
-    <table><tr><th>知识点</th><th>群聊提及</th><th>小黑板实证</th><th>合计涉及</th><th>占比</th></tr>{rows}</table>
-    <div class="tadv-cap">「群聊提及」= 聊天中命中该知识点的学生数；「小黑板实证」= 读图判定该知识点<b>有错误／卡点</b>的学生数（<span class="mute">/涉及</span> 为该知识点有作答的学生数）；「合计涉及」为两源并集。本组小黑板读图覆盖 {n_bd} 人。</div>
-  </div>
+  {adv}
 </div>'''
 
 
@@ -1545,7 +1535,7 @@ def main():
 </div>
 <div class="maintabs">
   <button class="mtab active" data-t="t1" onclick="showMain('t1')">🚨 失联预警{_cov_badge}</button>
-  <button class="mtab" data-t="t2" onclick="showMain('t2')">🎓 备课建议 &amp; 高频知识点</button>
+  <button class="mtab" data-t="t2" onclick="showMain('t2')">🎓 主讲备课建议</button>
   <button class="mtab" data-t="t3" onclick="showMain('t3')">📋 学生学情 &amp; To-Do<span class="mcnt ok">{len(rows)}</span></button>
 </div>
 <div class="mainpanel" id="mp-t1">{cov_block or '<div class="covsec"><h2>🚨 失联预警</h2><div class="covbar">本报告未接入「在册名单」数据（<code>coverage.json</code> 缺失），暂无法做在册全覆盖与失联预警。<br>请先运行 <code>adapt_legacy.py</code> 与 <code>coverage.py</code> 生成覆盖率快照后重新出报告。</div></div>'}</div>
@@ -1559,7 +1549,7 @@ def main():
 {card_panels}</div>
 <details class="meth"><summary>📖 方法论与口径说明（点击展开）</summary>
 <p class="note">
-• <b>报告结构（v4.10 起为三大 Tab）</b>：① <b>🚨 失联预警</b> —— 在册全覆盖统计与分档名单；② <b>🎓 备课建议 &amp; 高频知识点</b> —— 先结论（主讲备课建议）后数据（双源知识点表）；③ <b>📋 学生学情 &amp; To-Do</b> —— 逐生卡片与筛选。顶部 KPI 卡<b>全部可点击</b>：失联 / 出勤但无沟通 → 切到 Tab① 并展开对应档位名单；响应迟缓 / 待回复 / 近 3 天待回应 → 切到 Tab③ 并筛出对应学生。<br>
+• <b>报告结构（v4.10 起为三大 Tab）</b>：① <b>🚨 失联预警</b> —— 在册全覆盖统计与分档名单；② <b>🎓 主讲备课建议</b> —— 下节课重点讲什么（含覆盖人数、双源证据、典型题型与原文出处）；③ <b>📋 学生学情 &amp; To-Do</b> —— 逐生卡片与筛选。顶部 KPI 卡<b>全部可点击</b>：失联 / 出勤但无沟通 → 切到 Tab① 并展开对应档位名单；响应迟缓 / 待回复 / 近 3 天待回应 → 切到 Tab③ 并筛出对应学生。<br>
 • 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 分页取每群**全量**消息（倒序；单群 500 条上限已取消，按 <code>total</code> 逐页拉满），文本与语音转写均纳入。<br>
 • 分析窗口：仅分析 <b>{args.window} 至今</b>的聊天内容。<br>
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
@@ -1576,12 +1566,12 @@ def main():
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
 • 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
 • <b>近 3 天待回应（v3.9 新增 · v4.0 改为顶部折叠入口）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。全量结果<b>汇总在报告顶部的「🚨 近 3 天待回应 N 项」入口条</b>（给管理者 / 教务的统一视图，<b>默认收起，点击展开</b>明细表：学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时入口条显示绿色「检查通过」。<br>
-• <b>高频知识点与主讲备课建议（v4.9 新增）</b>：① <b>「高频知识点」表改为双源</b> —— 此前只统计聊天文本命中（<code>extract.top_topics</code>），小黑板的实证错误完全没进这张表；现并列展示「群聊提及」（聊天中命中该知识点的学生数）与「小黑板实证」（读图判定该知识点<b>有错误／卡点</b>的学生数），末列「合计涉及」为两源并集。② 表下新增 <b>🎓 主讲备课建议</b>：回答「主讲下节课该重点讲什么／什么题型」，按<b>覆盖学生数降序</b>排列（普遍性优先），同覆盖时<b>有小黑板实证错误的优先</b>（小黑板是学生真实作答，比「群里提过」硬）；每条给出「典型题型／卡点」，点开可看原文出处，直接用于备课选题。③ ⚠️ <b>题型证据分硬／软</b>：标「实证错误 N」= 读图判「有错」或存在<b>非「没写完」</b>类实质错误（真的不会）；标「仅未完成／卡点」= 只是没写完（课堂节奏／书写速度，非能力）—— 与 v4.4 学习分层口径一致，不混为一谈。<b>读图模型对同一件事有「未完成收尾」与「收尾未完成」两种词序，后者才是真实语料主流写法（实测 176 条错误标注中占 94 条），故判定统一用包含式匹配（<code>common.is_finish_err</code>），精确匹配会静默漏掉最常见的写法。</b>④ 反编造：题型名只能来自 <code>FINE_TYPES</code> 词表命中或字段原文（形如「课堂作答卡点：…」），无证据时如实说明、留空，<b>绝不硬凑题型名</b>；不预测考情、不生成内容。<br>
+• <b>主讲备课建议（v4.9 新增 · v4.10.1 收敛为单表）</b>：回答「主讲下节课该重点讲什么／什么题型」，按<b>覆盖学生数降序</b>排列（普遍性优先），同覆盖时<b>有小黑板实证错误的优先</b>（小黑板是学生真实作答，比「群里提过」硬）；每条给出「典型题型／卡点」，点开可看原文出处，直接用于备课选题。<b>本表即为双源呈现</b> —— 此前「高频知识点」表只统计聊天命中（<code>extract.top_topics</code>），小黑板的实证错误完全没进；现并列展示「群聊提及」（聊天中命中该知识点的学生数）与「小黑板实证」（读图判定该知识点<b>有错误／卡点</b>的学生数），「覆盖学生」为两源并集。⚠️ <b>v4.10.1 删除了原先并列的「高频知识点 · 数据明细」表</b> —— 它的列（知识点／群聊提及／小黑板实证／合计涉及／占比）与建议表完全重合（用户指出「这两部分重复了，保留上面的即可」），故建议表改为<b>显示全部知识点</b>，长尾（数列、解三角形等）不再截断。③ ⚠️ <b>题型证据分硬／软</b>：标「实证错误 N」= 读图判「有错」或存在<b>非「没写完」</b>类实质错误（真的不会）；标「仅未完成／卡点」= 只是没写完（课堂节奏／书写速度，非能力）—— 与 v4.4 学习分层口径一致，不混为一谈。<b>读图模型对同一件事有「未完成收尾」与「收尾未完成」两种词序，后者才是真实语料主流写法（实测 176 条错误标注中占 94 条），故判定统一用包含式匹配（<code>common.is_finish_err</code>），精确匹配会静默漏掉最常见的写法。</b>④ 反编造：题型名只能来自 <code>FINE_TYPES</code> 词表命中或字段原文（形如「课堂作答卡点：…」），无证据时如实说明、留空，<b>绝不硬凑题型名</b>；不预测考情、不生成内容。<br>
 • <b>在册全覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）</b>：报告主体的学生卡<b>只覆盖「有聊天记录」的学生</b>，而在册名单往往明显更大 —— 差额恰恰是最需要预警的一批人，本区块专门收口。判定用<b>两轴</b>：① 沟通轴（聊天，取近 {args.chat_days} 天）② 学习轴（出勤，取报告窗口全窗口）。分档：<b>失联</b>＝无聊天记录且无出勤记录；<b>出勤但无沟通</b>＝无聊天记录但有出勤记录（学生在正常上课，缺的是企业微信沟通通道）；<b>单向沟通</b>＝有聊天记录但学生·家长实质发言为 0（仅老师输出）；<b>低互动</b>＝学生·家长实质发言 1~2 条。⚠️ <b>判定「失联」一律以出勤为准，不以群是否存在为准</b> —— 群列表接口 <code>wxworkSessionStat/getList</code> 只收录有响应时效记录的群，实测有损（教务视角 243 人在册、群仅 144，缺口分散在全部 7 门课，其中 93 人仍在正常出勤），若拿群判失联会一次性误报约四成学生。群「采到与否」仅作根因标签展示。两轴窗口必须分开：出勤本稀疏，若也只看近两周，会把已结课学生全部误判为「无出勤」→ 误报失联。<br>
 </p></details>
 </div>
 <script>
-// ===== v4.10：三大 Tab（① 失联预警 ② 备课建议 & 高频知识点 ③ 学生学情 & To-Do）=====
+// ===== v4.10：三大 Tab（① 失联预警 ② 主讲备课建议 ③ 学生学情 & To-Do）=====
 function showMain(t){{
   ['t1','t2','t3'].forEach(function(k){{
     var p=document.getElementById('mp-'+k);
