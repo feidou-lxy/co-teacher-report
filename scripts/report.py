@@ -799,6 +799,18 @@ details.meth[open]>summary:before{content:"▾ "}
 .covtab th,.covtab td{border-bottom:1px solid #eef0f3;padding:7px 9px;text-align:left;vertical-align:top}
 .covtab th{background:#fafbfc;color:#6b7280;font-weight:600;font-size:12px}
 .covtab tr:last-child td{border-bottom:none}
+/* v4.10.3：档位表「人数」可点击 —— 就在本行下方展开该档名单 */
+.covn{cursor:pointer;color:#3a5bdb;font-weight:700;padding:1px 4px;border-radius:5px}
+.covn:hover{background:#eef3ff}
+.covn .covar{font-size:9px;color:#9db1e8}
+.covn .covar:before{content:"▾ "}
+.covn.on .covar:before{content:"▴ "}
+.covtab .covdet>td{background:#fbfcfe;padding:0;border-bottom:1px solid #eef0f3}
+.covdetin{padding:4px 10px 10px}
+.covsub{width:100%;border-collapse:collapse;font-size:12.5px}
+.covsub th,.covsub td{border-bottom:1px solid #f1f3f6;padding:6px 8px;text-align:left;vertical-align:top}
+.covsub th{color:#8a9099;font-weight:600;font-size:11.5px}
+.covsub tr:last-child td{border-bottom:none}
 .tierk{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:8px;white-space:nowrap;color:#fff}
 .tierk.t1{background:#e54545}
 .tierk.t2{background:#ff8f1f}
@@ -914,7 +926,7 @@ CAUSE_CN = {
     "single_way": "仅老师单向输出",
     "ok": "",
 }
-COV_WARN_TIERS = ["失联", "出勤但无沟通"]   # 需要成单列名单的两档
+COV_TIER_ORDER = ["失联", "出勤但无沟通", "单向沟通", "低互动", "正常"]   # 档位表渲染顺序
 
 
 def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
@@ -940,7 +952,7 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
     #   预警口径 = 近 chat_days 天（沟通轴）
     #   学生卡口径 = 报告窗口全窗口（analysis_merged）
     recent_n = sum(tiers.get(t, 0) for t in ("单向沟通", "低互动", "正常"))
-    head = (f'在册 <b>{roster_n}</b> 人 ｜ 近 {chat_days} 天有沟通 <b>{recent_n}</b> 人'
+    head = (f'总人数 <b>{roster_n}</b> 人 ｜ 近 {chat_days} 天有沟通 <b>{recent_n}</b> 人'
             f' ｜ 无沟通 <b>{no_chat}</b> 人')
     if no_chat:
         head += f'，其中 <span class="hl">{anc_n} 人在正常上课</span>、仅企业微信沟通通道未打通'
@@ -958,14 +970,48 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
     bar = ('<details class="covlist covhead"><summary>📖 覆盖概览与判定口径 —— 点击展开核对</summary>'
            f'<div class="in"><div class="covbar">{bar_inner}</div></div></details>')
 
-    # ---- 档位总表 ----
+    # ---- 档位总表（v4.10.3：点「人数」直接在本行下方展开该档名单）----
+    # 原先名单另设三组折叠块挂在表下方，用户反馈「点击人数，直接展开明细」→ 改为行内展开，
+    # 少一次「先找到人数、再滚到下面找同名折叠块」的跳转。
+    by_tier = {}
+    for v in cov.values():
+        by_tier.setdefault(v.get("tier") or "未知", []).append(v)
+
+    def _cov_rows(hits):
+        out = []
+        for v in hits:
+            cz = CAUSE_CN.get(v.get("cause") or "", "")
+            chip = f'<span class="covcause">{cz}</span> ' if cz else ""
+            out.append(f'<tr><td><b>{v.get("stuName")}</b></td>'
+                       f'<td class="covevi">{v.get("productName") or "—"}</td>'
+                       f'<td class="covevi">{chip}{v.get("evidence") or ""}</td></tr>')
+        return "".join(out)
+
     trows = []
-    for t in ["失联", "出勤但无沟通", "单向沟通", "低互动", "正常"]:
+    for t in COV_TIER_ORDER:
         n = tiers.get(t, 0)
         pct = f"{n / roster_n * 100:.1f}%" if roster_n else "—"
+        hits = sorted(by_tier.get(t, []),
+                      key=lambda v: (v.get("productName") or "", v.get("stuName") or ""))
+        if hits:
+            # 人数 = 开关；「失联」默认展开（最紧急），其余默认收起
+            dflt = (t == "失联")
+            ncell = (f'<span class="covn{" on" if dflt else ""}" data-covn="{t}" '
+                     f"onclick=\"covToggle('{t}')\" "
+                     f'title="点击{"收起" if dflt else "展开"}本档 {len(hits)} 人名单">{n}'
+                     f'<span class="covar"></span></span>')
+        else:
+            ncell = f'{n}'
         trows.append(
-            f'<tr><td><span class="tierk {TIER_CLS.get(t, "t0")}">{t}</span></td>'
-            f'<td><b>{n}</b></td><td>{pct}</td><td>{TIER_DESC.get(t, "")}</td></tr>')
+            f'<tr class="covrow"><td><span class="tierk {TIER_CLS.get(t, "t0")}">{t}</span></td>'
+            f'<td>{ncell}</td><td>{pct}</td><td>{TIER_DESC.get(t, "")}</td></tr>')
+        if hits:
+            trows.append(
+                f'<tr class="covdet" id="covdet-{t}" '
+                f'style="display:{"table-row" if dflt else "none"}">'
+                f'<td colspan="4"><div class="covdetin">'
+                '<table class="covsub"><tr><th>学生</th><th>课程</th><th>判定依据</th></tr>'
+                + _cov_rows(hits) + '</table></div></td></tr>')
     tab = ('<table class="covtab"><tr><th>档位</th><th>人数</th><th>占比</th><th>说明与建议动作</th></tr>'
            + "".join(trows) + '</table>')
 
@@ -982,42 +1028,15 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
                       f'<td><b style="color:#cf1322">{cc.get("失联", 0)}</b></td>'
                       f'<td>{cc.get("出勤但无沟通", 0)}</td>'
                       f'<td>{cc.get("单向沟通", 0)}</td><td>{cc.get("低互动", 0)}</td></tr>')
-        ctab = ('<details class="covlist" open><summary>按课程拆分（每个课程的在册与各档人数）</summary>'
-                '<div class="in"><table><tr><th>课程</th><th>在册</th><th>失联</th>'
+        ctab = ('<details class="covlist" open><summary>按课程拆分（每个课程的总人数与各档人数）</summary>'
+                '<div class="in"><table><tr><th>课程</th><th>总人数</th><th>失联</th>'
                 '<th>出勤但无沟通</th><th>单向沟通</th><th>低互动</th></tr>'
                 + "".join(cr) + '</table></div></details>')
 
-    # ---- 分档名单（失联 / 出勤但无沟通 必列；另两档合并折叠）----
+    # v4.10.3：原「分档名单」三组折叠块（失联 / 出勤但无沟通 / 单向+低互动）已删除 ——
+    # 名单改为在档位表内**点人数直接展开**（见上 trows 的 covrow + covdet）。
+    # 本处只保留根因分布与降级声明。
     lists = ""
-    for t in COV_WARN_TIERS:
-        hits = sorted([v for v in cov.values() if v.get("tier") == t],
-                      key=lambda v: (v.get("productName") or "", v.get("stuName") or ""))
-        if not hits:
-            continue
-        rows = []
-        for v in hits:
-            cz = CAUSE_CN.get(v.get("cause") or "", "")
-            rows.append(f'<tr><td><b>{v.get("stuName")}</b></td>'
-                        f'<td class="covevi">{v.get("productName") or "—"}</td>'
-                        f'<td class="covevi">{cz and f"<span class=\'covcause\'>{cz}</span> " or ""}'
-                        f'{v.get("evidence") or ""}</td></tr>')
-        lists += (f'<details class="covlist" id="covTier-{t}"{" open" if t == "失联" else ""}>'
-                  f'<summary>{t} · {len(hits)} 人'
-                  f'{"（需立即处理）" if t == "失联" else "（学生在正常上课，缺的是沟通通道）"}</summary>'
-                  f'<div class="in"><table><tr><th>学生</th><th>课程</th><th>判定依据</th></tr>'
-                  + "".join(rows) + '</table></div></details>')
-
-    soft = [v for v in cov.values() if v.get("tier") in ("单向沟通", "低互动")]
-    if soft:
-        soft.sort(key=lambda v: (v.get("tier") or "", v.get("productName") or "", v.get("stuName") or ""))
-        rows = "".join(
-            f'<tr><td><span class="tierk {TIER_CLS.get(v.get("tier"), "t0")}">{v.get("tier")}</span></td>'
-            f'<td><b>{v.get("stuName")}</b></td><td class="covevi">{v.get("productName") or "—"}</td>'
-            f'<td class="covevi">{v.get("evidence") or ""}</td></tr>'
-            for v in soft)
-        lists += (f'<details class="covlist"><summary>单向沟通 / 低互动 · {len(soft)} 人（有群但互动不足）</summary>'
-                  '<div class="in"><table><tr><th>档位</th><th>学生</th><th>课程</th><th>判定依据</th></tr>'
-                  + rows + '</table></div></details>')
 
     # ---- 根因 & 降级声明 ----
     if causes:
@@ -1028,7 +1047,7 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
         items = "；".join(f'{d.get("field")}（{d.get("reason")}）' for d in degraded)
         lists += f'<div class="covdeg">⚠️ 数据降级声明（缺失即明写，不做静默兜底）：{items}</div>'
 
-    return (f'<div class="covsec" id="covsec"><h2>🚨 在册全覆盖与失联预警</h2>'
+    return (f'<div class="covsec" id="covsec"><h2>🚨 总人数覆盖与失联预警</h2>'
             f'{bar}{tab}{ctab}{lists}</div>')
 
 
@@ -1536,7 +1555,7 @@ def main():
 <div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：{subject_line} ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 { f'<div class="datanote">⚠️ {args.note}</div>' if args.note else '' }
 <div class="kpis">
-  <div class="kpi clickable" onclick="topKpi('info')" title="点击查看全部学生"><div class="n">{roster_n}</div><div class="l">{scope_label}学生（{'在册' if cov else '全量'}）</div></div>
+  <div class="kpi clickable" onclick="topKpi('info')" title="点击查看全部学生"><div class="n">{roster_n}</div><div class="l">{scope_label}学生（{'总人数' if cov else '全量'}）</div></div>
   {kpi_cov}
   <div class="kpi red clickable" onclick="topKpi('slow')" title="点击筛选「响应迟缓」的学生"><div class="n">{slow_n}</div><div class="l">响应迟缓群（聊天分析）</div></div>
   <div class="kpi orange clickable" onclick="topKpi('unres')" title="点击筛选「待回复」的学生"><div class="n">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
@@ -1547,7 +1566,7 @@ def main():
   <button class="mtab" data-t="t2" onclick="showMain('t2')">🎓 主讲备课建议</button>
   <button class="mtab" data-t="t3" onclick="showMain('t3')">📋 学生学情 &amp; To-Do<span class="mcnt ok">{len(rows)}</span></button>
 </div>
-<div class="mainpanel" id="mp-t1">{cov_block or '<div class="covsec"><h2>🚨 失联预警</h2><div class="covbar">本报告未接入「在册名单」数据（<code>coverage.json</code> 缺失），暂无法做在册全覆盖与失联预警。<br>请先运行 <code>adapt_legacy.py</code> 与 <code>coverage.py</code> 生成覆盖率快照后重新出报告。</div></div>'}</div>
+<div class="mainpanel" id="mp-t1">{cov_block or '<div class="covsec"><h2>🚨 失联预警</h2><div class="covbar">本报告未接入「总人数名单」数据（<code>coverage.json</code> 缺失），暂无法做总人数覆盖与失联预警。<br>请先运行 <code>adapt_legacy.py</code> 与 <code>coverage.py</code> 生成覆盖率快照后重新出报告。</div></div>'}</div>
 <div class="mainpanel" id="mp-t2" style="display:none">{topic_panels}</div>
 <div class="mainpanel" id="mp-t3" style="display:none">{rt_banner}
 <div class="searchbar">
@@ -1558,7 +1577,7 @@ def main():
 {card_panels}</div>
 <details class="meth"><summary>📖 方法论与口径说明（点击展开）</summary>
 <p class="note">
-• <b>报告结构（v4.10 起为三大 Tab）</b>：① <b>🚨 失联预警</b> —— 在册全覆盖统计与分档名单；② <b>🎓 主讲备课建议</b> —— 下节课重点讲什么（含覆盖人数、双源证据、典型题型与原文出处）；③ <b>📋 学生学情 &amp; To-Do</b> —— 逐生卡片与筛选。顶部 KPI 卡<b>全部可点击</b>：失联 / 出勤但无沟通 → 切到 Tab① 并展开对应档位名单；响应迟缓 / 待回复 / 近 3 天待回应 → 切到 Tab③ 并筛出对应学生。<br>
+• <b>报告结构（v4.10 起为三大 Tab）</b>：① <b>🚨 失联预警</b> —— 总人数覆盖统计与分档名单；② <b>🎓 主讲备课建议</b> —— 下节课重点讲什么（含覆盖人数、双源证据、典型题型与原文出处）；③ <b>📋 学生学情 &amp; To-Do</b> —— 逐生卡片与筛选。顶部 KPI 卡<b>全部可点击</b>：失联 / 出勤但无沟通 → 切到 Tab① 并展开对应档位名单；响应迟缓 / 待回复 / 近 3 天待回应 → 切到 Tab③ 并筛出对应学生。<br>
 • 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 分页取每群**全量**消息（倒序；单群 500 条上限已取消，按 <code>total</code> 逐页拉满），文本与语音转写均纳入。<br>
 • 分析窗口：仅分析 <b>{args.window} 至今</b>的聊天内容。<br>
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
@@ -1576,7 +1595,7 @@ def main():
 • 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
 • <b>近 3 天待回应（v3.9 新增 · v4.0 改为顶部折叠入口）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。全量结果<b>汇总在报告顶部的「🚨 近 3 天待回应 N 项」入口条</b>（给管理者 / 教务的统一视图，<b>默认收起，点击展开</b>明细表：学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时入口条显示绿色「检查通过」。<br>
 • <b>主讲备课建议（v4.9 新增 · v4.10.1 收敛为单表）</b>：回答「主讲下节课该重点讲什么／什么题型」，按<b>覆盖学生数降序</b>排列（普遍性优先），同覆盖时<b>有小黑板实证错误的优先</b>（小黑板是学生真实作答，比「群里提过」硬）；每条给出「典型题型／卡点」，点开可看原文出处，直接用于备课选题。<b>本表即为双源呈现</b> —— 此前「高频知识点」表只统计聊天命中（<code>extract.top_topics</code>），小黑板的实证错误完全没进；现并列展示「群聊提及」（聊天中命中该知识点的学生数）与「小黑板实证」（读图判定该知识点<b>有错误／卡点</b>的学生数），「覆盖学生」为两源并集。⚠️ <b>v4.10.1 删除了原先并列的「高频知识点 · 数据明细」表</b> —— 它的列（知识点／群聊提及／小黑板实证／合计涉及／占比）与建议表完全重合（用户指出「这两部分重复了，保留上面的即可」），故建议表改为<b>显示全部知识点</b>，长尾（数列、解三角形等）不再截断。③ ⚠️ <b>题型证据分硬／软</b>：标「实证错误 N」= 读图判「有错」或存在<b>非「没写完」</b>类实质错误（真的不会）；标「仅未完成／卡点」= 只是没写完（课堂节奏／书写速度，非能力）—— 与 v4.4 学习分层口径一致，不混为一谈。<b>读图模型对同一件事有「未完成收尾」与「收尾未完成」两种词序，后者才是真实语料主流写法（实测 176 条错误标注中占 94 条），故判定统一用包含式匹配（<code>common.is_finish_err</code>），精确匹配会静默漏掉最常见的写法。</b>④ 反编造：题型名只能来自 <code>FINE_TYPES</code> 词表命中或字段原文（形如「课堂作答卡点：…」），无证据时如实说明、留空，<b>绝不硬凑题型名</b>；不预测考情、不生成内容。<br>
-• <b>在册全覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）</b>：报告主体的学生卡<b>只覆盖「有聊天记录」的学生</b>，而在册名单往往明显更大 —— 差额恰恰是最需要预警的一批人，本区块专门收口。判定用<b>两轴</b>：① 沟通轴（聊天，取近 {args.chat_days} 天）② 学习轴（出勤，取报告窗口全窗口）。分档：<b>失联</b>＝无聊天记录且无出勤记录；<b>出勤但无沟通</b>＝无聊天记录但有出勤记录（学生在正常上课，缺的是企业微信沟通通道）；<b>单向沟通</b>＝有聊天记录但学生·家长实质发言为 0（仅老师输出）；<b>低互动</b>＝学生·家长实质发言 1~2 条。⚠️ <b>判定「失联」一律以出勤为准，不以群是否存在为准</b> —— 群列表接口 <code>wxworkSessionStat/getList</code> 只收录有响应时效记录的群，实测有损（教务视角 243 人在册、群仅 144，缺口分散在全部 7 门课，其中 93 人仍在正常出勤），若拿群判失联会一次性误报约四成学生。群「采到与否」仅作根因标签展示。两轴窗口必须分开：出勤本稀疏，若也只看近两周，会把已结课学生全部误判为「无出勤」→ 误报失联。<br>
+• <b>总人数覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）</b>：报告主体的学生卡<b>只覆盖「有聊天记录」的学生</b>，而总人数名单往往明显更大 —— 差额恰恰是最需要预警的一批人，本区块专门收口。判定用<b>两轴</b>：① 沟通轴（聊天，取近 {args.chat_days} 天）② 学习轴（出勤，取报告窗口全窗口）。分档：<b>失联</b>＝无聊天记录且无出勤记录；<b>出勤但无沟通</b>＝无聊天记录但有出勤记录（学生在正常上课，缺的是企业微信沟通通道）；<b>单向沟通</b>＝有聊天记录但学生·家长实质发言为 0（仅老师输出）；<b>低互动</b>＝学生·家长实质发言 1~2 条。⚠️ <b>判定「失联」一律以出勤为准，不以群是否存在为准</b> —— 群列表接口 <code>wxworkSessionStat/getList</code> 只收录有响应时效记录的群，实测有损（教务视角名单 243 人、群仅 144，缺口分散在全部 7 门课，其中 93 人仍在正常出勤），若拿群判失联会一次性误报约四成学生。群「采到与否」仅作根因标签展示。两轴窗口必须分开：出勤本稀疏，若也只看近两周，会把已结课学生全部误判为「无出勤」→ 误报失联。<br>
 </p></details>
 </div>
 <script>
@@ -1590,6 +1609,15 @@ function showMain(t){{
     b.classList.toggle('active', b.getAttribute('data-t')===t);
   }});
   window.scrollTo({{top:0,behavior:'smooth'}});
+}}
+// v4.10.3：档位表「人数」开关 —— 点击在本行下方展开 / 收起该档名单
+function covToggle(t, forceOpen){{
+  var row=document.getElementById('covdet-'+t); if(!row) return;
+  var open = row.style.display !== 'none';
+  var next = forceOpen ? true : !open;
+  row.style.display = next ? 'table-row' : 'none';
+  var n=document.querySelector('.covn[data-covn="'+t+'"]');
+  if(n) n.classList.toggle('on', next);
 }}
 // 在指定面板内切换分组（Tab2 与 Tab3 各自一套，id 前缀不同，互不干扰）
 function showTabIn(panelId, prefix, idx){{
@@ -1617,9 +1645,10 @@ function showDim(where, d){{
 function topKpi(kind){{
   if(kind==='lost'||kind==='anc'){{
     showMain('t1');
-    var id=(kind==='lost')?'covTier-失联':'covTier-出勤但无沟通';
-    var el=document.getElementById(id);
-    if(el){{ el.open=true; setTimeout(function(){{el.scrollIntoView({{behavior:'smooth',block:'center'}});}},80); }}
+    var t=(kind==='lost')?'失联':'出勤但无沟通';
+    covToggle(t, true);   // 第二参 = 强制展开（不收起）
+    var el=document.getElementById('covdet-'+t);
+    if(el){{ setTimeout(function(){{el.scrollIntoView({{behavior:'smooth',block:'center'}});}},80); }}
     return;
   }}
   showMain('t3');
