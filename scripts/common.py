@@ -211,7 +211,22 @@ def ensure_py_deps():
 # ============================================================================
 
 # —— 小黑板：这些「错误类型」其实是没写完，不记在能力账上 ——
+# ⚠️ 读图模型对同一件事有两种词序：「未完成收尾」与「**收尾未完成**」，后者在真实语料里
+#    才是主流写法（实测 176 条错误标注中「收尾未完成」占 94 条）。故一律用 is_finish_err()
+#    做**包含式**判定，精确匹配会静默漏掉最常见的那个写法。
 NO_FINISH_ERR = {"未完成收尾", "未完成", "未收尾", "未写完"}
+_FINISH_KEYS = ("未完成", "未收尾", "未写完", "没写完", "未做完")
+
+
+def is_finish_err(e):
+    """该条小黑板「错误」标注是否只是没写完（课堂节奏 / 书写速度，非能力问题）。
+
+    包含式匹配，兼容「未完成收尾 / 收尾未完成 / 未完成 / 未收尾 / 未写完」等写法。
+    """
+    s = (e or "").strip()
+    if not s:
+        return False
+    return s in NO_FINISH_ERR or any(k in s for k in _FINISH_KEYS)
 
 LEVEL_ORDER = ["red", "orange", "green", "blue"]        # 由差到好
 LEVEL_CN = {"red": "需重点关注", "orange": "需关注", "green": "正常", "blue": "良好"}
@@ -714,9 +729,13 @@ def fine_from_board(board, per_topic=6):
         # 归属知识点：读图的 topic 默认沿用，但若该题型有强制归属（ITEM_TOPIC），以强制值为准
         # ——「定义与轨迹判定」这类求轨迹题属「曲线与方程」，即使读图把它标成了「圆锥曲线」。
         topic = ITEM_TOPIC.get(item, topic)
+        # hard = 硬证据（读图明确判「有错」，或存在非「没写完」类的实质错误）。
+        # 供「主讲备课建议」区分「真的不会」与「只是没写完」—— v4.4 已确立该口径：
+        # 「未完成收尾」属课堂节奏 / 书写速度，不是能力问题，不能作为「该知识点薄弱」的证据。
+        _hard = (ok == "有错") or any(not is_finish_err(e) for e in errs)
         res.setdefault(topic, []).append(
             {"item": item, "kind": "小黑板", "at": d.get("lesson_date") or "",
-             "evi": evi, "count": 1})
+             "evi": evi, "count": 1, "hard": _hard})
         # 严重度：读图明确判「有错」> 有卡点/待判 > 仅未完成收尾（用于同题型内挑代表条目）
         _s = 2 if ok == "有错" else (1 if stuck else 0)
         k2 = (topic, item)
@@ -729,6 +748,8 @@ def fine_from_board(board, per_topic=6):
             k = r["item"]
             if k in agg:
                 agg[k]["count"] += 1
+                # 硬证据可累加：同题型下只要有一轮是实质错误，该题型就算「有实证错误」
+                agg[k]["hard"] = bool(agg[k].get("hard")) or bool(r.get("hard"))
             else:
                 agg[k] = dict(r)
         items = sorted(agg.values(), key=lambda r: (-r["count"], -sev.get((topic, r["item"]), 0)))
@@ -746,6 +767,7 @@ def merge_fine(*maps):
                 k = r.get("item") or "—"
                 if k in slot:
                     slot[k]["count"] = slot[k].get("count", 1) + r.get("count", 1)
+                    slot[k]["hard"] = bool(slot[k].get("hard")) or bool(r.get("hard"))
                 else:
                     slot[k] = dict(r)
     return {t: list(v.values()) for t, v in out.items()}

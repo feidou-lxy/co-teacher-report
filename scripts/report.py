@@ -801,6 +801,29 @@ details.meth[open]>summary:before{content:"▾ "}
 .covevi{color:#6b7280}
 .covcause{display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#f2f4f7;color:#6b7280;white-space:nowrap}
 .covdeg{margin-top:10px;font-size:11.5px;color:#8a9099;line-height:1.7}
+/* v4.9 主讲备课建议（下节课重点讲什么） */
+.tadv{margin-top:14px;border:1px solid #ffe0b2;border-radius:10px;overflow:hidden;background:#fffdf8}
+.tadv-h{padding:9px 13px;font-size:13.5px;font-weight:700;color:#ad6800;background:#fff7e6;border-bottom:1px solid #ffe0b2}
+.tadv-sum{padding:11px 13px;font-size:13px;line-height:1.9;color:#3d3d3d;border-bottom:1px dashed #ffe0b2;background:#fffefa}
+.tadv-sum b{color:#ad6800}
+.tadv-sum .hit{color:#cf1322;font-weight:700}
+.tadv-tab{width:100%;border-collapse:collapse;font-size:12.5px}
+.tadv-tab th,.tadv-tab td{border-bottom:1px solid #f6f1e7;padding:7px 10px;text-align:left;vertical-align:top}
+.tadv-tab th{color:#8a9099;font-weight:600;font-size:11.5px;background:#fffcf5;white-space:nowrap}
+.tadv-tab td.rk{font-weight:700;color:#ad6800;width:32px}
+.tadv-tab td.nm{font-weight:700;color:#1f2329}
+.tadv-tab td.n{white-space:nowrap;color:#4b5563}
+.tadv-tab td.n b{color:#cf1322}
+.tadv .mute{color:#b3aca0;font-weight:400}
+.tadv .hard{color:#cf1322;font-weight:700;margin-left:5px;font-size:11px}
+.tadv-tab .itm{color:#7c5c1e;line-height:1.7}
+.tadv-cap{padding:6px 13px;font-size:11px;color:#a09a8c;background:#fffcf5;border-bottom:1px dashed #ffe0b2;line-height:1.7}
+.tadv-ev>summary{cursor:pointer;list-style:none;padding:8px 13px;font-size:12px;color:#ad6800;background:#fffcf5;outline:none;font-weight:600}
+.tadv-ev>summary::-webkit-details-marker{display:none}
+.tadv-ev[open]>summary{border-bottom:1px dashed #ffe0b2}
+.tadv-ev .in{padding:8px 13px;max-height:420px;overflow:auto}
+.tadv-ev .fevi{color:#a09a8c;font-size:11.5px}
+.tadv-note{padding:7px 13px;font-size:11px;color:#a09a8c;background:#fffcf5;line-height:1.75;border-top:1px dashed #ffe0b2}
 """
 
 
@@ -988,6 +1011,211 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None):
             f'{bar}{tab}{ctab}{lists}</div>')
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# v4.9：主讲备课建议 —— 回答「主讲下节课应该重点讲什么 / 什么题型」
+# ══════════════════════════════════════════════════════════════════════════
+# 只用两类**已经发生的事实**，不生成任何新内容：
+#   ① 群聊侧：学生主动提问 / 老师指出问题 命中的知识点（extract.top_topics）
+#   ② 小黑板侧：读图实证「有错误轮次所关联的知识点」（boards_summary.error_topics）
+#      ＋ 逐题卡点 / 原题（common.fine_from_board 下钻到题型）
+# 排序按「覆盖学生数」降序（普遍性优先）；同覆盖时「有小黑板实证错误」优先 ——
+# 小黑板是学生真实作答，比「群里提过」硬。
+# 🔒 反编造铁律：题型名只能来自 FINE_TYPES 词表命中，或字段原文（形如「课堂作答卡点：…」）；
+#    每条必附原文出处；无证据时不硬凑，如实说明。
+TOPIC_ALIAS = {"解析几何": "直线和圆", "平面解析几何": "直线和圆"}
+
+
+def _std_topic(t):
+    """读图 / 词表给出的 topic → 统一大类名。
+
+    口径表优先于模型标签（v4.6 原则）：读图模型常把「直线和圆」类题目标成「解析几何」，
+    教材章节口径应归「直线和圆」，故先用 TOPIC_ALIAS 硬映射，再走 align_topic 归一。
+    「其他」（问卷 / 调查表）直接丢弃 —— 它属出勤参与度，不是知识点薄弱。
+    """
+    t = (t or "").strip()
+    if not t or t == "其他":
+        return ""
+    return align_topic(TOPIC_ALIAS.get(t, t), list(CHAT_TOPIC_KEYS.keys()))
+
+
+def _collect_topics(crows, boards_map):
+    """聚合「知识点 → 分源覆盖学生集合」。分子分母都限定在本组 crows 内，口径一致。
+
+    返回 {topic: {"chat": set(学生), "board": set(学生), "err": set(学生)}}，
+    分别是「群聊提及」「小黑板涉及」「小黑板实证有错」。
+    """
+    agg = {}
+    for r in crows:
+        stu = r["stu"]
+        for t in (r["s"].get("top_topics") or []):
+            k = _std_topic(t)
+            if k:
+                agg.setdefault(k, {"chat": set(), "board": set(), "err": set()})["chat"].add(stu)
+    for r in crows:
+        stu = r["stu"]
+        b = (boards_map or {}).get(common.norm_name(stu))
+        if not b:
+            continue
+        for t in (b.get("kb_topics") or []):
+            k = _std_topic(t)
+            if k:
+                agg.setdefault(k, {"chat": set(), "board": set(), "err": set()})["board"].add(stu)
+        for t in (b.get("error_topics") or []):
+            k = _std_topic(t)
+            if k:
+                agg.setdefault(k, {"chat": set(), "board": set(), "err": set()})["err"].add(stu)
+    return agg
+
+
+def _collect_items(crows, boards_map, max_evi=2):
+    """聚合「知识点 → 题型/卡点 → 证据」。聊天侧 fine ＋ 小黑板侧 fine_from_board 合并。
+
+    复用学生卡同一套合并逻辑（与卡片「具体薄弱点」同源），保证两处口径一致、不会互相打架。
+    """
+    out = {}
+    for r in crows:
+        stu = r["stu"]
+        b = (boards_map or {}).get(common.norm_name(stu))
+        merged = common.merge_fine(r["s"].get("fine") or {}, common.fine_from_board(b))
+        for topic, rows in (merged or {}).items():
+            k = _std_topic(topic)
+            if not k:
+                continue
+            slot = out.setdefault(k, {})
+            for it in rows:
+                item = (it.get("item") or "").strip()
+                if not item:
+                    continue
+                e = slot.setdefault(item, {"stu": set(), "hard_stu": set(),
+                                           "kinds": set(), "evi": [], "cnt": 0})
+                e["stu"].add(stu)
+                if it.get("kind"):
+                    e["kinds"].add(it["kind"])
+                # hard：读图判「有错」或存在非「没写完」的实质错误 → 说明是「真的不会」，
+                # 而不是「课堂没写完」。v4.4 口径：未完成收尾属节奏问题，不算知识点薄弱。
+                if it.get("hard"):
+                    e["hard_stu"].add(stu)
+                e["cnt"] += int(it.get("count") or 1)
+                txt = f'{it.get("at") or ""} 「{(it.get("evi") or "").strip()}」'.strip()
+                if it.get("evi") and txt not in e["evi"] and len(e["evi"]) < max_evi:
+                    e["evi"].append(txt)
+    return out
+
+
+def teaching_advice(crows, boards_map, n_any=None):
+    """渲染「🎓 主讲备课建议」区块。无任何证据时返回空串（不渲染空壳）。"""
+    n_any = n_any if n_any is not None else len(crows)
+    if not n_any:
+        return ""
+    agg = _collect_topics(crows, boards_map)
+    items = _collect_items(crows, boards_map)
+    if not agg:
+        return ""
+    n_bd = sum(1 for r in crows if (boards_map or {}).get(common.norm_name(r["stu"])))
+    rank = []
+    for t, d in agg.items():
+        stu = d["chat"] | d["board"]
+        un = len(stu)
+        # 只留「有普遍性」的：≥2 人，或虽只 1 人但占比已达 1/3（小组课也该被看到）
+        if un < 2 and un < n_any * 0.30:
+            continue
+        rank.append({
+            "topic": t, "un": un, "chat": len(d["chat"]),
+            "board": len(d["board"]), "err": len(d["err"]),
+            # 题型排序：先「有实证错误的人数」降序（真的不会 > 只是没写完），再覆盖人数降序
+            "items": sorted(items.get(t, {}).items(),
+                            key=lambda kv: (-len(kv[1]["hard_stu"]), -len(kv[1]["stu"]),
+                                            -kv[1]["cnt"], kv[0])),
+        })
+    if not rank:
+        return ""
+    rank.sort(key=lambda x: (-x["un"], -x["err"], -x["chat"], x["topic"]))
+    top = rank[0]
+    pct = round(100 * top["un"] / n_any)
+
+    # ---- 一句话结论 ----
+    ev = []
+    if top["err"]:
+        ev.append(f'其中 <span class="hit">{top["err"]} 人</span>小黑板作答有实证错误')
+    elif top["board"]:
+        ev.append(f'其中 {top["board"]} 人小黑板涉及该知识点的作答')
+    _hard_items = [(i, v) for i, v in top["items"] if v["hard_stu"]][:2]
+    if _hard_items:
+        ev.append('最集中的实证错误题型是 '
+                  + "、".join(f'「{i}」（{len(v["hard_stu"])} 人）' for i, v in _hard_items))
+    elif top["items"]:
+        ev.append('主要集中在 ' + "、".join(f'「{i}」' for i, _ in top["items"][:2]))
+    tail = ("，" + "；".join(ev)) if ev else ""
+    if pct >= 60:
+        line = (f'下节课建议 <b>优先处理「{top["topic"]}」</b> —— '
+                f'本组 {top["un"]}/{n_any} 人（<span class="hit">{pct}%</span>）涉及{tail}。')
+    elif pct >= 35:
+        line = (f'建议重点讲 <b>「{top["topic"]}」</b> —— {top["un"]} 人（{pct}%）涉及{tail}；'
+                f'其余按优先级表依次安排。')
+    else:
+        line = (f'本组暂无压倒性共性问题，按优先级表顺序处理即可，首条为 '
+                f'<b>「{top["topic"]}」</b>（{top["un"]} 人，{pct}%）{tail}；'
+                f'建议结合课堂实际进度取舍。')
+    if len(rank) > 1 and rank[1]["un"] >= max(3, top["un"] * 0.7):
+        _s = rank[1]
+        line += (f' 可同步安排 <b>「{_s["topic"]}」</b>'
+                 f'（{_s["un"]} 人，{round(100 * _s["un"] / n_any)}%）。')
+
+    # ---- 优先级表 ----
+    rows = ""
+    for i, x in enumerate(rank[:8], 1):
+        its = "、".join(
+            f'{k} <span class="mute">{len(v["stu"])}人</span>'
+            + (f'<b class="hard">实证错误 {len(v["hard_stu"])}</b>' if v["hard_stu"] else '')
+            for k, v in x["items"][:2]) or "—"
+        bd = (f'{x["err"]}' if x["err"] else "—") + (f' <span class="mute">/涉及 {x["board"]}</span>' if x["board"] else "")
+        rows += (f'<tr><td class="rk">{i}</td><td class="nm">{x["topic"]}</td>'
+                 f'<td class="n"><b>{x["un"]}</b>/{n_any} · {round(100 * x["un"] / n_any)}%</td>'
+                 f'<td class="n">{x["chat"] or "—"}</td>'
+                 f'<td class="n">{bd}</td>'
+                 f'<td class="itm">{its}</td></tr>')
+
+    # ---- 可核对的证据（折叠）----
+    ev_html = ""
+    kind_cn = {"小黑板": "bd", "老师指出": "tea", "学生提问": "stu"}
+    for x in rank[:8]:
+        lis = ""
+        for item, e in x["items"][:6]:
+            ks = "／".join(sorted(e["kinds"]))
+            cls = kind_cn.get(ks, "stu")
+            evi = " ".join(e["evi"])
+            hard = (f'<b class="hard">实证错误 {len(e["hard_stu"])} 人</b>' if e["hard_stu"]
+                    else '<span class="mute">仅未完成／卡点</span>')
+            lis += (f'<li><span class="fitm">{item}</span>'
+                    f'<span class="fsrc {cls}">{ks}</span>{hard}'
+                    f'<span class="fcnt">×{e["cnt"]} / {len(e["stu"])}人</span>'
+                    + (f'<span class="fevi">{evi}</span>' if evi else '') + '</li>')
+        ev_html += f'<div class="fine-t">{x["topic"]}</div><ul class="fine-l">{lis}</ul>'
+
+    return (
+        '<div class="tadv">'
+        '<div class="tadv-h">🎓 主讲备课建议 · 下节课重点讲什么</div>'
+        f'<div class="tadv-sum">{line}</div>'
+        '<table class="tadv-tab"><tr><th>优先</th><th>建议重点讲</th><th>覆盖学生</th>'
+        '<th>群聊提及</th><th>小黑板实证</th><th>典型题型 / 卡点</th></tr>'
+        + rows + '</table>'
+        + f'<div class="tadv-cap">「覆盖学生」= 群聊提及 ∪ 小黑板涉及，分母为本组 {n_any} 人；'
+          f'「小黑板实证」= 该知识点上读图判定有错误／卡点的学生数（本组小黑板读图覆盖 {n_bd} 人，'
+          f'未被素材覆盖的学生不在分母内）。'
+        + ('<b>本视角未接入小黑板读图数据，「实证错误」维度为空，请以群聊高频为准。</b>'
+           if n_bd == 0 else '')
+        + '</div>'
+        + (f'<details class="tadv-ev"><summary>📎 展开题型与原文出处'
+           f'（{len(rank)} 个知识点 · 可回群 / 回图逐条核对）</summary>'
+           f'<div class="in">{ev_html}</div></details>' if ev_html else '')
+        + '<div class="tadv-note">排序：按「覆盖人数」降序；同覆盖时「有小黑板实证错误」的优先。'
+          '题型旁标 <b class="hard">实证错误 N</b> 的，是读图判定<b>确实做错</b>的学生数（真的不会）；'
+          '标「仅未完成／卡点」的，是<b>只是没写完</b>（课堂节奏 / 书写速度，非能力问题）——'
+          '两者已按 v4.4 口径区分，不要混为一谈。文案只复述已发生的证据'
+          '（群聊提问 / 老师指出 / 小黑板作答），不预测考情、不生成内容。</div>'
+        '</div>')
+
+
 def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, edu=False, show_co_tag=False, boards_map=None):
     """构造一个分组区块（grp）。show_filter=True 时渲染「筛选联席」下拉（教务·按课程维度 / 课程维度用）。
     edu=True（教务视角）：学生卡第④块为「教务 To-Do」；否则为「联席跟进 Action」。
@@ -995,13 +1223,23 @@ def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, ed
     c_slow = sum(1 for r in crows if r["s"].get("resp_slow"))
     c_unres = sum(1 for r in crows if r["s"]["unresolved"])
     c_absent = sum(1 for r in crows if r["att"] and r["att"]["absentCount"] > 0)
-    c_topic = Counter()
-    for r in crows:
-        for t in r["s"]["top_topics"]:
-            c_topic[t] += 1
+    # v4.9：高频知识点表改为**双源**（群聊提及 × 小黑板实证），不再只挂群聊一侧。
+    # 用户反馈：这张表此前只统计聊天文本命中，小黑板的实证错误完全没进来 —— 而小黑板
+    # 才是学生真实作答、最能说明「哪里不会」的证据。现两源并列展示，并各标人数。
+    tagg = _collect_topics(crows, boards_map)
+    n_bd_all = sum(1 for r in crows if (boards_map or {}).get(common.norm_name(r["stu"])))
+    topic_rank = sorted(tagg.items(),
+                        key=lambda kv: (-len(kv[1]["chat"] | kv[1]["board"]), -len(kv[1]["err"]), kv[0]))
     topic_rows = "".join(
-        f"<tr><td>{t}</td><td>{c}</td><td>{round(100*c/len(crows))}%</td></tr>"
-        for t, c in c_topic.most_common())
+        f'<tr><td>{t}</td>'
+        f'<td>{len(d["chat"]) or "—"}</td>'
+        f'<td>{len(d["err"]) or "—"}'
+        + (f' <span class="mute">/涉及 {len(d["board"])}</span>' if d["board"] else '')
+        + f'</td>'
+          f'<td><b>{len(d["chat"] | d["board"])}</b></td>'
+          f'<td>{round(100 * len(d["chat"] | d["board"]) / len(crows))}%</td></tr>'
+        for t, d in topic_rank)
+    advice = teaching_advice(crows, boards_map)
     if show_filter and co_opts:
         opts = "".join(f'<option value="{co}">{co}（{cnt}）</option>' for co, cnt in co_opts.most_common())
         cofilter = (f'<div class="cofilterwrap">筛选联席：'
@@ -1044,7 +1282,9 @@ def build_section(prefix, sec_id, crows, title, show_filter, co_opts, is_all, ed
   </div>
   <div class="kpihint">💡 点击上方任一统计卡，可只看这一类学生；再次点击（或点「学生数」）恢复全部。<span class="kpicnt" id="kpiCnt-{sec_id}"></span></div>
   <div class="section"><h3>高频知识点（{title}）</h3>
-    <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{topic_rows}</table></div>
+    <table><tr><th>知识点</th><th>群聊提及</th><th>小黑板实证</th><th>合计涉及</th><th>占比</th></tr>{topic_rows}</table>
+    <div class="tadv-cap">「群聊提及」= 聊天中命中该知识点的学生数；「小黑板实证」= 读图判定该知识点<b>有错误／卡点</b>的学生数（<span class="mute">/涉及</span> 为该知识点有作答的学生数）；「合计涉及」为两源并集。本组小黑板读图覆盖 {n_bd_all} 人。</div>
+    {advice}</div>
   <div class="section"><h3>逐学生表现 &amp; {todo_head}（需关注置顶）</h3>{cards}</div>
 </div>'''
 
@@ -1122,13 +1362,27 @@ def main():
     rt_n_stu = len(rt_stu)
     rt_n_items = sum(len(r["s"]["recent3"]["items"]) for r in rt_stu)
     rt_banner = recent3_banner(rows, edu=is_edu)
-    glob_topic = Counter()
-    for r in rows:
-        for t in r["s"]["top_topics"]:
-            glob_topic[t] += 1
+    # v4.9：是否存在「多个分组」——决定「三、整体画像」要不要再给一份全局备课建议。
+    # 课程视角只有 1 个分组（该课程全部），与整体画像完全重合，故不重复渲染。
+    _n_course = len({r["course"] for r in rows})
+    multi_group = bool(is_edu or (not is_course and _n_course > 1))
+    # v4.9：全量画像同样改为**双源**（群聊提及 × 小黑板实证）。
+    # 与分组内那份的区别：这里是跨全部分组的汇总；若只有一个分组（课程视角），
+    # 内容与分组内完全一致，此时不再重复渲染备课建议（避免同一页出现两份相同结论）。
+    gagg = _collect_topics(rows, boards_map)
+    n_bd_all = sum(1 for r in rows if (boards_map or {}).get(common.norm_name(r["stu"])))
+    glob_rank = sorted(gagg.items(),
+                       key=lambda kv: (-len(kv[1]["chat"] | kv[1]["board"]), -len(kv[1]["err"]), kv[0]))
     glob_topic_rows = "".join(
-        f"<tr><td>{t}</td><td>{c}</td><td>{round(100*c/len(rows))}%</td></tr>"
-        for t, c in glob_topic.most_common())
+        f'<tr><td>{t}</td>'
+        f'<td>{len(d["chat"]) or "—"}</td>'
+        f'<td>{len(d["err"]) or "—"}'
+        + (f' <span class="mute">/涉及 {len(d["board"])}</span>' if d["board"] else '')
+        + f'</td>'
+          f'<td><b>{len(d["chat"] | d["board"])}</b></td>'
+          f'<td>{round(100 * len(d["chat"] | d["board"]) / len(rows))}%</td></tr>'
+        for t, d in glob_rank)
+    glob_advice = teaching_advice(rows, boards_map) if multi_group else ""
 
     if is_edu:
         # ===== 教务双维度 =====
@@ -1242,8 +1496,10 @@ def main():
   <button class="searchclear" onclick="document.getElementById('stuSearch').value='';doSearch('')">清空</button>
 </div>
 {panels}
-<div class="section"><h2>三、整体画像：高频知识点（全量）</h2>
-  <table><tr><th>知识点</th><th>涉及学生数</th><th>占比</th></tr>{glob_topic_rows}</table></div>
+<div class="section"><h2>三、整体画像：高频知识点（全量 · 群聊 × 小黑板 双源）</h2>
+  <table><tr><th>知识点</th><th>群聊提及</th><th>小黑板实证</th><th>合计涉及</th><th>占比</th></tr>{glob_topic_rows}</table>
+  <div class="tadv-cap">「群聊提及」= 聊天中命中该知识点的学生数；「小黑板实证」= 读图判定该知识点<b>有错误／卡点</b>的学生数（<span class="mute">/涉及</span> 为该知识点有作答的学生数）；「合计涉及」为两源并集。全量小黑板读图覆盖 {n_bd_all} 人。</div>
+  {glob_advice}</div>
 <details class="meth"><summary>四、方法论与口径说明（点击展开）</summary>
 <p class="note">
 • 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 分页取每群**全量**消息（倒序；单群 500 条上限已取消，按 <code>total</code> 逐页拉满），文本与语音转写均纳入。<br>
@@ -1262,6 +1518,7 @@ def main():
 • 「是否需回复」结论：由聊天记录分析得出，不再依赖后台「是否回复」列（实测存在误差）——以「最后一条老师消息之后是否仍有学生/家长实质提问」为准；该结论同时驱动「待回复群」KPI 与定档红。<br>
 • 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
 • <b>近 3 天待回应（v3.9 新增 · v4.0 改为顶部折叠入口）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。全量结果<b>汇总在报告顶部的「🚨 近 3 天待回应 N 项」入口条</b>（给管理者 / 教务的统一视图，<b>默认收起，点击展开</b>明细表：学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时入口条显示绿色「检查通过」。<br>
+• <b>高频知识点与主讲备课建议（v4.9 新增）</b>：① <b>「高频知识点」表改为双源</b> —— 此前只统计聊天文本命中（<code>extract.top_topics</code>），小黑板的实证错误完全没进这张表；现并列展示「群聊提及」（聊天中命中该知识点的学生数）与「小黑板实证」（读图判定该知识点<b>有错误／卡点</b>的学生数），末列「合计涉及」为两源并集。② 表下新增 <b>🎓 主讲备课建议</b>：回答「主讲下节课该重点讲什么／什么题型」，按<b>覆盖学生数降序</b>排列（普遍性优先），同覆盖时<b>有小黑板实证错误的优先</b>（小黑板是学生真实作答，比「群里提过」硬）；每条给出「典型题型／卡点」，点开可看原文出处，直接用于备课选题。③ ⚠️ <b>题型证据分硬／软</b>：标「实证错误 N」= 读图判「有错」或存在<b>非「没写完」</b>类实质错误（真的不会）；标「仅未完成／卡点」= 只是没写完（课堂节奏／书写速度，非能力）—— 与 v4.4 学习分层口径一致，不混为一谈。<b>读图模型对同一件事有「未完成收尾」与「收尾未完成」两种词序，后者才是真实语料主流写法（实测 176 条错误标注中占 94 条），故判定统一用包含式匹配（<code>common.is_finish_err</code>），精确匹配会静默漏掉最常见的写法。</b>④ 反编造：题型名只能来自 <code>FINE_TYPES</code> 词表命中或字段原文（形如「课堂作答卡点：…」），无证据时如实说明、留空，<b>绝不硬凑题型名</b>；不预测考情、不生成内容。<br>
 • <b>在册全覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）</b>：报告主体的学生卡<b>只覆盖「有聊天记录」的学生</b>，而在册名单往往明显更大 —— 差额恰恰是最需要预警的一批人，本区块专门收口。判定用<b>两轴</b>：① 沟通轴（聊天，取近 {args.chat_days} 天）② 学习轴（出勤，取报告窗口全窗口）。分档：<b>失联</b>＝无聊天记录且无出勤记录；<b>出勤但无沟通</b>＝无聊天记录但有出勤记录（学生在正常上课，缺的是企业微信沟通通道）；<b>单向沟通</b>＝有聊天记录但学生·家长实质发言为 0（仅老师输出）；<b>低互动</b>＝学生·家长实质发言 1~2 条。⚠️ <b>判定「失联」一律以出勤为准，不以群是否存在为准</b> —— 群列表接口 <code>wxworkSessionStat/getList</code> 只收录有响应时效记录的群，实测有损（教务视角 243 人在册、群仅 144，缺口分散在全部 7 门课，其中 93 人仍在正常出勤），若拿群判失联会一次性误报约四成学生。群「采到与否」仅作根因标签展示。两轴窗口必须分开：出勤本稀疏，若也只看近两周，会把已结课学生全部误判为「无出勤」→ 误报失联。<br>
 </p></details>
 </div>
