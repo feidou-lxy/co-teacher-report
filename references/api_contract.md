@@ -48,9 +48,14 @@
 参数：`year=4&term=3&timeDimension=month|day&statDate=YYYY-MM-DD&page=&pageSize=`
 
 - **月维度**：`timeDimension=month&statDate=<当月第一天>`（如 `2026-09-01`）。
-  注意：当前月后台尚未聚合，月维度返回 0，需用日维度补。
+  注意：**当前月后台尚未聚合，月维度返回 0**，必须用日维度补（见下）。过去月已聚合、覆盖完整。
 - **日维度**：`timeDimension=day&statDate=<当天>`。
-- 实践：月维度（窗口起始月）与日维度（今天）并集，按 `roomId` 去重，得到完整群集合。
+- 实践（v4.7 修正）：月维度（窗口起始月）＋**当前月逐日（1 号 ~ 今天）** 并集，按 `roomId` 去重。
+  仅补「当天」会漏掉当月 1~(今天-1) 号有活动、今天无活动的群（实测一门课因此少 8 个群）。
+  ⚠️ **该接口是有损清单，不是课程全部群**：只收录「有过会话/响应时效记录」的群。
+  某课程在册 58 人，但后台此接口跨全年各月 + 当月逐日去重后仅 39 个 roomId（21 名在册学员的群从未产生响应时效记录，故查不到 roomId）；
+  花名册 `cStudentFile/getCStudentFileList` 才是**在册学员权威来源**（含 `ProductId`，但**无 roomId**）。
+  若需枚举课程「全部在册学员」，应以花名册为准、再用本接口 backfill roomId（无 roomId 的群无聊天可分析）。
 
 返回 `data.list[]` 字段（技能用到）：
 - `roomId` 群 ID（拉聊天用）
@@ -104,9 +109,12 @@
 
 ## 4. 群聊消息
 
-`GET /wxworkChat/getChatList?roomId=<room>&page=1&pageSize=500`
+`GET /wxworkChat/getChatList?roomId=<room>&page=N&pageSize=500`
 
-- 倒序返回，单群最多 500 条。
+- 倒序返回（`page=1` 为最新）；返回体含 `data.total`（该群消息总条数）。
+- ⚠️ **单群条数上限已取消**（v3.5 起）：按页累加直到拉满 `total` 即可取全量。
+  实测单群最多 **1399 条**（近 3 页）也能完整拉取；6 个群超过 500 条均正常取全。
+  旧写法「只取 `page=1` + `pageSize=500`」会把活跃群较早历史静默截断，**不要退回该写法**（实现见 `pull_chats.py:get_chat()`）。
 - `data.list[]` 每条消息：`msgTime, role(1=老师/2=学生家长), msgType(text/voice), name, content`
   - 文本：`content` 为字符串，或 `{ "content": "..." }`
   - 语音：`content` 为 `{ "content": { "content": "转写文本" } }`
