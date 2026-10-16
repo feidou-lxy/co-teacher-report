@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>学生学情分析 · 操作手册（v4.14）</title>
+<title>学生学情分析 · 操作手册（v4.15）</title>
 <style>
   :root{ --blue:#3a5bdb; --blue2:#5b78ff; --ink:#1f2329; --sub:#6b7280; --line:#e6e8eb; --ok:#2ba471; --warn:#ff8f1f; --red:#cf1322; --bg:#f5f6f8; }
   *{box-sizing:border-box;}
@@ -51,6 +51,21 @@
   .tip b{color:var(--ok);}
   .tip.k{background:#fff7ec;border-color:#ffd9a8;}
   .tip.k b{color:#b26a00;}
+  /* 第 0 步：两种取凭证做法 + 排查 */
+  .alt{border:1px solid var(--line);border-radius:10px;background:#fbfcfe;padding:11px 14px;margin:9px 0;}
+  .alt .ah{font-size:13px;font-weight:800;color:var(--blue);margin-bottom:6px;}
+  .alt .ah em{font-style:normal;font-weight:600;color:var(--sub);font-size:12px;margin-left:6px;}
+  .alt .nx{font-size:12px;color:var(--sub);margin:7px 0 0;padding-top:6px;border-top:1px dashed #dfe6f2;}
+  .alt .nx b{color:var(--blue);}
+  .alt.rec{background:#f3f8ff;border-color:#cfe0ff;}
+  .alt.rec .ah{color:#2440b3;}
+  .kbd{display:inline-block;background:#f3f4f6;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;color:#374151;}
+  .say.mono .txt{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:600;}
+  .chk{font-size:12.5px;color:#475569;background:#fffaf5;border:1px dashed #ffd9a8;border-radius:8px;padding:10px 14px;margin-top:9px;}
+  .chk .ch{font-weight:800;color:#b26a00;margin-bottom:3px;}
+  .chk ol{margin:4px 0 0;padding-left:20px;}
+  .chk li{margin:3px 0;line-height:1.6;}
+  .chk li b{color:var(--ink);}
   .more{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfe;overflow:hidden;}
   .more>summary{cursor:pointer;padding:11px 15px;font-size:13.5px;font-weight:700;color:var(--blue);background:#f0f4ff;list-style:none;user-select:none;}
   .more>summary::-webkit-details-marker{display:none;}
@@ -99,15 +114,17 @@
     <h1>学生学情分析 · 操作手册</h1>
     <p>3 步出学情分析，全程只用跟 WorkBuddy 说话，不用写代码</p>
     <span class="tag">🗣️ 对话驱动</span>
-    <span class="tag">🔑 自动登录取凭证</span>
+    <span class="tag">🔑 浏览器登录取凭证</span>
     <span class="tag">📊 出 HTML 报告</span>
     <span class="tag">🧭 联席 / 教务 / 课程 三视角</span>
   </div>
 
   <div class="body">
     <div class="lead">
-      只需三步：<b>登录后台 → 安装技能 → 说出姓名和月份</b>。取数、分析、排版全部自动完成。
-      支持<b>联席</b>（某联席名下学生）、<b>教务</b>（某教务全部学生）、<b>课程</b>（某门课全部学生，可下钻到联席）三种视角。请使用<b>自己的后台账号</b>。
+      只需三步：<b>登录后台（取凭证） → 安装技能 → 说出姓名和月份</b>。取数、分析、排版全部自动完成。
+      支持<b>联席</b>（某联席名下学生）、<b>教务</b>（某教务全部学生）、<b>课程</b>（某门课全部学生，可下钻到联席）三种视角。请使用<b>自己的后台账号</b>。<br>
+      <b>第 0 步「取凭证」有两条路</b>：让 WorkBuddy 打开浏览器、你自己登录（推荐）；或者你自己登录后把凭证复制给它（零配置）。
+      两条都不需要把账号密码告诉任何人 —— 详细步骤见<b>第 0 步</b>。
     </div>
 
     <!-- 第 0 步 -->
@@ -117,13 +134,49 @@
         <h3>登录后台（取凭证）</h3>
         <span class="when">仅首次 / token 过期时</span>
       </div>
-      <p>让 WorkBuddy 代你登录「学生管理后台」，自动保存凭证，无需自己操作。</p>
-      <div class="say">
-        <div class="lbl">你对 WorkBuddy 说：</div>
-        <div class="txt">帮我登录学生管理后台 stadminv2.xqmsx.cn 取 token</div>
+      <p>这一步只做一件事：<b>在浏览器里登录一次后台</b>，把登录凭证（token）交给 WorkBuddy。
+        它<b>不会</b>、也<b>不需要</b>知道你的账号密码 —— 密码永远由你自己在浏览器里输。
+        <b>下面两种做法，任选一种即可；做法一没反应就直接用做法二。</b></p>
+
+      <div class="alt rec">
+        <div class="ah">做法一 · 让 WorkBuddy 打开浏览器，你自己登录 <em>推荐：配一次，以后每次都是一句话</em></div>
+        <div class="rstep"><span class="n">1</span><span>先做一次<b>环境检查</b>（只做这一次）：打开 WorkBuddy 的 <b>设置 → Agent → 浏览器控制</b>，把开关打开；按提示安装 <b>WorkBuddy 浏览器扩展</b>（Chrome / Edge / QQ 浏览器任选），装完在浏览器里把扩展点开登录一次。</span></div>
+        <div class="rstep"><span class="n">2</span><span>然后对 WorkBuddy 说这句话：</span></div>
+        <div class="say">
+          <div class="lbl">你对 WorkBuddy 说：</div>
+          <div class="txt">帮我登录学生管理后台 stadminv2.xqmsx.cn 取 token</div>
+        </div>
+        <div class="rstep"><span class="n">3</span><span>浏览器会自动打开后台登录页 → <b>你自己输入账号密码 + 图形验证码</b> → 点登录。凭证自动存好（有效期约 24 小时），接着就能出报告了。</span></div>
+        <div class="nx">找不到那个开关、或扩展装不上？不用纠结 —— 直接用下面的<b>做法二</b>，效果完全一样。</div>
       </div>
-      <div class="tip">
-        它会打开登录页 → <b>你输入自己的账号密码 + 图形验证码</b> → 自动存好凭证（有效期约 24 小时）。
+
+      <div class="alt">
+        <div class="ah">做法二 · 你自己登录，把凭证复制给它 <em>零配置，半分钟；做法一没反应就用这个</em></div>
+        <div class="rstep"><span class="n">1</span><span>打开 <b>stadminv2.xqmsx.cn</b>，用自己账号正常登录（账号密码 + 图形验证码）。</span></div>
+        <div class="rstep"><span class="n">2</span><span>在这个页面按 <span class="kbd">F12</span> 打开开发者工具 → 点上方的 <span class="kbd">Console</span> 标签 → 输入下面这行，按回车：</span></div>
+        <div class="say mono"><div class="lbl">在 Console 里输入：</div><div class="txt">document.cookie</div></div>
+        <div class="rstep"><span class="n">3</span><span>会打印出一长串，找到里面 <b>token=</b> 那一段，<b>整段复制</b>（不用自己删多余字符），发到对话里：</span></div>
+        <div class="say">
+          <div class="lbl">你对 WorkBuddy 说：</div>
+          <div class="txt">这是我的 token：&lt;把复制的一整串粘贴在这里&gt;，帮我出 2026年9月 的学情分析</div>
+        </div>
+        <div class="rstep"><span class="n">4</span><span>它会自动存好凭证，接着取数出报告。</span></div>
+      </div>
+
+      <div class="chk">
+        <div class="ch">🔧 说了半天没弹出浏览器？按顺序看这 4 条</div>
+        <ol>
+          <li><b>浏览器控制开关没打开</b>：WorkBuddy「设置 → Agent → 浏览器控制」需要打开。</li>
+          <li><b>没装浏览器扩展，或扩展没登录</b>：装好 WorkBuddy 浏览器扩展后，在浏览器里点开扩展登录一次。</li>
+          <li><b>浏览器不在前台</b>：把浏览器切到前台看看，登录页可能已经开好了；若有「允许连接」的提示，点一下。</li>
+          <li><b>还是不行，直接用「做法二」</b> —— 它不依赖任何配置，一定能成。<b>也不要让它反复去试接口</b>，那只会更慢。</li>
+        </ol>
+      </div>
+
+      <div class="tip k">
+        🔒 <b>账号密码只属于你</b>：如果 WorkBuddy 反过来问你要账号密码、或说要用「账号密码登录接口」，<b>不要给</b>。
+        直接回它：<b>「请打开浏览器让我自己登录，或者我自己复制 token 给你」</b>。<br>
+        ⏰ <b>凭证约 24 小时过期</b>：第二天再出报告，重做本步即可（用做法二最快）。
       </div>
     </div>
 
@@ -353,8 +406,21 @@
     <div class="h2">常见问题<span class="sub2">出错先看这里</span></div>
     <div class="faq">
       <div class="f">
+        <div class="q2">Q：说「帮我取 token」，但浏览器没弹出来 / 一直转圈？</div>
+        <div class="a2">说明它没拿到浏览器控制权。先按<b>第 0 步的「🔧 4 条排查」</b>看一眼（开关、扩展、前台）；
+          懒得查就<b>直接用第 0 步的「做法二」</b>：你自己登录后台 → <span class="kbd">F12</span> → Console 输入
+          <code>document.cookie</code> → 把 <b>token=</b> 那一串整段粘给它，半分钟就一定成。
+          <b>不要</b>为了这一步去装浏览器组件、更不要在对话里反复试接口。</div>
+      </div>
+      <div class="f">
+        <div class="q2">Q：它问我要后台账号密码，能给吗？</div>
+        <div class="a2"><b>不要给。</b>取凭证只需要「浏览器里登录后的那一串 token」，全程不需要你的密码。
+          直接回它：<b>「请打开浏览器让我自己登录，或者我自己复制 token 给你」</b>。</div>
+      </div>
+      <div class="f">
         <div class="q2">Q：第二天再出报告，提示登录失败 / 取不到数据？</div>
-        <div class="a2">凭证（token）大约 <b>24 小时过期</b>，重做<b>第 0 步</b>（说「帮我登录学生管理后台取 token」）再出报告即可。</div>
+        <div class="a2">凭证（token）大约 <b>24 小时过期</b>，重做<b>第 0 步</b>再出报告即可 ——
+          最快是「做法二」（自己登录 → 复制 token 粘过来）。</div>
       </div>
       <div class="f">
         <div class="q2">Q：说完了却没反应 / 提示没有这个技能？</div>
@@ -387,15 +453,16 @@
     </div>
 
     <div class="note">
-      <b>⚠️ 三点提醒</b>
+      <b>⚠️ 四点提醒</b>
       <ul style="margin:8px 0 0;padding-left:20px;">
-        <li><b>token 约 24 小时过期</b>：第二天再出分析，先重说第 0 步。</li>
+        <li><b>token 约 24 小时过期</b>：第二天再出分析，先重做第 0 步（做法二最快）。</li>
         <li><b>装完技能要新开对话</b>：否则可能没加载到技能。</li>
         <li><b>各用各账号</b>：凭证只自己用，不要互传。</li>
+        <li><b>不用给密码</b>：任何时候都不需要把后台账号密码告诉 WorkBuddy。</li>
       </ul>
     </div>
 
-    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.14（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
+    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.15（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
   </div>
 </div>
 </body>

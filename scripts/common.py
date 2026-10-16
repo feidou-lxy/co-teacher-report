@@ -17,11 +17,71 @@ def workdir(args):
     return args.workdir or "."
 
 
+# ---------------------------------------------------------------- token 读取
+# 后台 x-token 写成一行纯文本即可。但用户从浏览器复制过来时，格式五花八门，
+# 容易「复制了整段 cookie」「带了 token= 前缀」「前后带引号或换行」而失败。
+# 这里统一做容错清洗，避免把「怎么又没登录上」的错误抛回给业务同学。
+_TOKEN_HINT = (
+    "获取方式（二选一）：\n"
+    "  A. 让 WorkBuddy 在浏览器打开 https://stadminv2.xqmsx.cn/#/login，你自己输账号密码 + 图形验证码；\n"
+    "  B. 自己在浏览器登录后按 F12 → Console 输入 document.cookie 回车，把 token= 那一串整段粘过来。\n"
+    "（无需提供账号密码；token 约 24 小时过期）"
+)
+
+
+def clean_token(raw):
+    """从各种「粘贴格式」里抽出真正的 x-token。抽不出返回空串。
+
+    接受：裸 token / `token=xxx` / 整段 cookie / JSON / 带引号或多余空白。
+    """
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    # JSON 形式：{"token": "..."} / {"x-token": "..."}
+    if s.startswith("{"):
+        try:
+            obj = json.loads(s)
+            for k in ("token", "x-token", "xToken", "access_token", "accessToken"):
+                v = obj.get(k) if isinstance(obj, dict) else None
+                if isinstance(v, str) and v.strip():
+                    return v.strip().strip('"').strip("'")
+        except Exception:
+            pass
+    # 去引号
+    s2 = s.strip().strip('"').strip("'").strip()
+    # 字符串里带 "token":"xxx"（例如粘了整段接口响应 / DevTools 复制对象）
+    m = re.search(r'"x?-?token"\s*:\s*"([^"]+)"', s2, re.I)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    # `token=xxx` / 整段 cookie：取 token= 之后到下一个分隔符为止（值里可含 = 的 base64 补齐）
+    m = re.search(r"(?:^|[;\s,\"'])x?-?token\s*=\s*([^;\s,\"']+)", s2, re.I)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    # 单行无空白 → 直接当 token
+    parts = s2.split()
+    if len(parts) == 1:
+        return parts[0]
+    # 多行 / 多段：取最长的一段当 token
+    cand = [x for x in re.split(r"[\s;,]+", s2) if len(x) >= 20]
+    return max(cand, key=len) if cand else ""
+
+
 def load_token(wd):
     p = os.path.join(wd, "token.txt")
     if not os.path.exists(p):
-        raise SystemExit(f"未找到 {p}，请先登录后台并把 x-token 写入该文件（见 SKILL.md 登录步骤）。")
-    return open(p, "r", encoding="utf-8").read().strip()
+        raise SystemExit(
+            f"未找到 {p}（登录凭证）。\n{_TOKEN_HINT}\n"
+            "拿到后写入该文件（一行纯文本）再重跑本步。"
+        )
+    raw = open(p, "r", encoding="utf-8").read()
+    tok = clean_token(raw)
+    if len(tok) < 8:
+        raise SystemExit(
+            f"{p} 里的内容不像有效的 x-token（只解析到 {len(tok)} 个字符）。\n"
+            f"文件开头是：{raw.strip()[:60]!r}\n{_TOKEN_HINT}\n"
+            "把 token 写成一行纯文本（形如 token=eyJhbGciOi...）再重跑本步。"
+        )
+    return tok
 
 
 def api(method, path, token, body=None, timeout=60):

@@ -29,6 +29,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common
 from common import resolve_scope
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -72,8 +73,8 @@ def main():
         base += ["--edu", name]
     else:
         base += ["--co", name]
-    if not os.path.exists(os.path.join(wd, "token.txt")):
-        sys.exit(f"未找到 {wd}/token.txt，请先登录后台并写入 x-token。")
+    # 凭证自检：缺文件 / 内容不是有效 token 时，load_token 会给出「怎么取」的可照做提示
+    common.load_token(wd)
 
     # ---------------- 阶段一：取花名册（两条链路在此分叉）----------------
     if args.api:

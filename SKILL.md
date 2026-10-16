@@ -49,6 +49,8 @@ agent_created: true
 ## 前置条件
 
 - 用户本人的后台账号（stadminv2.xqmsx.cn）可登录，且该账号名下能看到目标联席 / 教务的学生。
+- **取 token 需要一个能用的浏览器**（见第 0 步）：优先 WorkBuddy 浏览器控制 ＋ 浏览器扩展；
+  没有也没关系，让用户自己登录后把 `token` 粘过来即可 —— **不要卡在"没浏览器"上，更别去摸登录接口**。
 - WorkBuddy 受管 Python（3.10+），全流程**仅用标准库**（v3.9 起不再产出 Excel，无第三方依赖）。
 - 一个工作目录 `<workdir>`（建议新建空目录，所有中间文件落在这里）。
 
@@ -56,18 +58,43 @@ agent_created: true
 
 ### 第 0 步：登录并取 token
 
-用 agent-browser 打开 `https://stadminv2.xqmsx.cn/#/login`，按页面提示登录
-（账户密码 + 图形验证码；验证码可用截图读图识别后填入）。登录成功后，从浏览器会话里取出
-`x-token` 并写入 `<workdir>/token.txt`（纯文本一行）。
+> ⛔ **两条铁律（v4.15 起写死，务必遵守）**
+> 1. **token 只能来自「浏览器里真实登录」** —— 用户在自己的浏览器打开后台登录页，账号密码 + 图形验证码
+>    **由用户本人在页面内输入**。**不要尝试用账号密码去调后台登录接口**（验证码无法稳定绕过；
+>    实测同事走这条路要来回好几轮才勉强拿到 token，业务同学完全跟不上）。
+> 2. **绝不向用户索要账号密码**，也不要让用户把密码贴进对话。
 
-在 agent-browser 里取 token 的片段（登录后执行）：
+按下面顺序取，**A 不通退 B，B 不通退 C**，不要自创第四条路。
+
+**方式 A（首选）：接管用户自己的浏览器**
+前置：WorkBuddy「设置 → Agent → 浏览器控制」已开启，且已装 WorkBuddy 浏览器扩展（Chrome / Edge / QQ 浏览器）。
+
+1. 加载 `workbuddy-browser-use` 技能，打开 `https://stadminv2.xqmsx.cn/#/login`；
+2. **把浏览器让给用户**，请其在页面内自行输入账号密码 + 图形验证码并登录；
+3. 登录成功后**不要关浏览器**，在同一会话执行下方片段取出 `token`，写入 `<workdir>/token.txt`。
+
+**方式 B（次选）：`agent-browser`** —— 仅当本机**已装**且用户明确同意由自动化代填时才用。
+⚠️ 它是**独立的无头 Chromium**，用户看不到窗口、也不能自己输入；**本机未装时不要**为了它去全局
+`npm install`（几百 MB、耗时长且常失败）—— 直接退方式 C。
+
+**方式 C（零依赖兜底，随时可用）**：请用户手动提供 ——
+① 自己浏览器登录 `https://stadminv2.xqmsx.cn/#/login`；
+② 按 `F12` → Console 输入 `document.cookie` 回车（或 Application → Cookies 找 `token`）；
+③ 把 `token=...` 那一串**整段复制**粘进对话。
+收到后**原样**写入 `<workdir>/token.txt` 即可 —— `common.clean_token()` 会自动从
+「裸 token / `token=xxx` / 整段 cookie / JSON / 带引号换行」里抽出真值，无需手工清洗。
+
+方式 A / B 登录后执行（返回形如 `token=...`）：
 
 ```js
-(() => { try { return document.cookie.split('; ').find(c=>c.startsWith('token=')).split('=')[1]; }
-        catch(e){ return localStorage.getItem('token') || 'NOT_FOUND'; } })()
+(() => { try { return document.cookie.split(/;\s*/).find(c=>/^x?-?token=/i.test(c)) || 'NOT_FOUND'; }
+        catch(e){ try { return 'token=' + localStorage.getItem('token'); } catch(e2){ return 'NOT_FOUND'; } } })()
 ```
 
-把返回串写入 `<workdir>/token.txt`。token 有效期约 24 小时，过期重登。
+把返回串写入 `<workdir>/token.txt`。token 有效期约 24 小时，过期重走本步。
+
+> 取到后可用一行自检：`python -c "import sys;sys.path.insert(0,'<skill>/scripts');import common;print(common.load_token('<workdir>')[:12])"`
+> （打印不出正常内容说明 token.txt 内容不对，按上面铁律与方式 C 重取，**不要去摸登录接口**。）
 
 > 详细接口契约见 `references/api_contract.md`（含越权风险提示）。
 
@@ -574,6 +601,10 @@ v4.12 把这批人从 `coverage.json` 捞出来，渲染为**左侧红边预警�
   （要准备什么 / 几步操作 / 会得到什么 + 「别忘了加小黑板」的完整句式）、
   **「报告打开后先看哪 · 三大 Tab」**、**「两张特殊卡片怎么用」（👀 下节课可重点关注的学生 / ⚠️ 预警卡默认收起怎么展开）**、
   口径折叠说明、**常见问题**。
+- **第 0 步（取凭证）给两种做法**（v4.15，源自同事实测反馈「登录没弹出浏览器」）：
+  **做法一**＝配一次「浏览器控制 ＋ 浏览器扩展」，之后一句话让浏览器打开登录页、用户自己输账号密码；
+  **做法二**＝用户自己登录后 `F12 → Console → document.cookie`，把 `token=` 那一串整段粘过来（零配置）。
+  并附「没弹出浏览器」的 4 条排查 ＋ 「不要给密码」的 FAQ —— 业务同学卡在这一步的概率最高，别省这段。
 - 定位：**面向使用者的说明书**，不是开发文档；**不含命令**（只保留一行装机命令），
   也不写学生真名，可安全外发。
 - ⚠️ **改了口径或报告结构后请同步更新它**（尤其是 Tab 数量 / 模块位置 / 卡片展开方式这类
@@ -589,7 +620,9 @@ v4.12 把这批人从 `coverage.json` 捞出来，渲染为**左侧红边预警�
   `--fill` 建议常带 —— 实测接口的「学生课程关系 → 服务群」关联**会漏真实存在的群**
   （黄五琦的群名缺一个「日」字就关联失败），`--fill` 只补接口返回空值的学生，可追溯。
   **教务维度（`--edu`）暂无接口**，仍走旧链路。
-- token 约 24 小时过期，过期后重登并覆盖 `token.txt` 再重跑。
+- token 约 24 小时过期，过期后**重走第 0 步**（浏览器登录 → 覆盖 `token.txt`）再重跑。
+  `common.load_token()` 容忍「整段 cookie / `token=xxx` / JSON」等粘贴格式，并会在内容明显不对时
+  给出可照做的报错（含两条获取路径），不要把这种错误原样抛给用户。
 - 群聊**分页拉满不再截断**（v3.5 起固化；此前单群 500 条上限已取消），活跃群也能取全窗口消息。
 - **课程名一律取后台字段（v4.7）**：课程名来自后台 `productName`（新接口同名字段），**不要**再从群名切段解析
   （群名会漏班型、缺字、甚至写成别的课程）。展示名规则集中在 `common.clean_course_name()`：
