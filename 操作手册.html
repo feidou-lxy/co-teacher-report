@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>学生学情分析 · 操作手册（v4.17）</title>
+<title>学生学情分析 · 操作手册（v4.17.2）</title>
 <style>
   :root{ --blue:#3a5bdb; --blue2:#5b78ff; --ink:#1f2329; --sub:#6b7280; --line:#e6e8eb; --ok:#2ba471; --warn:#ff8f1f; --red:#cf1322; --bg:#f5f6f8; }
   *{box-sizing:border-box;}
@@ -102,6 +102,13 @@
   /* 三大 Tab 总览 */
   .h2{font-size:16px;font-weight:800;color:var(--ink);margin:24px 0 4px;padding-top:16px;border-top:1px dashed var(--line);}
   .h2 .sub2{font-size:12.5px;font-weight:400;color:var(--sub);margin-left:8px;}
+  /* 章节级折叠块：summary 保持章节标题的观感 */
+  .more.sec{margin-top:24px;border:none;border-top:1px dashed var(--line);border-radius:0;background:transparent;overflow:visible;}
+  .more.sec>summary{padding:16px 0 4px;font-size:16px;font-weight:800;color:var(--ink);background:transparent;}
+  .more.sec>summary::before{content:"▸ ";color:var(--sub);font-size:13px;font-weight:400;}
+  .more.sec[open]>summary::before{content:"▾ ";color:var(--sub);font-size:13px;font-weight:400;}
+  .more.sec[open]>summary{border-bottom:none;}
+  .more.sec .sub2{font-size:12.5px;font-weight:400;color:var(--sub);margin-left:8px;}
   .tabs3{display:flex;flex-direction:column;gap:10px;margin:10px 0 4px;}
   .tabc{border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:10px;padding:10px 14px;background:#fcfdff;}
   .tabc.t1{border-left-color:var(--red);background:#fffafa;}
@@ -334,8 +341,9 @@
       </div>
     </div>
 
-    <!-- ==== 两张特殊卡片 ==== -->
-    <div class="h2">两张特殊卡片怎么用<span class="sub2">👀 下节课重点关注的学生 ｜ ⚠️ 预警卡</span></div>
+    <!-- ==== 两张特殊卡片（默认折叠） ==== -->
+    <details class="more sec">
+    <summary>两张特殊卡片怎么用<span class="sub2">👀 下节课重点关注的学生 ｜ ⚠️ 预警卡（点击展开）</span></summary>
 
     <div class="tabc t2" style="margin-top:12px;">
       <div class="t">👀 下节课可重点关注的学生（在 Tab② 备课建议表的下方）</div>
@@ -364,6 +372,7 @@
       <b>② 点这组上方统计卡里的「未触达预警」</b> —— 隐藏常规学生卡、只留预警卡。
       再点一次「学生数」即可全部恢复。用姓名搜索时如果搜到的是预警卡学生，这一区会<b>自动展开</b>，不会搜不到。
     </div>
+    </details>
 
     <!-- ==== 详细说明 ==== -->
     <details class="more">
@@ -492,7 +501,7 @@
       </ul>
     </div>
 
-    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.17（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
+    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.17.2（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
   </div>
 </div>
 <script>
@@ -503,6 +512,19 @@ function vtab(i){
   for (var k = 0; k < btns.length; k++) btns[k].classList.toggle('on', k === i);
   for (var j = 0; j < panes.length; j++) panes[j].classList.toggle('on', j === i);
 }
+
+/* 打印时自动展开所有折叠块，免得只印出一个标题；打印完恢复原状 */
+var _opened = [];
+addEventListener('beforeprint', function(){
+  _opened = [];
+  Array.prototype.forEach.call(document.querySelectorAll('details.more'), function(d){
+    _opened.push([d, d.open]); d.open = true;
+  });
+});
+addEventListener('afterprint', function(){
+  _opened.forEach(function(p){ p[0].open = p[1]; });
+  _opened = [];
+});
 </script>
 </body>
 </html>
