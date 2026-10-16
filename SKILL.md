@@ -49,8 +49,9 @@ agent_created: true
 ## 前置条件
 
 - 用户本人的后台账号（stadminv2.xqmsx.cn）可登录，且该账号名下能看到目标联席 / 教务的学生。
-- **取 token 需要一个能用的浏览器**（见第 0 步）：优先 WorkBuddy 浏览器控制 ＋ 浏览器扩展；
-  没有也没关系，让用户自己登录后把 `token` 粘过来即可 —— **不要卡在"没浏览器"上，更别去摸登录接口**。
+- **取 token 首选「用户给账号密码 → 浏览器自动化代填 → 验证码截图请用户辨认」**（见第 0 步方式 A），
+  这是业务同学一次就过的路径；浏览器工具不可用时，退「用户自己登录后把 `token` 粘过来」的兜底（方式 B）。
+  **两条路都不包含「用账号密码去调后台登录接口」**。
 - WorkBuddy 受管 Python（3.10+），全流程**仅用标准库**（v3.9 起不再产出 Excel，无第三方依赖）。
 - 一个工作目录 `<workdir>`（建议新建空目录，所有中间文件落在这里）。
 
@@ -58,43 +59,81 @@ agent_created: true
 
 ### 第 0 步：登录并取 token
 
-> ⛔ **两条铁律（v4.15 起写死，务必遵守）**
-> 1. **token 只能来自「浏览器里真实登录」** —— 用户在自己的浏览器打开后台登录页，账号密码 + 图形验证码
->    **由用户本人在页面内输入**。**不要尝试用账号密码去调后台登录接口**（验证码无法稳定绕过；
->    实测同事走这条路要来回好几轮才勉强拿到 token，业务同学完全跟不上）。
-> 2. **绝不向用户索要账号密码**，也不要让用户把密码贴进对话。
+> ✅ **首选做法（v4.17 起，用户明确指定）：用户给「网址 + 账号密码」，验证码由图辨认回传。**
+> 即：你把登录页打开并填好账号密码 → **把图形验证码截图发给用户** → 用户回 4 位数字 →
+> 你填验证码、提交登录 → 取 `token`。用户全程不用自己开浏览器、不用按 `F12`。
+>
+> ⛔ **三条铁律（务必遵守）**
+> 1. **不要去调后台登录接口**（`/login` 之类）自己拼密码登录 —— 那等于拿机器去过图形验证码，
+>    不稳定也不该做。要走「浏览器自动化 ＋ 人工看图」。
+> 2. **验证码必须由用户本人辨认**：截图发给用户、**等他回复**，再填再提交。
+>    **绝不自己猜**、也不要试图用图像识别糊过去。看不清就让用户回「换一张」，重新截图。
+> 3. **账号密码只用于本次登录**：不要写进任何文件（`token.txt` / 日志 / 报告 / 中间产物一律不写），
+>    不要回显到对话里，用完即弃。
 
-按下面顺序取，**A 不通退 B，B 不通退 C**，不要自创第四条路。
+按下面顺序取，**A 不通退 B**，不要自创第三条路。
 
-**方式 A（首选）：接管用户自己的浏览器**
-前置：WorkBuddy「设置 → Agent → 浏览器控制」已开启，且已装 WorkBuddy 浏览器扩展（Chrome / Edge / QQ 浏览器）。
+---
 
-1. 加载 `workbuddy-browser-use` 技能，打开 `https://stadminv2.xqmsx.cn/#/login`；
-2. **把浏览器让给用户**，请其在页面内自行输入账号密码 + 图形验证码并登录；
-3. 登录成功后**不要关浏览器**，在同一会话执行下方片段取出 `token`，写入 `<workdir>/token.txt`。
+**方式 A（首选）：账号密码交给浏览器自动化，验证码请用户辨认**
 
-**方式 B（次选）：`agent-browser`** —— 仅当本机**已装**且用户明确同意由自动化代填时才用。
-⚠️ 它是**独立的无头 Chromium**，用户看不到窗口、也不能自己输入；**本机未装时不要**为了它去全局
-`npm install`（几百 MB、耗时长且常失败）—— 直接退方式 C。
+前置：本机可用 `agent-browser`。**加载 WorkBuddy 官方 `agent-browser` 技能/插件**即可 ——
+它自带 `scripts/setup.sh`，首次加载会**自动**执行安装（内部等价于 `npm install -g agent-browser` ＋
+`agent-browser install` 下载浏览器内核）。
 
-**方式 C（零依赖兜底，随时可用）**：请用户手动提供 ——
+> 分工要说清：**装的事交给官方插件自动做**，加载后先用 `agent-browser --version` 验一下是否可用。
+> **若本机确实仍没有 `agent-browser`，直接退方式 B** —— 不要自己另写一套 `npm install`（下内核几百 MB、耗时长且常失败）。
+
+固定一个 `--session` 名字复用会话，避免登录态丢失。顺序如下：
+
+1. **打开登录页、看清表单**（拿到用户名 / 密码 / 验证码三个输入框与验证码图片元素）：
+   ```bash
+   agent-browser --session login batch "open https://stadminv2.xqmsx.cn/#/login" "snapshot -i"
+   ```
+2. **填入用户给的账号密码**（**不要**把密码打印进对话）：
+   ```bash
+   agent-browser --session login batch \
+     "fill input[placeholder='请输入用户名'] <账号>" \
+     "fill input[type='password'] <密码>"
+   ```
+3. **截取验证码并发给用户**（元素级截图，再放大 4~6 倍更好认）：
+   ```bash
+   agent-browser --session login screenshot "img[alt='请输入验证码']" <workdir>/captcha.png
+   ```
+   用 Pillow 或 `sips` 放大另存 `captcha_big.png`，然后 **`present_files` 交给用户**，并说清：
+   「**请看一眼这张图里的 4 位验证码，直接回复数字**（看不清就回『换一张』）」
+   —— ⚠️ **这一步必须停下等用户回复，不要自行猜数字**。
+4. **用户回数字后**，填入验证码并提交：
+   ```bash
+   agent-browser --session login batch \
+     "fill input[name='logVerify'] <验证码>" \
+     "eval document.querySelectorAll('form button')[0].click()"
+   ```
+   （第 1 步 `snapshot` 里若实际属性不是 `name='logVerify'`，按看到的实际选择器写。）
+5. **等 5~6 秒确认已进后台**（`agent-browser --session login get url` 不再是 `#/login`），再取 token：
+   ```js
+   (() => { try { return document.cookie.split(/;\s*/).find(c=>/^x?-?token=/i.test(c)) || 'NOT_FOUND'; }
+           catch(e){ try { return 'token=' + localStorage.getItem('token'); } catch(e2){ return 'NOT_FOUND'; } } })()
+   ```
+   结果写入 `<workdir>/token.txt`，最后 `agent-browser close --all` 关掉浏览器。
+6. **失败要会自愈**（别硬试、别改走接口）：
+   - 「**验证码错误**」→ 图已刷新，**重新截一张**发给用户再来一次；
+   - 「**账号或密码错误**」→ 请用户核对账号密码后重来；
+   - 「**页面结构变了 / 找不到元素**」→ 重新 `snapshot -i` 拿最新 ref 与选择器（后端是 Vue SPA，属性可能改）。
+
+---
+
+**方式 B（兜底，零配置，随时可用）**：请用户手动提供 ——
 ① 自己浏览器登录 `https://stadminv2.xqmsx.cn/#/login`；
 ② 按 `F12` → Console 输入 `document.cookie` 回车（或 Application → Cookies 找 `token`）；
 ③ 把 `token=...` 那一串**整段复制**粘进对话。
 收到后**原样**写入 `<workdir>/token.txt` 即可 —— `common.clean_token()` 会自动从
 「裸 token / `token=xxx` / 整段 cookie / JSON / 带引号换行」里抽出真值，无需手工清洗。
 
-方式 A / B 登录后执行（返回形如 `token=...`）：
-
-```js
-(() => { try { return document.cookie.split(/;\s*/).find(c=>/^x?-?token=/i.test(c)) || 'NOT_FOUND'; }
-        catch(e){ try { return 'token=' + localStorage.getItem('token'); } catch(e2){ return 'NOT_FOUND'; } } })()
-```
-
-把返回串写入 `<workdir>/token.txt`。token 有效期约 24 小时，过期重走本步。
+token 有效期约 24 小时，过期重走本步。
 
 > 取到后可用一行自检：`python -c "import sys;sys.path.insert(0,'<skill>/scripts');import common;print(common.load_token('<workdir>')[:12])"`
-> （打印不出正常内容说明 token.txt 内容不对，按上面铁律与方式 C 重取，**不要去摸登录接口**。）
+> （打印不出正常内容说明 token.txt 内容不对，按方式 A 或 B 重取，**不要去摸登录接口**。）
 
 > 详细接口契约见 `references/api_contract.md`（含越权风险提示）。
 
@@ -618,10 +657,11 @@ v4.12 把这批人从 `coverage.json` 捞出来，渲染为**左侧红边预警�
 - **第 2 步的三视角是页签（v4.16）**：`.vtabs > .vt` ×3 ＋ `.vpanes > .vp` ×3，`vtab(i)` 切换；
   **打印时自动展开全部页签**（`@media print` 里 `.vtabs{display:none} .vp{display:block !important}`），
   免得同事打印出来只看到一种视角。改视角文案时**页签与面板要成对改**。
-- **第 0 步（取凭证）给两种做法**（v4.15，源自同事实测反馈「登录没弹出浏览器」）：
-  **做法一**＝配一次「浏览器控制 ＋ 浏览器扩展」，之后一句话让浏览器打开登录页、用户自己输账号密码；
-  **做法二**＝用户自己登录后 `F12 → Console → document.cookie`，把 `token=` 那一串整段粘过来（零配置）。
-  并附「没弹出浏览器」的 4 条排查 ＋ 「不要给密码」的 FAQ —— 业务同学卡在这一步的概率最高，别省这段。
+- **第 0 步（取凭证）主推「账号密码 + 验证码看图」**（v4.17，用户明确要求沿用这个方式）：
+  一句话把网址 + 账号密码发过去 → 自动打开登录页、填好账号密码 → **验证码截图发用户辨认** →
+  用户回 4 位数字 → 自动提交登录并取到 token。手册里**只呈现这一条主路径**（不再并列「做法一 / 做法二」），
+  兜底放在 `<details>` 折叠块「🔧 万一卡住了」里（验证码看不清回「换一张」；工具不可用时才走
+  `F12 → document.cookie` 复制 token）。业务同学卡在这一步的概率最高，这段写细一点。
 - 定位：**面向使用者的说明书**，不是开发文档；**不含命令**（只保留一行装机命令），
   也不写学生真名，可安全外发。
 - ⚠️ **改了口径或报告结构后请同步更新它**（尤其是 Tab 数量 / 模块位置 / 卡片展开方式这类

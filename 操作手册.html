@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>学生学情分析 · 操作手册（v4.16）</title>
+<title>学生学情分析 · 操作手册（v4.17）</title>
 <style>
   :root{ --blue:#3a5bdb; --blue2:#5b78ff; --ink:#1f2329; --sub:#6b7280; --line:#e6e8eb; --ok:#2ba471; --warn:#ff8f1f; --red:#cf1322; --bg:#f5f6f8; }
   *{box-sizing:border-box;}
@@ -138,8 +138,9 @@
     <div class="lead">
       只需三步：<b>登录后台（取凭证） → 安装技能 → 说出姓名和时间段</b>。取数、分析、排版全部自动完成。
       支持<b>联席</b>（某联席名下学生）、<b>教务</b>（某教务全部学生）、<b>课程</b>（某门课全部学生，可下钻到联席）三种视角 —— 第 2 步用<b>页签切换</b>查看。请使用<b>自己的后台账号</b>。<br>
-      <b>第 0 步「取凭证」有两条路</b>：让 WorkBuddy 打开浏览器、你自己登录（推荐）；或者你自己登录后把凭证复制给它（零配置）。
-      两条都不需要把账号密码告诉任何人 —— 详细步骤见<b>第 0 步</b>。
+      <b>第 0 步「取凭证」很简单</b>：把<b>网址 + 账号密码</b>发过去，它会自动打开登录页并填好账号密码，
+      再把<b>图形验证码截图</b>发给你 —— 你瞟一眼回 4 位数字，它就把登录做好、凭证存好了。
+      你自己<b>不用开浏览器、不用按 F12</b>。
     </div>
 
     <!-- 第 0 步 -->
@@ -149,50 +150,39 @@
         <h3>登录后台（取凭证）</h3>
         <span class="when">仅首次 / token 过期时</span>
       </div>
-      <p>这一步只做一件事：<b>在浏览器里登录一次后台</b>，把登录凭证（token）交给 WorkBuddy。
-        它<b>不会</b>、也<b>不需要</b>知道你的账号密码 —— 密码永远由你自己在浏览器里输。
-        <b>下面两种做法，任选一种即可；做法一没反应就直接用做法二。</b></p>
+      <p>这一步只做一件事：<b>登录一次后台，把凭证（token）交给 WorkBuddy</b>。
+        你只要提供 <b>网址 + 账号密码</b>；<b>图形验证码由你看图回复</b> —— 它截图发给你，你回 4 位数字就行。
+        <b>不用自己开浏览器，也不用按 F12。</b></p>
 
       <div class="alt rec">
-        <div class="ah">做法一 · 让 WorkBuddy 打开浏览器，你自己登录 <em>推荐：配一次，以后每次都是一句话</em></div>
-        <div class="rstep"><span class="n">1</span><span>先做一次<b>环境检查</b>（只做这一次）：打开 WorkBuddy 的 <b>设置 → Agent → 浏览器控制</b>，把开关打开；按提示安装 <b>WorkBuddy 浏览器扩展</b>（Chrome / Edge / QQ 浏览器任选），装完在浏览器里把扩展点开登录一次。</span></div>
-        <div class="rstep"><span class="n">2</span><span>然后对 WorkBuddy 说这句话：</span></div>
+        <div class="ah">把账号密码发过去，剩下的它来做 <em>推荐 · 半分钟搞定</em></div>
+        <div class="rstep"><span class="n">1</span><span>对 WorkBuddy 说这句话（账号密码换成你自己的）：</span></div>
         <div class="say">
           <div class="lbl">你对 WorkBuddy 说：</div>
-          <div class="txt">帮我登录学生管理后台 stadminv2.xqmsx.cn 取 token</div>
+          <div class="txt">帮我登录学生管理后台 stadminv2.xqmsx.cn 取 token，账号 13800000000，密码 你的密码</div>
         </div>
-        <div class="rstep"><span class="n">3</span><span>浏览器会自动打开后台登录页 → <b>你自己输入账号密码 + 图形验证码</b> → 点登录。凭证自动存好（有效期约 24 小时），接着就能出报告了。</span></div>
-        <div class="nx">找不到那个开关、或扩展装不上？不用纠结 —— 直接用下面的<b>做法二</b>，效果完全一样。</div>
-      </div>
-
-      <div class="alt">
-        <div class="ah">做法二 · 你自己登录，把凭证复制给它 <em>零配置，半分钟；做法一没反应就用这个</em></div>
-        <div class="rstep"><span class="n">1</span><span>打开 <b>stadminv2.xqmsx.cn</b>，用自己账号正常登录（账号密码 + 图形验证码）。</span></div>
-        <div class="rstep"><span class="n">2</span><span>在这个页面按 <span class="kbd">F12</span> 打开开发者工具 → 点上方的 <span class="kbd">Console</span> 标签 → 输入下面这行，按回车：</span></div>
-        <div class="say mono"><div class="lbl">在 Console 里输入：</div><div class="txt">document.cookie</div></div>
-        <div class="rstep"><span class="n">3</span><span>会打印出一长串，找到里面 <b>token=</b> 那一段，<b>整段复制</b>（不用自己删多余字符），发到对话里：</span></div>
-        <div class="say">
-          <div class="lbl">你对 WorkBuddy 说：</div>
-          <div class="txt">这是我的 token：&lt;把复制的一整串粘贴在这里&gt;，帮我出 2026年9月1日-9月30日 的学情分析</div>
-        </div>
-        <div class="rstep"><span class="n">4</span><span>它会自动存好凭证，接着取数出报告。</span></div>
-      </div>
-
-      <div class="chk">
-        <div class="ch">🔧 说了半天没弹出浏览器？按顺序看这 4 条</div>
-        <ol>
-          <li><b>浏览器控制开关没打开</b>：WorkBuddy「设置 → Agent → 浏览器控制」需要打开。</li>
-          <li><b>没装浏览器扩展，或扩展没登录</b>：装好 WorkBuddy 浏览器扩展后，在浏览器里点开扩展登录一次。</li>
-          <li><b>浏览器不在前台</b>：把浏览器切到前台看看，登录页可能已经开好了；若有「允许连接」的提示，点一下。</li>
-          <li><b>还是不行，直接用「做法二」</b> —— 它不依赖任何配置，一定能成。<b>也不要让它反复去试接口</b>，那只会更慢。</li>
-        </ol>
+        <div class="rstep"><span class="n">2</span><span>它会自动打开登录页、<b>把账号密码填好</b>，然后把<b>图形验证码截图发给你</b>（通常会放大，方便看清）。</span></div>
+        <div class="rstep"><span class="n">3</span><span>你瞟一眼那张图，<b>直接回复 4 位数字</b>即可，例如：</span></div>
+        <div class="say"><div class="lbl">你回复：</div><div class="txt">0563</div></div>
+        <div class="rstep"><span class="n">4</span><span>它自动填入验证码、点登录，把凭证存好（约 24 小时有效）—— 接着就能说<b>第 2 步</b>那句话出报告了。</span></div>
+        <div class="nx">💡 <b>也可以一句话说全</b>：把账号密码和第 2 步的报告要求写在<b>同一条消息</b>里，它会先登录、再直接出报告。</div>
       </div>
 
       <div class="tip k">
-        🔒 <b>账号密码只属于你</b>：如果 WorkBuddy 反过来问你要账号密码、或说要用「账号密码登录接口」，<b>不要给</b>。
-        直接回它：<b>「请打开浏览器让我自己登录，或者我自己复制 token 给你」</b>。<br>
-        ⏰ <b>凭证约 24 小时过期</b>：第二天再出报告，重做本步即可（用做法二最快）。
+        🔒 <b>只用你自己的后台账号</b>：凭证和报告都基于该账号能看到的范围 —— <b>各用各的账号，不要互传密码</b>。
+        账号密码只用于这次登录，<b>不会写进报告、也不会存到技能文件里</b>。<br>
+        ⏰ <b>凭证约 24 小时过期</b>：第二天再出报告，把上面那句话<b>再说一遍</b>重新登录即可。
       </div>
+
+      <details class="more">
+        <summary>🔧 万一卡住了（验证码看不清 / 它打不开浏览器）</summary>
+        <div class="tip">① <b>验证码图看不清</b>：直接回一句「<b>看不清，换一张</b>」—— 它会刷新验证码、重新截图给你。</div>
+        <div class="tip">② <b>它说打不开浏览器</b>：让它<b>再试一次</b>；仍不行就回一句「<b>用兜底方式取 token</b>」，
+          它会告诉你下面这条零配置的路。<b>不要</b>让它反复去试「登录接口」，那只会更慢。</div>
+        <div class="tip">③ <b>兜底（零配置，一定成）</b>：自己打开 <b>stadminv2.xqmsx.cn</b> 正常登录（账号密码 + 验证码）→
+          按 <span class="kbd">F12</span> → 点 <span class="kbd">Console</span> → 输入 <code>document.cookie</code> 回车 →
+          把打印出来那串里 <b>token=</b> 一段<b>整段复制</b>发过去，并说「这是我的 token，帮我出 2026年9月1日-9月30日 的学情分析」。</div>
+      </details>
     </div>
 
     <!-- 第 1 步 -->
@@ -439,21 +429,22 @@
     <div class="h2">常见问题<span class="sub2">出错先看这里</span></div>
     <div class="faq">
       <div class="f">
-        <div class="q2">Q：说「帮我取 token」，但浏览器没弹出来 / 一直转圈？</div>
-        <div class="a2">说明它没拿到浏览器控制权。先按<b>第 0 步的「🔧 4 条排查」</b>看一眼（开关、扩展、前台）；
-          懒得查就<b>直接用第 0 步的「做法二」</b>：你自己登录后台 → <span class="kbd">F12</span> → Console 输入
-          <code>document.cookie</code> → 把 <b>token=</b> 那一串整段粘给它，半分钟就一定成。
-          <b>不要</b>为了这一步去装浏览器组件、更不要在对话里反复试接口。</div>
+        <div class="q2">Q：验证码看不清 / 它说打不开浏览器？</div>
+        <div class="a2"><b>验证码看不清</b>：回一句「<b>看不清，换一张</b>」即可，它会刷新验证码重新截图给你。<br>
+          <b>打不开浏览器</b>：先让它再试一次；仍不行就回「<b>用兜底方式取 token</b>」——
+          它会给你「自己登录 → <span class="kbd">F12</span> → Console → <code>document.cookie</code> → 把 <b>token=</b> 整串粘过来」这条路，半分钟一定成。
+          <b>不要</b>为了这一步去装浏览器组件、更不要在对话里反复试「登录接口」。</div>
       </div>
       <div class="f">
-        <div class="q2">Q：它问我要后台账号密码，能给吗？</div>
-        <div class="a2"><b>不要给。</b>取凭证只需要「浏览器里登录后的那一串 token」，全程不需要你的密码。
-          直接回它：<b>「请打开浏览器让我自己登录，或者我自己复制 token 给你」</b>。</div>
+        <div class="q2">Q：真要把后台账号密码发给它吗？</div>
+        <div class="a2"><b>要，这是最省事的方式。</b>它用账号密码把登录页打开并填好，
+          <b>图形验证码由你看图回复</b> —— 你全程不用开浏览器、不用按 <span class="kbd">F12</span>。
+          账号密码<b>只用于这次登录</b>：不会写进报告，也不会存进技能文件。<br>
+          ⚠️ 两点注意：请用<b>自己的后台工作账号</b>，<b>不要互传账号密码</b>；若实在不想发，就走上面「🔧 万一卡住了」里的兜底方式。</div>
       </div>
       <div class="f">
         <div class="q2">Q：第二天再出报告，提示登录失败 / 取不到数据？</div>
-        <div class="a2">凭证（token）大约 <b>24 小时过期</b>，重做<b>第 0 步</b>再出报告即可 ——
-          最快是「做法二」（自己登录 → 复制 token 粘过来）。</div>
+        <div class="a2">凭证（token）大约 <b>24 小时过期</b>，把<b>第 0 步那句话再说一遍</b>重新登录，再出报告即可。</div>
       </div>
       <div class="f">
         <div class="q2">Q：说完了却没反应 / 提示没有这个技能？</div>
@@ -492,14 +483,14 @@
     <div class="note">
       <b>⚠️ 四点提醒</b>
       <ul style="margin:8px 0 0;padding-left:20px;">
-        <li><b>token 约 24 小时过期</b>：第二天再出分析，先重做第 0 步（做法二最快）。</li>
+        <li><b>token 约 24 小时过期</b>：第二天再出分析，把第 0 步那句话再说一遍重新登录即可。</li>
         <li><b>装完技能要新开对话</b>：否则可能没加载到技能。</li>
-        <li><b>各用各账号</b>：凭证只自己用，不要互传。</li>
-        <li><b>不用给密码</b>：任何时候都不需要把后台账号密码告诉 WorkBuddy。</li>
+        <li><b>各用各账号</b>：凭证只自己用，<b>不要互传账号密码</b>。</li>
+        <li><b>验证码由你回</b>：它会截图发你，你回 4 位数字；看不清就回「换一张」，不要自己猜。</li>
       </ul>
     </div>
 
-    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.16（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
+    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.17（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
   </div>
 </div>
 <script>

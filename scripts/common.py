@@ -23,9 +23,11 @@ def workdir(args):
 # 这里统一做容错清洗，避免把「怎么又没登录上」的错误抛回给业务同学。
 _TOKEN_HINT = (
     "获取方式（二选一）：\n"
-    "  A. 让 WorkBuddy 在浏览器打开 https://stadminv2.xqmsx.cn/#/login，你自己输账号密码 + 图形验证码；\n"
-    "  B. 自己在浏览器登录后按 F12 → Console 输入 document.cookie 回车，把 token= 那一串整段粘过来。\n"
-    "（无需提供账号密码；token 约 24 小时过期）"
+    "  A.（推荐）把后台网址 + 账号密码发给 WorkBuddy：它自动打开登录页、填好账号密码，\n"
+    "     并把「图形验证码」截图发给你；你回复 4 位验证码，它自动登录并取到 token。\n"
+    "  B.（兜底）你自己登录 https://stadminv2.xqmsx.cn/#/login 后按 F12 → Console 输入\n"
+    "     document.cookie 回车，把 token= 那一串整段粘过来。\n"
+    "（账号密码只用于本次登录、不会写入任何文件；token 约 24 小时过期）"
 )
 
 
