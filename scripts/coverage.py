@@ -4,8 +4,11 @@
 
 四档（口径由用户 2026-10-15 定稿）
 --------------------------------
-  失联            = 无聊天记录 且 无出勤记录
-  出勤但无沟通     = 无聊天记录 且 有出勤记录
+  ⚠️ v4.18：「出勤」一律指**有效出勤**（到课 ＋ 未到课但看了回放）—— 与 `common.att_effective`
+     同源。修正前这里读的是 `attendCount`（纯到课），把「看了回放」判成未出勤。
+
+  失联            = 无聊天记录 且 无出勤记录（含看回放）
+  出勤但无沟通     = 无聊天记录 且 有出勤记录（含看回放）
   单向沟通         = 有聊天记录，但学生·家长实质发言 = 0（仅老师输出）
   低互动           = 有聊天记录，学生·家长实质发言 1~2
   正常            = 其余
@@ -167,12 +170,16 @@ def main():
             att_state = "n/a"
             att_txt = "出勤接口无记录"
             learn = False
-            n_att, n_les = 0, 0
+            n_att, n_les, n_pb_only, n_pb = 0, 0, 0, 0
         else:
-            n_att = att.get("attendCount") or 0
-            n_les = att.get("lessonCount") or 0
+            # v4.18 修正：出勤口径改为**有效出勤（含看回放）**。
+            #   修正前读的是 attendCount（纯到课数），于是「没到课但看了回放」的学生
+            #   learn=False → 与「群内也无消息」叠加后被判成「失联」（实为「出勤但无沟通」）。
+            #   实测联席视角 10 人、教务视角 16 人踩中，其中 5 人档位被写错。
+            n_att, n_pb_only, n_pb, n_les = common.att_effective(att)
             att_state = "has" if n_att > 0 else "empty"
-            att_txt = f"出勤 {n_att}/{n_les}"
+            att_txt = (f"出勤 {n_att}/{n_les}"
+                       + (f"（含看回放补齐 {n_pb_only} 次）" if n_pb_only else ""))
             learn = n_att > 0
 
         brows = board_by_norm.get(norm) or []
@@ -222,7 +229,12 @@ def main():
             # ---- v4.12 结构化量（预警卡直接消费；不影响任何分档判定）----
             "msgRecent": msg_recent, "subRecent": sub_recent, "msgTeacher": n_tea_recent,
             "lastMsg": last_ts,
+            # ⚠️ v4.18 起 `nAtt` = **有效出勤（含看回放）**，不再是纯到课数；
+            #    纯到课数可用 nAtt - nPbOnly 反推。下游文案务必用 nPbOnly 把「回放补齐」写出来，
+            #    否则「出勤 5/5」会被误读成 5 节都到课了。
             "nAtt": n_att, "nLes": n_les,
+            "nPbOnly": n_pb_only,          # 未到课、仅靠回放补齐的节数（v4.18 新增）
+            "nPb": n_pb,                   # 看回放总节数（含到课后回看，v4.18 新增）
             "boardN": board_n, "boardAll": board_all, "boardRounds": board_rounds,
         }
         counts[tier] += 1

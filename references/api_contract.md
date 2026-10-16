@@ -200,10 +200,14 @@ GET /ai/getCoTeacherStudents?coTeacherName=<联席姓名>     联席维度
   - `classSeq` 第几节课
   - `classId` 课节 ID（去重键）
   - `timeStart` 上课时间
-  - `isAttend` 1/0（出勤 / 缺勤）
+  - `isAttend` 1/0（到课 / 未到课）
   - `isLate` / `isGone` 迟到 / 早退
   - `isPlayback` 是否看回放
   - `playbackTotalValidTime` 回放有效时长
+
+> ⚠️ **出勤口径**：`isAttend=0` 但 `isPlayback=1`（**没到课、看了回放**）**同样算有效出勤**。
+> `build_attendance.py` 据此汇总出 `effectiveAttendCount`（有效出勤）与 `playbackOnlyCount`（仅回放补齐），
+> 这是全流程的权威口径；`attendCount` 只是**纯到课数**，不可直接当出勤用（v4.18 修正）。
   - `cProduct.name` 课程产品名
   - `coTeacherName` / `classTeacherName`
 

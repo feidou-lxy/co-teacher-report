@@ -167,15 +167,20 @@ def build_chats_and_activity(raw_chats):
 def build_attendance(att):
     out = []
     for norm, r in (att or {}).items():
+        # v4.18：快照里把「有效出勤（含看回放）」一并算好固化，下游不必各自回退计算，
+        #   也避免源产物缺字段时被误当成「没出勤」。口径定义见 common.att_effective。
+        eff, pb_only, pb, _ = common.att_effective(r)
         out.append({
             "studentNameNorm": common.norm_name(r.get("name") or norm),
             "studentName": r.get("name") or norm,
             "productName": r.get("product"),
             "courseName": r.get("course"),
             "lessonCount": r.get("lessonCount"),
-            "attendCount": r.get("attendCount"),
-            "absentCount": r.get("absentCount"),
-            "playbackCount": r.get("playbackCount"),
+            "attendCount": r.get("attendCount"),          # 纯到课数（不含回放）
+            "absentCount": r.get("absentCount"),          # 真缺课（已含回放口径）
+            "playbackCount": pb,
+            "effectiveAttendCount": eff,                  # 有效出勤 = 到课 + 仅回放补齐
+            "playbackOnlyCount": pb_only,                 # 未到课、仅靠回放补齐的节数
             "classes": r.get("classes") or [],
         })
     return out

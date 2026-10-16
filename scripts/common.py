@@ -577,6 +577,38 @@ def learning_level(s, board):
     return key, LEVEL_CN[key], ev
 
 
+def att_effective(a):
+    """有效出勤口径（v3.8 定，v4.18 统一出口）：**看回放也算出勤**。
+
+    返回 (有效出勤 eff, 仅靠回放补齐 pb_only, 看回放总数 pb, 总节数 n)。
+
+    取值优先级：显式字段 `effectiveAttendCount` → 由 `classes` 逐节重算 → 退回聚合字段。
+
+    ⚠️ 为什么要单独有这个出口：`attendCount` 是**纯到课数（不含回放）**。直接拿它做出勤判定，
+    会把「没到课但看了回放」的学生判成「未出勤」—— 实测联席视角 10 人、教务视角 16 人踩中，
+    其中 5 人因此在失联分档里被写成「失联」（实为「出勤但无沟通」）。
+    凡是要判断「这个学生到底算不算上课了」，一律走这里，不要直接读 attendCount。
+    """
+    cls = a.get("classes") or []
+    n = a.get("lessonCount")
+    if n is None:
+        n = len(cls)
+    if cls:                                   # 有逐节明细：以明细为准（最可靠）
+        att = sum(1 for c in cls if c.get("isAttend") == 1)
+        pb = sum(1 for c in cls if c.get("isPlayback") == 1)
+        pb_only = sum(1 for c in cls if c.get("isAttend") != 1 and c.get("isPlayback") == 1)
+        eff = a.get("effectiveAttendCount")
+        if eff is None:
+            eff = att + pb_only
+        return eff, pb_only, pb, n
+    pb = a.get("playbackCount") or 0          # 无明细：退回聚合字段（旧链路产物）
+    pb_only = a.get("playbackOnlyCount") or 0
+    eff = a.get("effectiveAttendCount")
+    if eff is None:
+        eff = (a.get("attendCount") or 0) + pb_only
+    return eff, pb_only, pb, n
+
+
 def att_stats(a):
     """出勤口径（v3.8）：看回放也算有效出勤；只有「既没到课也没看回放」才算真缺课。
 
@@ -585,11 +617,7 @@ def att_stats(a):
     n = a["lessonCount"]
     cls = a.get("classes", []) or []
     att = sum(1 for c in cls if c.get("isAttend") == 1)
-    pb = sum(1 for c in cls if c.get("isPlayback") == 1)
-    pb_only = sum(1 for c in cls if c.get("isAttend") != 1 and c.get("isPlayback") == 1)
-    eff = a.get("effectiveAttendCount")
-    if eff is None:                      # 兼容旧产物（未含新字段）
-        eff = att + pb_only
+    eff, pb_only, pb, _ = att_effective(a)   # v4.18：口径统一到 att_effective，避免各处复刻
     absent = max(0, n - eff)
     no_pb = [c.get("classSeq") for c in cls if c.get("isAttend") != 1 and c.get("isPlayback") != 1]
     return n, eff, att, pb_only, pb, absent, no_pb
