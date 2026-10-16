@@ -122,7 +122,13 @@ def main():
                 all_ts.append(d)
     end = meta.get("window", {}).get("endDate")
     end_dt = parse_dt((end or "") + " 23:59:59") if end else None
-    anchor = max(all_ts) if all_ts else (end_dt or datetime.datetime.now())
+    # v4.16 锚点口径：anchor = min(全部消息最新时间, 报告窗口止)。
+    #   窗口止 ≥ 最新消息时 = 旧行为（锚点即最新消息日），分档数字不受影响；
+    #   只有用户指定了「历史时间段」（止日期早于最新消息）时才把锚点夹到窗口止，
+    #   否则「近 chat-days 天」会滑出窗口（例：出 9 月报告、沟通轴却统计到 10 月上旬）。
+    latest = max(all_ts) if all_ts else None
+    anchor = (min(latest, end_dt) if (latest and end_dt)
+              else (latest or end_dt or datetime.datetime.now()))
     cutoff = anchor - datetime.timedelta(days=args.chat_days)
 
     # ---------- 逐人判定 ----------
@@ -231,7 +237,9 @@ def main():
 
     # ---------- 摘要 ----------
     print(f"✅ {out}")
-    print(f"   在册 {len(roster)} 人 ｜ 沟通轴近 {args.chat_days} 天（锚点 {anchor.strftime('%Y-%m-%d')}）"
+    _anch_src = "窗口止" if (end_dt and (not latest or end_dt <= latest)) else "最新消息"
+    print(f"   在册 {len(roster)} 人 ｜ 沟通轴近 {args.chat_days} 天（{cutoff.strftime('%Y-%m-%d')} ~ "
+          f"{anchor.strftime('%Y-%m-%d')}，锚点取{_anch_src}）"
           f" ｜ 学习轴全窗口 {meta.get('window', {}).get('startDate')}~{meta.get('window', {}).get('endDate')}")
     print()
     print(f"   {'档位':<12}{'人数':>6}{'占比':>8}")

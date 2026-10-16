@@ -1689,6 +1689,8 @@ def main():
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
     ap.add_argument("--course", default=None, help="课程名（课程维度），如 高二数学清北层日E邵")
     ap.add_argument("--window", default=WINDOW_DEFAULT)
+    ap.add_argument("--end", default=None,
+                    help="分析窗口止 YYYY-MM-DD（含当天）；给了历史止日期时，报告按「起 ~ 止」表述（v4.16）")
     # 可选：在报告顶部打一条醒目横幅说明数据来源（如用合成/演示数据试跑时，
     # 避免看报告的人拿演示话术去真实群里核对而找不到）。
     ap.add_argument("--note", default=None, help="顶部数据来源/口径提示横幅（可选）")
@@ -1891,6 +1893,10 @@ def main():
         _warn_n = lost_n + anc_n
         _cov_badge = f'<span class="mcnt {"warn" if _warn_n else "ok"}">{_warn_n}</span>'
 
+    # v4.16：分析窗口文案 —— 给了「历史止日期」（早于今天）时按「起 ~ 止」表述，否则沿用「至今」
+    _today = datetime.now().date().isoformat()
+    win_txt = f"{args.window} ~ {args.end}" if (args.end and args.end < _today) else f"{args.window} 至今"
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1898,7 +1904,7 @@ def main():
 <style>{CSS}</style></head>
 <body><div class="wrap">
 <h1>{name}（{role_cn}）· 学生学情分析{ '（双维度：按课程 / 按联席）' if is_edu else ('（课程维度 · 按联席下钻）' if is_course else '（联席维度 · 按课程下钻）') }</h1>
-<div class="sub">分析窗口：聊天内容 {args.window} 至今 ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：{subject_line} ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+<div class="sub">分析窗口：聊天内容 {win_txt} ｜ 出勤：学生管理后台「课节考勤」权威数据 ｜ 学科：{subject_line} ｜ 角色：{role_cn} ｜ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
 { f'<div class="datanote">⚠️ {args.note}</div>' if args.note else '' }
 <div class="kpis">
   <div class="kpi clickable" onclick="topKpi('info')" title="点击查看全部学生"><div class="n">{roster_n}</div><div class="l">{scope_label}学生（{'总人数' if cov else '全量'}）</div></div>
@@ -1925,7 +1931,7 @@ def main():
 <p class="note">
 • <b>报告结构（v4.10 起为三大 Tab）</b>：① <b>🚨 失联预警</b> —— 总人数覆盖统计与分档名单；② <b>🎓 主讲备课建议</b> —— 下节课重点讲什么（含覆盖人数、双源证据、典型题型与原文出处）；③ <b>📋 学生学情 &amp; To-Do</b> —— 逐生卡片与筛选。顶部 KPI 卡<b>全部可点击</b>：失联 / 出勤但无沟通 → 切到 Tab① 并展开对应档位名单；响应迟缓 / 待回复 / 近 3 天待回应 → 切到 Tab③ 并筛出对应学生。<br>
 • 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 分页取每群**全量**消息（倒序；单群 500 条上限已取消，按 <code>total</code> 逐页拉满），文本与语音转写均纳入。<br>
-• 分析窗口：仅分析 <b>{args.window} 至今</b>的聊天内容。<br>
+• 分析窗口：仅分析 <b>{win_txt}</b>的聊天内容。<br>
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
 • 出勤口径（v3.8 修正）：<b>看回放也算有效出勤</b> —— 有效出勤 = 到课 + 未到课但已看回放；只有「既没到课、也没看回放」才算<b>真缺课</b>（修正前把已看回放的节次也计成缺课）。呈现统一为<b>一句话</b>：如「出勤 4/5 次（含回放 2 次），缺课 1 次，第 5 节既没到课也没看回放」。判定：全勤 → 🟢；缺课 ≥2 节 → 🔴；缺课 1 节 → 🟡。<b>权重按角色区分：教务（为续报负责）在出勤一句话下另附折叠的逐节明细与「是否需关注」；联席（为学习效果负责）只有这一句话，不再单独成块，也不参与联席定档。</b><br>
 • 请假备注：仅摘录学生在群内自述的请假/看回放缘由，后台无请假原因字段，具体以教务记录为准。<br>

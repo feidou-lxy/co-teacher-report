@@ -43,16 +43,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--window", default="2026-09-01")
+    ap.add_argument("--end", default=None,
+                    help="分析窗口止 YYYY-MM-DD（含当天；默认不限）")
     args = ap.parse_args()
     wd = common.workdir(args)
     CUT = args.window
+    CUT_END = args.end          # v4.16：闭区间上界；None = 不设上界（与旧行为一致）
     d = json.load(open(f"{wd}/chats.json", encoding="utf-8"))
 
     notes = {}
     for stu, blk in d.items():
         prim, sec = [], []
         for m in blk["messages"]:
-            if (m.get("msgTime") or "") < CUT:
+            _t = m.get("msgTime") or ""
+            if _t < CUT:                       # msgTime 有 "YYYY-MM-DD HH:MM" 与 "YYYY-MM-DDT..." 两种形态
+                continue
+            if CUT_END and _t[:10] > CUT_END:
                 continue
             if m.get("role") != 2:
                 continue

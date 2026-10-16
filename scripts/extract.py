@@ -1,6 +1,6 @@
 """步骤6：信号提取（聊天 -> 学情结构化）。
 
-仅分析 --window 起点之后的聊天（默认 2026-09-01）。
+仅分析 --window 起点之后、--end（可选，含当天）之前的聊天（默认 2026-09-01 起、不限止）。
 提取：薄弱知识点、出勤/作业/提问/情绪信号、配合度（学生自驱 vs 家长支持，启发式）、
 未闭环疑问、**近 N 天待回应（联席忘记回复 / 学生问题未解决，v3.9）**、总评与待办。
 配合度数据源未区分发言者 ID，为启发式估算。
@@ -427,18 +427,25 @@ def main():
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角）")
     ap.add_argument("--course", default=None, help="课程名（课程维度）")
     ap.add_argument("--window", default=WINDOW_DEFAULT, help="分析窗口起点 YYYY-MM-DD")
+    ap.add_argument("--end", default=None,
+                    help="分析窗口止 YYYY-MM-DD（含当天；默认不限，即分析到最新一条消息）")
     args = ap.parse_args()
     role = common.resolve_scope(args)[0]
     is_edu = role == "edu"
     wd = common.workdir(args)
     CUT = args.window
+    CUT_END = args.end          # v4.16：闭区间上界；None = 不设上界（与旧行为完全一致）
     d = json.load(open(f"{wd}/chats.json", encoding="utf-8"))
 
     students = {}
     for stu, blk in d.items():
         g = blk["group"]
         # 接口返回为倒序（最新在前）；此处显式按时间升序排序，消除后续对顺序的隐式依赖
-        msgs = [m for m in blk["messages"] if (m.get("msgTime") or "") >= CUT]
+        # v4.16：窗口为 [window, end] 闭区间（end 为空则只卡起点，等同旧行为）。
+        # msgTime 有 "YYYY-MM-DD HH:MM:SS" 与 "YYYY-MM-DDT..." 两种形态，故统一取前 10 位比日期。
+        msgs = [m for m in blk["messages"]
+                if (m.get("msgTime") or "") >= CUT
+                and (not CUT_END or (m.get("msgTime") or "")[:10] <= CUT_END)]
         msgs.sort(key=lambda m: m.get("msgTime") or "")
         triples_all = [((m.get("msgTime") or ""), m.get("role"), get_text(m)) for m in msgs]
         # 剔除「空文本」与「占位噪声」（[图片]/[revoke]/[该消息类型暂不能展示] 等，无正文不参与分析）
@@ -460,7 +467,8 @@ def main():
                 "resp_n": 0, "resp_max_h": 0.0, "resp_slow": False, "resp_slow_cnt": 0,
                 "resp_at": "", "resp_q": "", "resp_pend_n": 0,
                 "resp_evi": "窗口内无聊天",
-                "summary": f"{CUT} 起该群无可分析聊天记录（窗口内无互动）。",
+                "summary": (f"{CUT} ~ {CUT_END} 该群无可分析聊天记录（窗口内无互动）。" if CUT_END
+                            else f"{CUT} 起该群无可分析聊天记录（窗口内无互动）。"),
                 "todos": empty_todos,
                 # 联席四维（v3.7）：无聊天 → 互动沉默、无催交/订正记录、提问为零
                 "interact": "沉默不回复", "interact_lv": "bad", "interact_evi": "窗口内无互动",

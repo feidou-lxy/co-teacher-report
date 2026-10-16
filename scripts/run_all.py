@@ -51,7 +51,9 @@ def main():
     ap.add_argument("--course", default=None, help="课程名（课程维度），如 2026Q-SX-高二数学清北层日E邵")
     ap.add_argument("--boards", default=None, help="小黑板图片根目录（提供后追加小黑板读图分析）")
     ap.add_argument("--window", default="2026-09-01")
-    ap.add_argument("--end", default=None, help="报告窗口止（YYYY-MM-DD），默认今天")
+    ap.add_argument("--end", default=None,
+                    help="分析窗口止（YYYY-MM-DD，含当天），默认今天；"
+                         "给了早于今天的日期即出「时间段」报告（v4.16，聊天分析与沟通轴锚点一并卡到该日）")
     ap.add_argument("--month", default="2026-09", help="群列表窗口起始月 YYYY-MM")
     ap.add_argument("--chat-days", type=int, default=14,
                     help="失联预警的沟通轴窗口天数（默认近两周）")
@@ -89,11 +91,14 @@ def main():
         run("pull_groups.py", base + ["--month", args.month])
 
     # ---------------- 阶段二：中间步骤（两链路完全相同，第 2/3 点沿用旧方式）----------------
+    # v4.16：用户指定了「时间段止」(--end) 时，把上界一路传下去 —— 否则聊天分析会溢出到窗口止之后
+    #        （例：出 9 月报告，10 月的聊天也会算进去）。未指定时行为与旧版完全一致。
+    win_args = ["--window", args.window] + (["--end", end] if args.end else [])
     run("pull_chats.py", base)
     run("pull_attendance.py", base)
     run("build_attendance.py", base)
-    run("extract.py", base + ["--window", args.window])
-    run("leave_notes.py", ["--workdir", wd, "--window", args.window])
+    run("extract.py", base + win_args)
+    run("leave_notes.py", ["--workdir", wd] + win_args)
     run("merge.py", ["--workdir", wd])
     if args.boards:
         run("pull_boards.py", base + ["--boards", args.boards])
@@ -106,7 +111,7 @@ def main():
     run(adapter, ["--workdir", wd] + scope_flag
         + ["--start", args.window, "--end", end])
     run("coverage.py", ["--workdir", wd, "--chat-days", str(args.chat_days)])
-    run("report.py", base + ["--window", args.window])
+    run("report.py", base + win_args)
 
     from common import course_name as _cn
     out = f"{wd}/{_cn(name) if role == 'course' else name}_学情分析.html"
