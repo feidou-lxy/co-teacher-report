@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>学生学情分析 · 操作手册（v4.18）</title>
+<title>学生学情分析 · 操作手册（v4.18.1）</title>
 <style>
   :root{ --blue:#3a5bdb; --blue2:#5b78ff; --ink:#1f2329; --sub:#6b7280; --line:#e6e8eb; --ok:#2ba471; --warn:#ff8f1f; --red:#cf1322; --bg:#f5f6f8; }
   *{box-sizing:border-box;}
@@ -208,8 +208,10 @@
         看到 <b>「✅ 技能已安装到：/Users/你的用户名/.workbuddy/skills/co-teacher-report」</b> 即成功
         （路径会显示你自己电脑上的位置，看到 <b>✅ 技能已安装到</b> 这几个字就对了）。<br>
         <b>装完后请新开一个对话</b>再继续（新技能需在新会话生效）。<br>
-        以后技能有更新（比如这次报告加了新模块），<b>把同一条命令再运行一次就会自动更新到最新版</b>，旧报告不受影响。
-        <b>这条命令每次都从仓库拉最新版</b>，不用管版本号。
+        <b>已经装过、要更新到最新版？</b>把<b>同一条命令再运行一次</b>就行 —— 它会先把旧版本整个替换掉、不残留旧文件；
+        <b>每次都从仓库拉最新版</b>，不用管版本号。它<b>只替换技能本身</b>，你之前取的凭证、已生成的报告文件都在别的位置，不会被动到。<br>
+        ⚠️ <b>反过来也要知道：更新的是「工具」，不会重算你已经出过的报告</b> —— 那些 HTML 的内容不会自己变。
+        想让它们带上本次修正，<b>重新出一次报告</b>即可（新开一个对话、重新说那句话）。
       </div>
 
       <details class="more">
@@ -231,7 +233,8 @@
         </div>
         <div class="tip k">
           ⚠️ <b>这样装的代价：以后不会自动更新。</b>想拿最新版，仍然跑一次第 1 步那条命令就行
-          （它会直接覆盖成最新版，旧报告不受影响）；或者找发你 zip 的人要个新的。<br>
+          （它会直接覆盖成最新版，不会动你的凭证和已生成的报告文件）；或者找发你 zip 的人要个新的。
+          <b>注意：更新后已出的报告内容不会自己变，需要重新出一次报告才带上新版本。</b><br>
           🔒 这个 zip 里<b>只有技能本身，不含任何账号、密码、token 或学生数据</b>，可以放心收。
         </div>
       </details>
@@ -526,7 +529,7 @@
       </ul>
     </div>
 
-    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.18（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
+    <div class="foot">学生学情分析 · 操作手册 ｜ 版本 v4.18.1（与技能同步） ｜ 仓库：github.com/feidou-lxy/co-teacher-report</div>
   </div>
 </div>
 <script>
