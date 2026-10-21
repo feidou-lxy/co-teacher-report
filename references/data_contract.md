@@ -516,7 +516,7 @@ assert #coverage(失联+出勤但无沟通+单向沟通+低互动+正常) == #ro
    {"productId": 5552,
     "productName": "2026Q-SX-高二数学清北层日E邵",
     "studentSeq": "2025021900004",
-    "studentName": "刘静怡",
+    "studentName": "刘同学",
     "purchaseType": "直播",
     "coTeacherName": "张巍",
     "classTeacherName": "罗绂燕",

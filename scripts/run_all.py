@@ -1,6 +1,11 @@
 """端到端编排：登录取得 token 后，依次跑完整链路。
 
-用法（在 workdir 内执行，token 已就位）：
+★ 工作目录（v4.49 起）：**不用传 `--workdir`**。脚本按视角自动定位到固定目录
+  `~/.workbuddy/reports/<视角>-<姓名>[@课程]`（`scripts/workdir.py` 同一套规则），
+  这样 token 与 snapshot 能跨次复用，之后的 `refresh.py` 也有旧快照可用。
+  只有需要临时目录时才显式传 `--workdir <path>`。
+
+用法：
   # —— 新接口链路（v4.11，推荐；课程 / 联席维度）——
   python scripts/run_all.py --api --course 2026Q-SX-高二数学清北层日E邵 --window 2026-09-01
   python scripts/run_all.py --api --co 张巍 --window 2026-09-01
@@ -30,6 +35,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common
+import workdir
 from common import resolve_scope
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +51,10 @@ def run(py, extra):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workdir", default=".")
+    ap.add_argument("--workdir", default=None,
+                    help="报告工作目录。★默认不传＝按 --edu/--co/--course 自动定位到固定目录 "
+                         "~/.workbuddy/reports/<视角>-<姓名>[@@课程]，便于复用 token 与快照；"
+                         "仅在需要临时目录时才显式传路径")
     ap.add_argument("--co", default=None, help="联席姓名（联席视角 / 课程内子筛选）")
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角；续报 renewed 由 pull_enroll.py --edu 从接口拉取）")
     ap.add_argument("--course", default=None, help="课程名（课程维度），如 2026Q-SX-高二数学清北层日E邵")
@@ -63,7 +72,20 @@ def main():
                     help="（配合 --api）为接口未关联到群的学生，用群列表「群名内姓名」补一次 roomId")
     args = ap.parse_args()
 
+    # 固定工作目录（v4.49）：不显式给 --workdir 时，按视角自动定位到
+    # ~/.workbuddy/reports/<视角>-<姓名>[@课程]，这样 token 与 snapshot 能跨次复用，
+    # refresh.py 也有旧快照可用。三种视角都没给才退回当前目录并提示。
     wd = args.workdir
+    if not wd:
+        wd = workdir.resolve(edu=args.edu, co=args.co, course=args.course)
+        if wd:
+            print(f"[工作目录] {workdir.describe(wd)}")
+        else:
+            wd = "."
+            print("[工作目录] 未指定视角，退回当前目录；建议加 --edu / --co / --course 以复用快照与 token")
+    else:
+        wd = os.path.abspath(os.path.expanduser(wd))
+    os.makedirs(os.path.join(wd, "snapshot"), exist_ok=True)
     role, name = resolve_scope(args)
     end = args.end or datetime.date.today().isoformat()
     base = ["--workdir", wd]

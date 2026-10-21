@@ -53,9 +53,45 @@ agent_created: true
   这是业务同学一次就过的路径；浏览器工具不可用时，退「用户自己登录后把 `token` 粘过来」的兜底（方式 B）。
   **两条路都不包含「用账号密码去调后台登录接口」**。
 - WorkBuddy 受管 Python（3.10+），全流程**仅用标准库**（v3.9 起不再产出 Excel，无第三方依赖）。
-- 一个工作目录 `<workdir>`（建议新建空目录，所有中间文件落在这里）。
+- **不用自己新建工作目录**（v4.49）：脚本会按视角自动定位到固定目录，见下节。
+
+## 工作目录（固定目录，v4.49 · 不要随意换）
+
+**同一个报告对象，永远用同一个目录。** 调用脚本时**不需要传 `--workdir`**，
+只要给 `--edu` / `--co` / `--course`，脚本自己算：
+
+| 视角 | 目录 |
+|---|---|
+| 教务 | `~/.workbuddy/reports/edu-罗绂燕/` |
+| 联席 | `~/.workbuddy/reports/co-张巍/` |
+| 课程 | `~/.workbuddy/reports/course-高二数学211层六C肖/` |
+| 课程 + 联席筛选 | `~/.workbuddy/reports/course-高二数学清北层日E邵@邵清北/` |
+
+规则由 `scripts/workdir.py` 统一定义（`run_all.py` 与 `refresh.py` 共用同一套，
+不要在两处各写一份）：课程名会剥掉 `2026Q-SX-` 前缀与末尾括号，
+只保留中文/字母/数字/`-@_`；`CTR_REPORTS_HOME` 可改根目录（备份盘 / 共享盘）。
+
+```bash
+python3 scripts/workdir.py --list                      # 看已有哪些报告目录、快照数、有无 token
+python3 scripts/workdir.py --edu 罗绂燕 --dry-run      # 只算路径不建目录
+```
+
+**为什么必须固定**（这四点是它的全部价值，改之前先想清楚）：
+
+1. `token.txt` 在里面 → 约 24 小时内复用，**不用每次重新认图形验证码**；
+2. `snapshot/` 在里面 → `refresh.py` 有旧快照可重渲染，**2 秒出结果**，不用重拉 250~400 次群聊；
+3. 同一对象的历史只有一处，教务问「上次那份」不用翻几十个临时目录；
+4. 定时任务（launchd）的 `WorkingDirectory` 才有稳定落点。
+
+⚠️ 只有两种情况下显式传 `--workdir <path>`：① 临时试跑、不想污染正式目录；
+② 接管一个旧目录（例：`--workdir _roundK/w_edu2`）。**正式出报告一律走固定目录。**
 
 ## 工作流程
+
+> 🔁 **先判断要不要跑全量**：如果用户只是要「把某份已有报告的续报/概览刷成最新」，
+> **不要走下面的全流程**（会重拉 250~400 次群聊、跑 3~8 分钟），直接用
+> `python3 scripts/refresh.py --edu <姓名>`（2 秒，见文末「轻量刷新」）。
+> 只有首次出报告、或聊天/出勤窗口确实要往前推时，才跑全流程。
 
 ### 第 0 步：登录并取 token
 
@@ -960,8 +996,9 @@ v4.12 把这批人从 `coverage.json` 捞出来，渲染为**左侧红边预警�
 
 ## 目录与产物
 
-```
-<workdir>/
+`<workdir>` 默认是**固定目录** `~/.workbuddy/reports/<视角>-<姓名>[@课程]/`（v4.49，见「工作目录」一节）。
+
+```<workdir>/
 ├── token.txt                # 后台 x-token（登录后写入）
 ├── students.json            # 花名册（该课程 / 联席 / 教务）；--api 链路的还带 roomId / roomIdSource
 ├── roster_api_raw.json      # （v4.11 · 仅 --api）新接口原始响应，供溯源与适配器复用
@@ -1108,3 +1145,74 @@ x-token: <workdir/token.txt 里的后台 token>     ← 与本站其他接口一
 - 网络异常 / 超时 / DNS 失败 / 非 2xx 响应。
 
 已实测：接口正常返回 `{"code":0,"data":{},"msg":"上报成功"}`；不可达地址耗时 3.02 秒后放弃且不抛异常。
+
+---
+
+## 轻量刷新（`scripts/refresh.py`，v4.49）
+
+**用途**：教务视角的「学生情况概览」需要小时级更新时，**不要重跑全链路**。全链路要拉
+250~400 次群聊、耗时 3~8 分钟，还要把 126KB 的 SKILL.md 重新读进上下文 —— 这部分
+token 消耗与"只看续报有没有变"完全不匹配。轻量刷新只做三件事：
+
+1. 调 `getCoTeacherStudents` 拉 `renewed`（教务视角自动展开下属联席，实测 9 位 / 237 条）；
+2. 就地更新 `snapshot/enroll.json` 的 `renew` / `renewDetail`，**`bySeq` 不动**（在读科目、
+   扩科意向保持首轮结果，不引入未经验证的变化）；
+3. 用已有快照重渲染 HTML（复用 `report.py`，**不拉群聊、不跑 extract**）。
+
+**实测耗时 2 秒**（237 人次续报 + 3.5MB 报告重渲染）。
+
+```bash
+# 只看这一轮有没有变化（不写盘不渲染）
+python3 scripts/refresh.py --edu 罗绂燕 --dry-run
+
+# 正常刷新（v4.49 起不用传 --workdir，自动落在 ~/.workbuddy/reports/edu-罗绂燕/）
+python3 scripts/refresh.py --edu 罗绂燕
+
+# 刷新后同步到交付目录
+python3 scripts/refresh.py --edu 罗绂燕 \
+  --copy-to <交付目录>/罗绂燕_教务_学生学情分析.html
+
+# 接管旧目录 / 临时试跑时才显式给路径
+python3 scripts/refresh.py --workdir _roundK/w_edu2 --edu 罗绂燕
+```
+
+**参数**：`--edu` / `--co` / `--course` 不传则从 `snapshot/meta.json` 的 `scope` 推断；
+`--window` / `--chat-days` 不传则沿用 `snapshot/report_args.json`（首次从 `meta.json` 推断，
+并在渲染后写盘记住）；`--end` 默认空 = **至今**，所以每次刷新报告窗口会自动往前推。
+另有 `--no-render`（只更新数据）、`--quiet`（给定时任务用）。
+
+**安全铁律（已实测）**：
+
+- 先用字典接口探活 token，失效立即退出（**退出码 2**）并打印「本次未改动任何文件」——
+  绝不能把空 `renew` 覆盖上去，否则整份续报 KPI 会被清成 0。
+- 接口只返回部分学生时**合并而非覆盖**：未出现的 `studentSeq` 保留旧值。
+- 写盘用临时文件 + `os.replace` 原子替换；渲染失败不删除旧 HTML（退出码 3）。
+- 渲染后打印**报告 KPI**（`已续报 / 未续报 / 续报未确认 / 多科目 / 单科 / 扩科意向`），
+  与页面显示同口径 —— 不要拿接口原始条数（237）去对页面的 144，两者口径本来就不同。
+
+**定时任务（推荐系统级，不是 AI 定时任务）**：本脚本不需要模型参与，由系统调度器直接调，
+**模型 token 消耗为 0**；用 AI 定时任务反而每次都要起一次对话。token 有效期约 24h，
+过期后刷新会以退出码 2 失败并保留旧报告，重新登录写 `token.txt` 即可恢复。
+
+- **macOS 首选 LaunchAgent**（`~/Library/LaunchAgents/*.plist`）：`ProgramArguments` 直接指向
+  受管 Python + `refresh.py`，配 `WorkingDirectory`（= 固定报告目录，见「工作目录」一节），
+  用 `StartCalendarInterval` 配 `Hour` 0/4/8/12/16/20。
+  ⚠️ **不要**用 `zsh -lc` 包一层：登录 shell 会带进 `HTTP_PROXY`，代理一挂刷新就全失败。
+  实测无代理时直连后台正常。
+  📌 v4.49 起 plist 里**不必写 `--workdir`**（写 `--edu <姓名>` 即可），这样报告目录即使被移动，
+  任务照样能找到数据。
+- Linux / 可用的 macOS 上也可用 crontab：
+
+  ```cron
+  0 */4 * * * <python3> <skill>/scripts/refresh.py --edu <教务名> --quiet --notify >> $HOME/.workbuddy/reports/edu-<教务名>/refresh.log 2>&1
+  ```
+
+- ⚠️ **在 WorkBuddy 这类 GUI 宿主里，`crontab` 与 `launchctl bootstrap` 会被系统拒绝**
+  （crontab 报 `operation not permitted`，bootstrap 报 `5: Input/output error`，连最小 plist 也失败）。
+  这是宿主进程权限，不是配置写错 —— 必须由**用户在「终端」里、或双击一个 `.command` 脚本**完成安装。
+- `--notify`：失败时发 macOS 桌面通知（token 失效 / 接口 0 条 / 渲染失败），同类问题**每天最多一次**
+  （状态存 `snapshot/.refresh_notify.json`）。无人值守必须有这个，否则失败只会安静躺在日志里。
+- `--quiet`：成功时也只留一行 `[时间] 刷新完成 ｜ KPI…`，便于判断"它到底还在不在跑"。
+
+⚠️ **它解决不了"续报没人维护"**：若后台 `renewed` 全是「未设置」，每小时刷新拿到的
+仍是同一批「未确认」，此时提高频率没有收益。频率要有意义，得先等后台开放续报维护入口。
