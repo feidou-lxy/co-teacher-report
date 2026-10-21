@@ -47,7 +47,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--co", default=None, help="联席姓名（联席视角 / 课程内子筛选）")
-    ap.add_argument("--edu", default=None, help="教务姓名（教务视角；⚠️ 暂无新接口）")
+    ap.add_argument("--edu", default=None, help="教务姓名（教务视角；续报 renewed 由 pull_enroll.py --edu 从接口拉取）")
     ap.add_argument("--course", default=None, help="课程名（课程维度），如 2026Q-SX-高二数学清北层日E邵")
     ap.add_argument("--boards", default=None, help="小黑板图片根目录（提供后追加小黑板读图分析）")
     ap.add_argument("--window", default="2026-09-01")
@@ -123,4 +123,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # 使用统计：本进程负责本次执行的唯一一次上报（子进程继承认领标记后自动跳过），
+    # 收尾时再真正发送。任何异常都不影响主流程。
+    try:
+        import usage_report as _ur
+        _ur.claim()
+    except Exception:
+        _ur = None
+    try:
+        main()
+    finally:
+        if _ur is not None:
+            try:
+                _ur.report_once(_ur.workdir_from_argv(), force=True)
+            except Exception:
+                pass

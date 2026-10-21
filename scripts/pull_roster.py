@@ -15,7 +15,9 @@
 roomId 覆盖率 旧 70%（57/81）→ 新 **84%**（68/81），**多出 14 个旧链路从未拉到的群**；
 两者都有 roomId 的 54 人里 **54 一致、0 冲突**（同 ID 体系，可信）。
 
-⚠️ 教务维度（--edu）**暂无对应接口**，本脚本会明确拒绝，请走旧链路 pull_students.py。
+⚠️ 教务维度（--edu）v4.44 起已支持：复用 `getCoTeacherStudents?coTeacherName=<教务名>`，
+   后端对教务可见其名下学生；返回记录带 `renewed`/`subject`/`subjectName`，会一并写入
+   `snapshot/renew.json` 供续报展示。
 
 输出（<workdir>/）
     students.json        花名册（字段与旧链路对齐 + roomId），供 pull_attendance / merge 复用
@@ -88,6 +90,11 @@ def _row(x):
         "purchaseType": pt,             # 原串，便于核对（新增字段，不影响旧逻辑）
         "roomId": room,                 # ★ 旧链路缺的就是它
         "roomIdSource": "api" if room else None,          # api | fill_groupname | None
+        # v4.44 新增（研发接口新增字段）：renewed=是否续报（"是"/"否"/"未设置"）、
+        # subject=科目字典值(int)、subjectName=科目名称（未匹配到为空串）
+        "renewed": (x.get("renewed") or "").strip() or None,
+        "subject": x.get("subject"),
+        "subjectName": (x.get("subjectName") or "").strip() or None,
     }
 
 
@@ -204,7 +211,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
     ap.add_argument("--co", default=None, help="联席姓名，如 张巍（联席视角）")
-    ap.add_argument("--edu", default=None, help="教务姓名（⚠️ 新接口暂不支持，请走旧链路）")
+    ap.add_argument("--edu", default=None, help="教务姓名（v4.44 起支持：复用 getCoTeacherStudents 接口）")
     ap.add_argument("--course", default=None, help="课程名（课程维度），如 2026Q-SX-高二数学清北层日E邵")
     ap.add_argument("--fill", action="store_true",
                     help="★ 兜底：为接口未关联到群的学生，用群列表「群名内姓名」补一次 roomId"
@@ -215,19 +222,14 @@ def main():
     args = ap.parse_args()
     role, name = common.resolve_scope(args)
 
-    if role == "edu":
-        raise SystemExit(
-            "❌ 教务维度（--edu）暂无对应接口。\n"
-            "   研发目前只封装了「按课程」「按联席」两个维度。\n"
-            "   教务视角请去掉 --api，走旧链路：\n"
-            "     python scripts/pull_students.py --workdir <wd> --edu <教务名>\n"
-            "   或请研发补一个 GET /ai/getClassTeacherStudents?classTeacherName=<教务姓名>。")
-
     wd = common.workdir(args)
     token = common.load_token(wd)
 
     if role == "course":
         path, params, label = API_COURSE, {"productName": name}, "课程"
+    elif role == "edu":
+        # v4.44：教务维度也走同一封装接口（coTeacherName=教务名，后端对教务可见其名下学生）
+        path, params, label = API_CO, {"coTeacherName": name}, "教务"
     else:
         path, params, label = API_CO, {"coTeacherName": name}, "联席"
 
@@ -244,6 +246,26 @@ def main():
 
     rows = [_row(x) for x in raw_list]
     groups = _groups_from_roster(rows)      # ⚠️ 必须在 fill **之前**取，否则补全的群会计两次
+
+    # v4.44：把接口新增的续报字段按 studentSeq 落 snapshot/renew.json（bySeq + detail），
+    # 供 pull_enroll.py / report.py 消费（与各维度共用，教务维度亦可直接产出续报数据）
+    renew_map, renew_detail = {}, {}
+    for x in rows:
+        seq = x.get("stuSeq")
+        rv = x.get("renewed")
+        if seq and rv:
+            renew_map[str(seq)] = rv
+            renew_detail[str(seq)] = {"renewed": rv,
+                                     "subject": x.get("subject"),
+                                     "subjectName": x.get("subjectName")}
+    if renew_map:
+        _sp = os.path.join(wd, "snapshot")
+        os.makedirs(_sp, exist_ok=True)
+        json.dump({"source": f"{path}?{'&'.join(f'{k}={v}' for k, v in params.items())}",
+                   "bySeq": renew_map, "detail": renew_detail},
+                  open(f"{_sp}/renew.json", "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=1)
+        print(f"  续报字段（renewed）：{len(renew_map)} 条 → snapshot/renew.json")
 
     n_fill, extra = 0, []
     if args.fill:

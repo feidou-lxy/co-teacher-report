@@ -157,6 +157,19 @@ def norm_name(s):
     return re.sub(r"\s*\d+$", "", str(s or "")).strip()
 
 
+# v4.28：飞书表里学生名可能带**状态后缀**（`某生（回）` / `沈子琳（回）` / `王悦然（转）` /
+#   `胡曦月（回退）` / `孙博言（退）`），而花名册侧是干净的 `某生` —— 只按 norm_name 对不上，
+#   报告里这些人的「提交情况」会整行消失（实测 2026Q-SX-高二数学211层六C肖 2 人）。
+#   ⚠️ 只做**只读匹配的兜底**（`report.py` 建索引时 setdefault，精确键优先），
+#      不改 norm_name 本身 —— 聊天侧发言人归一依赖它，动它会牵连全部团队的既有分档。
+_STATUS_SUFFIX_RE = re.compile(r"\s*[（(]\s*(?:退|回|转|回退|退课|转班|休学|停课)\s*[）)]\s*$")
+
+
+def norm_name_loose(s):
+    """宽松归一：norm_name 之后再去掉尾部状态括号。**仅用于「精确匹配不到时」的兜底**。"""
+    return _STATUS_SUFFIX_RE.sub("", norm_name(s)).strip()
+
+
 # ============================================================================
 # 课程名（v4.7）：后台「响应时效」列表已**直接给出课程名** `productName`
 #   productName = 「2026Q-SX-高二数学985层进化班六D谢胡」   ← 权威、含班型
@@ -310,9 +323,13 @@ def level_by_score(score):
 EXAM_NAME_KWS = ["月考", "期中", "期末", "一模", "二模", "三模", "结课测", "阶段测", "单元测",
                  "周测", "联考", "摸底考", "开学考", "诊断考", "小测", "测验", "考试成绩", "测试成绩"]
 EXAM_FULL_KWS = ["满分", "总分", "卷面", "共", "总共"]
+# v4.28：裸数字后面紧跟这些字 → 更像「题号 / 序号」，不是分数
+#   （实测：老师原话「10求对称点咋能不会捏」被当成 10 分）
+EXAM_BARE_BAD_TAIL = "求|道|这|那|题|页|步|行|讲|说|问|看|写|改|做|算|的|是|和|与|再|又|也|都|就"
 EXAM_PAIR_RE = re.compile(r"(\d{2,3}(?:\.\d)?)\s*/\s*(\d{2,3})")        # 128/150
 EXAM_SCORE_RE = re.compile(r"(\d{2,3}(?:\.\d)?)\s*分")                  # 128分
-EXAM_BARE_RE = re.compile(r"(?<![\d.%/])(\d{2,3})(?![\d.%/])(?!\s*(?:人|名|位|个|题|分钟|小时|天|次))")
+EXAM_BARE_RE = re.compile(r"(?<![\d.%/])(\d{2,3})(?![\d.%/])"
+                          r"(?!\s*(?:人|名|位|个|题|分钟|小时|天|次|" + EXAM_BARE_BAD_TAIL + r"))")
 EXAM_FULL_RE = re.compile(r"(?:满分|总分|卷面)\s*[:：]?\s*(\d{2,3})")
 EXAM_RANK_RE = re.compile(r"(?:第\s*(\d{1,3})\s*名|排名\s*[:：]?\s*(\d{1,3}))")
 EXAM_TOTAL_RE = re.compile(r"(?:/\s*(\d{2,4})|共\s*(\d{2,4})\s*人|总人数\s*[:：]?\s*(\d{2,4})|(\d{2,4})\s*人)")
@@ -326,6 +343,32 @@ EXAM_SUBJ_FULL = {"数学": 150, "语文": 150, "英语": 150, "物理": 100, "�
                   "生物": 100, "政治": 100, "历史": 100, "地理": 100}
 # 成绩关键词附近的「事务性」表述（考试范围 / 时间 / 报名…不算成绩）
 EXAM_SKIP_KWS = ["范围", "时间", "安排", "报名", "几点", "考场", "记得", "准备", "复习", "加油"]
+# ⚠️ v4.28 误命中修复：这些词里**包含**考试关键词，但语义与考试无关 ——
+#   实测踩坑：老师原话「10求对称点咋能不会捏…和咱们课上第一题也是**一模一样**滴」，
+#   被「一模」命中 → 又把题号 10 当 10 分 → 得分率 7% → 触发「成绩偏低封顶需关注」。
+#   这是**反向**误判（把人从正常打进需重点），比漏判更危险，必须挡掉。
+EXAM_NAME_FAKE = {
+    "一模": ["一模一样", "一个模", "模一样", "一个模子"],
+    "二模": ["二模一样"],
+    "三模": ["三模一样"],
+}
+
+
+def _exam_kws(s):
+    """句子里命中的考试名关键词（已剔除「一模一样」这类假命中）。"""
+    out = []
+    for k in EXAM_NAME_KWS:
+        if k not in s:
+            continue
+        if k in EXAM_NAME_FAKE and any(f in s for f in EXAM_NAME_FAKE[k]):
+            # 「一模一样」：只有当该句**没有**出现真的考试语境时才整句放弃这个关键词
+            rest = s
+            for f in EXAM_NAME_FAKE[k]:
+                rest = rest.replace(f, "")
+            if k not in rest:
+                continue
+        out.append(k)
+    return out
 
 
 def _exam_level(pct):
@@ -379,7 +422,7 @@ def extract_exam(triples, stu_name, subject=""):
             s = (sent or "").strip()
             if not s or len(s) > 120:
                 continue
-            kws = [k for k in EXAM_NAME_KWS if k in s]
+            kws = _exam_kws(s)
             if not kws or any(k in s for k in EXAM_SKIP_KWS):
                 continue
             full = None
@@ -456,8 +499,379 @@ def extract_exam(triples, stu_name, subject=""):
     return {"latest": latest, "history": found, "level": lv, "why": why}
 
 
-def learning_level(s, board):
-    """学习分层（v4.4）：综合四类证据判档 —— ① 小黑板 ② 作业闭环 ③ 老师反馈 ④ 学生成绩。
+# ══════════════════════════════════════════════════════════════════════════
+# v4.23 飞书表 → 学习信号（提交情况 / 作业评级 / 学情手记 / 考试成绩）
+#
+# 背景（用户要求）：飞书表的内容原来在报告里是**一个独立折叠小模块**，与学情分析并列。
+# 但那才是团队每周真实记录的学习过程（作业交没交、评级升降、考试分数），应该**作为证据
+# 参与分层结论与跟进动作**，而不是挂在卡片末尾让人自己看。
+#
+# 本模块的输出被两处共用（口径唯一，避免两处打架）：
+#   ① `learning_level()` 的「⑤ 飞书提交」证据（改档位）；
+#   ② `report.py` 的 ① 学习情况（提交情况行 / 需要关注点 / 评级轨迹 / 老师手记）。
+# ══════════════════════════════════════════════════════════════════════════
+FS_ITEM_ORDER = ["作业", "作业评级", "作业闭环", "打穿题", "打穿题测试", "几综模块测",
+                 "精题", "出门测", "框架笔记", "课前测", "讲题视频", "总结"]
+# 飞书「考试成绩」列里不是分数的写法（团队填「无月考」「考了」很常见）
+FS_EXAM_NONE = ("无月考", "没月考", "没有月考", "未考", "没考", "没考呢", "考了", "待定",
+                "未出分", "还没出", "没出分", "无成绩", "无数据")
+# ⚠️ 含数字时只能按「无歧义短语」排除：单字「无」「/」会把 `70/150` 直接误杀（踩过）
+FS_EXAM_NONE_HARD = ("无月考", "没月考", "没有月考", "未考", "没考", "考了", "待定",
+                     "未出分", "还没出", "没出分", "无成绩", "无数据")
+FS_EXAM_BAD = ("非常不理想", "很不理想", "不理想", "很差", "较差", "偏低", "退步",
+               "砸了", "崩了", "没考好", "考砸")
+
+
+def parse_fs_exam(txt, subject="数学"):
+    """飞书表「考试成绩」**自由文本** → {text, shown, pct, level, assumed} 或 None。
+
+    🔒 只解析、不推断人名、不补造分数；解析不出（「无月考」「考了」这种）就返回 None。
+    支持形态：`70/150`、`141`、`91/100`、`104/150,班排7，年排68`、`非常不理想`。
+    ⚠️ 无分母的数字要**显式标注按几分制推断**（与聊天侧 `extract_exam` 的 assumed 同口径），
+       否则「141」被当成 141/150 还是 141/150 之外的制度会让得分率失真。
+    """
+    raw = str(txt or "").strip()
+    if not raw:
+        return None
+    t = raw.replace(" ", "")
+    has_digit = bool(re.search(r"\d", t))
+    if not has_digit:
+        if any(k in t for k in FS_EXAM_NONE):
+            return None
+        if any(k in t for k in FS_EXAM_BAD):
+            return {"text": raw, "shown": raw, "pct": None, "level": "偏低", "assumed": ""}
+        return None                    # 无法判断 → 当没有，不硬凑
+    if any(k in t for k in FS_EXAM_NONE_HARD):
+        return None                    # 「无月考，11.11考」这类 → 没有当前成绩
+
+    pct, shown, assumed = None, "", ""
+    # ⚠️ 先剔掉「班排7 / 年排68 / 第3名」这类**名次**，否则「年排68」会被当成 68 分
+    #    （实测踩过：68/150 = 45% → 误判成绩偏低 → 封顶「需关注」）
+    t_score = re.sub(r"(?:班排|年排|级排|校排|排名|名次|第|前)\s*[:：]?\s*\d+(?:\.\d+)?\s*"
+                     r"(?:名|位|人)?", "", t)
+    m = EXAM_PAIR_RE.search(t_score)                 # 128/150
+    if m:
+        v, full = float(m.group(1)), float(m.group(2))
+        if int(full) in EXAM_PLAUSIBLE_FULL or full >= 100:
+            pct, shown = v / full, f"{v:g}/{full:g}"
+    if pct is None:
+        m2 = (re.search(r"(?<![\d.])(\d{2,3}(?:\.\d)?)\s*分", t_score)
+              or re.search(r"(?<![\d.])(\d{2,3}(?:\.\d)?)(?![\d.])", t_score))
+        if m2:
+            v = float(m2.group(1))
+            full = EXAM_SUBJ_FULL.get(subject, 150)
+            if 30 <= v <= full:                     # 低于 30 更像名次/日期，不当分数
+                pct, shown, assumed = v / full, f"{v:g}", f"按 {full:g} 分制推断"
+    if pct is None:
+        if any(k in t for k in FS_EXAM_BAD):
+            return {"text": raw, "shown": raw, "pct": None, "level": "偏低", "assumed": ""}
+        return None
+    return {"text": raw, "shown": shown, "pct": pct, "level": _exam_level(pct),
+            "assumed": assumed}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.37 飞书表「学生学情 / 问题点」列 → 可上卡片可见区的「学生问题」句
+# ══════════════════════════════════════════════════════════════════════════
+# ⭐ 用户要求：飞书表里识别到的「学生问题」要优先展示在卡片的**重要位置**，
+#    不能只躺在「补充信息 → 老师手记」折叠区里（要点两次才看得到）。
+#
+# 🔒 反编造铁律：这里**只做切句 ＋ 分类，绝不改写 / 归纳 / 生成文本** ——
+#    上屏的每一句都是表内原文的子串，可回飞书表逐字核对（点开还给出表名 + 行号）。
+#    分类只用于「要不要上屏 / 排在第几条 / 用什么颜色」，不改变句子本身。
+#
+# 分类口径（三档，宁可漏判也不硬凑）：
+#   hard = 行为 / 态度 / 沟通问题（不交作业、不写小黑板、联系不上、走神…）→ 红色
+#   soft = 基础 / 状态 / 外部压力（基础差、跟不上、粗心、焦虑、作业多…）→ 橙色
+#   其余（正面评价、报名转班优惠等教务事务）→ **全部丢弃**，不上屏
+ISSUE_SPLIT = re.compile(r"[。；;！!？?\n]+|\s+/\s+|\s{2,}")
+ISSUE_CLAUSE = re.compile(r"[，,]+")
+# 句首日期 / 课次前缀（`10.2基础差` / `9.11：转985B`）—— 纯格式，剥掉不改语义
+ISSUE_DATE_PREFIX = re.compile(
+    r"^\s*(?:\d{1,2}[.月]\d{1,2}日?|\d{1,2}月\d{1,2}日?|第[一二三四五六七八九十\d]+次课)[：:、,，\s]*")
+# 句首连接词（长句按逗号切开后残留的「但是 / 只是」）—— 同上，纯格式清理
+ISSUE_LEAD_CONJ = re.compile(r"^(?:但是|但|不过|只是|就是|而且|然后|所以|而且说|另外)[，,\s]*")
+
+ISSUE_HARD = [
+    # 作业 / 提交
+    "不交作业", "不写作业", "没交作业", "作业不交", "作业不写", "作业完成不好", "作业不积极",
+    "不按时交", "不按时", "没交", "缺交", "漏交", "督促", "没时间写", "没时间看", "经常没有时间",
+    # 课堂 / 小黑板
+    "不写小黑板", "小黑板不写", "不爱写小黑板", "小黑板偷懒", "不写过程", "不爱写过程",
+    "不写", "催不上", "催才", "催了才", "催着才", "要催", "不爱写",
+    # 沟通 / 联系
+    "联系不上", "找不到人", "不好联系", "不回消息", "不回群", "不回话", "不回复", "问不回",
+    "不爱回", "不回", "不主动", "不问问题", "不提问", "不愿意沟通", "不沟通", "不吭声",
+    # 态度 / 状态
+    "不积极", "积极性不强", "不想学", "不愿学", "不主动学", "厌学", "惰性", "偷懒", "走神",
+    "玩手机", "爱玩手机", "打游戏", "开科技", "上课睡觉", "课上睡觉", "爱睡觉", "控制不住",
+    "不认真", "不太认真", "不专心", "注意力不集中", "不配合", "劝不动", "没收心",
+    "不想开摄像头", "迟到", "逃课", "缺课", "不听", "抗拒", "抵触", "顶嘴", "态度不",
+    "没咋做笔记", "没做笔记", "不做笔记",
+    # v4.37 补充（实测张巍表漏判：失联 / 不回 / 交流为 0 这类教务最该知道的）
+    "失联", "没理我", "不理我", "不理会", "交流为0", "交流为 0", "联系不到",
+]
+ISSUE_SOFT = [
+    # 基础 / 方法 / 计算
+    "基础差", "基础一般", "基础不好", "基础薄弱", "基础较弱", "零基础", "全忘了", "忘了",
+    "出错频繁", "计算出错", "不应该出错", "出错", "计算错误", "计算问题", "粗心", "马虎",
+    "不扎实", "不太规范", "不规范", "不熟练", "不够细致", "不细致", "不够仔细", "做题慢",
+    "方法不会", "思路不清", "就不会", "没听懂", "听不懂", "没学会",
+    # 状态 / 外部压力
+    "跟不上", "费劲", "吃力", "有点难", "觉得难", "有难度", "难度大", "节奏快", "作业多",
+    "写到12点", "写得挺老晚", "焦虑", "担心", "着急", "压力", "情绪", "畏难", "不适应",
+    "疲惫", "心态不稳", "发挥不好", "发挥不太好", "考的不好", "考得不好", "考的不理想",
+    "没考好", "考的差", "成绩不好", "家长不好联系", "家长会生气", "家长有些焦虑",
+    "家长比较担心", "有想法调班", "想退费", "怕难", "怀疑",
+    # 「作业完成得不好」的各种写法（表内是自由文本，写法不统一）
+    "完成的不好", "完成的不太好", "完成不好", "做的不好", "做得不好",
+]
+# 明确的「已经好了」收尾 —— 只认强收尾词。
+# ⚠️ 不能用「能跟上」这类弱正面词去覆盖：实测「怀疑自己能不能跟上」会被误判成正面而丢掉真问题。
+ISSUE_RELIEF = ["好转", "跟上了", "适应了", "稳定了", "没问题了", "现在没什么问题", "已经适应"]
+
+
+def fs_issues(note):
+    """飞书表手记 → [(严重度, 子句, 整句原文)]，严重度 0=行为/态度，1=基础/状态。
+
+    ⚠️ 返回的句子是**表内原文子串**（仅剥日期/课次前缀与句首连接词、去首尾标点），
+       不拼接、不改写 —— 报告里点开每条都会给出「飞书表『sheet 名』第 N 行」。
+    ⚠️ 长句（家长口述转写常 100+ 字）先按逗号切，只保留命中问题的子句 ——
+       否则整段会被塞进一枚 chip，可见区直接失守。
+    """
+    if not note:
+        return []
+    out, seen, cur = [], set(), str(note)
+
+    def push(sent, origin):
+        s = ISSUE_LEAD_CONJ.sub("", ISSUE_DATE_PREFIX.sub("", sent)).strip(" ，,、：:;；")
+        if len(s) < 3:
+            return
+        hard = [k for k in ISSUE_HARD if k in s]
+        soft = [k for k in ISSUE_SOFT if k in s]
+        if not hard and not soft:
+            return
+        if not hard and any(k in s for k in ISSUE_RELIEF):
+            return                              # 「先有点吃力，后面跟上了」→ 已缓解，不报
+        key = re.sub(r"[\s，,。；;、]", "", s)
+        if key in seen:
+            return
+        seen.add(key)
+        # 第三个元素永远给**整句原文**（长句按逗号切出来的子句另存）——
+        # 卡片上 chip 只放子句（读得快），展开「表内原话」放整句（不丢转折与补充）。
+        _full = ISSUE_LEAD_CONJ.sub("", ISSUE_DATE_PREFIX.sub("", origin)).strip(" ，,、：:;；")
+        out.append((0 if hard else 1, s, _full or s))
+
+    for _sent in ISSUE_SPLIT.split(cur):
+        _sent = (_sent or "").strip()
+        if not _sent:
+            continue
+        if len(_sent) <= 40:
+            push(_sent, _sent)
+            continue
+        for _c in ISSUE_CLAUSE.split(_sent):
+            if len(_c.strip()) >= 3:
+                push(_c, _sent)
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _fs_risks(st):
+    """从飞书信号里挑出「需要关注的点」（最多 3 条，按严重度排序）。
+
+    这是用户要的核心：飞书不该只是数据展示，要**说出哪里有问题**。
+    排序：近 N 次未交 / 某项全未交 ＞ 评级下滑 / 单项完成率低 / 考试偏低 ＞ 合计提交率低。
+    """
+    out = []
+    for g in st["ratings"]:
+        ta = int(g.get("tailAbsent") or 0)
+        if ta >= 2:
+            out.append((0, f'{g.get("item")} 最近连续 {ta} 次未提交'))
+    # 已被「连续未交」点名的项，不再重复报它的完成率（同一条链说三遍谁都读不下去）
+    _tail_items = {g.get("item") for g in st["ratings"] if int(g.get("tailAbsent") or 0) >= 2}
+    for i in st["zeros"]:
+        if i["item"] in _tail_items:
+            continue
+        out.append((0, f'{i["item"]} {i["total"]} 次全部未交'))
+    for g in st["ratings"]:
+        if int(g.get("tailAbsent") or 0) < 2 and g.get("trend") == "down":
+            out.append((1, f'{g["item"]} 评级 {g.get("first")} → {g.get("last")}，呈下滑'))
+    w = st["worst"]
+    if w and 0 < w["pct"] <= 60 and w["item"] not in _tail_items:
+        out.append((1, f'{w["item"]} 只完成 {w["done"]}/{w["total"]}（{w["pct"]:.0f}%）'))
+    ex = st["exam"]
+    if ex and ex.get("level") == "偏低":
+        p = f'（得分率 {ex["pct"]:.0%}）' if ex.get("pct") is not None else ""
+        out.append((1, f'考试 {ex["text"]}{p}，偏低'))
+    if st["pct"] is not None and st["pct"] < 60:
+        w = st["worst"]
+        # 若「最弱项」就是全部记录（如只有「作业 1/2」这一项），上面已说过，不再重复同一句
+        _dup = (w and w["total"] == st["D"] + st["U"] and 0 < w["pct"] <= 60
+                and abs(st["pct"] - w["pct"]) < 0.01)
+        if not _dup:
+            out.append((2, f'各项合计提交率仅 {st["pct"]:.0f}%（{st["D"]}/{st["D"] + st["U"]}）'))
+    seen, res = set(), []
+    for sev, txt in sorted(out, key=lambda x: x[0]):
+        if txt in seen:
+            continue
+        seen.add(txt)
+        res.append((sev, txt))
+    return res[:3]
+
+
+def fs_stats(fs):
+    """飞书表记录 → 结构化学习信号。无记录 / 只有档案无课次 → None。
+
+    ⚠️ `fs` 是 adapt_feishu.py 产出的单条 record（done/undone/ratings/meta/nLessons）。
+       返回 dict，供 `learning_level()` 与 `report.py` 共用。
+    """
+    if not isinstance(fs, dict) or not fs:
+        return None
+    done, undone = fs.get("done") or {}, fs.get("undone") or {}
+    have = set(done) | set(undone)
+    items = []
+    for k in [x for x in FS_ITEM_ORDER if x in have] + sorted(k for k in have if k not in FS_ITEM_ORDER):
+        d, u = int(done.get(k) or 0), int(undone.get(k) or 0)
+        t = d + u
+        if t <= 0:
+            continue
+        items.append({"item": k, "done": d, "undone": u, "total": t, "pct": d / t * 100})
+    ratings = []
+    for k in sorted(fs.get("ratings") or {}):
+        g = (fs.get("ratings") or {}).get(k)
+        if isinstance(g, dict) and g.get("seq"):
+            ratings.append(g)
+    meta = fs.get("meta") or {}
+    exam = parse_fs_exam(meta.get("examScore") or meta.get("exam_score"))
+    note = str(meta.get("note") or "").strip()
+    if not items and not ratings and not exam and not note:
+        return None
+    D = sum(i["done"] for i in items)
+    U = sum(i["undone"] for i in items)
+    st = {
+        "items": items, "D": D, "U": U,
+        "pct": (D / (D + U) * 100) if (D + U) else None,
+        "worst": min(items, key=lambda i: (i["pct"], -i["total"])) if items else None,
+        "zeros": [i for i in items if i["pct"] == 0 and i["total"] >= 2],
+        "ratings": ratings, "exam": exam, "note": note,
+        "nLessons": fs.get("nLessons") or 0,
+        "sheet": fs.get("sourceSheetTitle") or "", "row": fs.get("sourceRow"),
+        # 原始引用（渲染评级序列条 / 背景信息时要用）
+        "ratingsRaw": fs.get("ratings") or {}, "metaRaw": meta,
+    }
+    st["risks"] = _fs_risks(st)
+    # v4.37：表内「学生学情/问题点」→ 可直接上卡片可见区的问题句（只切句分类，不改写）
+    st["issues"] = fs_issues(note)
+    # 评级结论徽章（与 report.rating_block 同一优先级：先连续未交，再趋势）
+    st["badges"] = []
+    for g in ratings:
+        ta = int(g.get("tailAbsent") or 0)
+        n_r = int(g.get("nRated") or 0)
+        if ta >= 2:
+            st["badges"].append((g["item"], f"近 {ta} 次未交", "down"))
+        elif not n_r:
+            st["badges"].append((g["item"], "无评级", "flat"))
+        elif n_r < int(g.get("minRated") or 3):
+            st["badges"].append((g["item"], "样本不足", "flat"))
+        elif g.get("trend") == "up":
+            st["badges"].append((g["item"], "上升 ↑", "up"))
+        elif g.get("trend") == "down":
+            st["badges"].append((g["item"], "下滑 ↓", "down"))
+        else:
+            st["badges"].append((g["item"], "稳定 →", "flat"))
+    return st
+
+
+def _fs_evidence(st, chat_exam_lv="未知"):
+    """飞书信号 → 分层加减分。返回 (rows, score, exam_override)。
+
+    ⚠️ 打分原则（避免「同一个因重复罚」）：
+      · 合计提交率一档最多 ±2；单项全未交只在**整体还行**时补 -1（整体已低就不再叠）；
+      · 评级趋势 / 连续未交一档 -1；
+      · 成绩：**聊天侧没有成绩时才用飞书成绩**（不重复计分，只补空白）。
+    """
+    rows, score, exam_override = [], 0, None
+    if st is None:
+        return rows, score, exam_override
+
+    p = st["pct"]
+    n_rec = st["D"] + st["U"]
+    if p is not None:
+        # ⚠️ 最小样本：记录只有 1~2 条时（表刚开 / 学生才进班）不按百分比扣分 ——
+        #    0/1 与 0/5 的「0%」含义完全不同，前者说明不了学习状态（v4.23 实测踩过）。
+        if n_rec < 3:
+            rows.append(("飞书提交", f'各项合计 {st["D"]}/{n_rec}（{p:.0f}%），'
+                                    f'记录仅 {n_rec} 条、样本不足，不参与加减分', 0))
+        else:
+            # ⚠️ 只扣分、不因「全交」加分（v4.23 定）：交作业是**底线**，不是学习效果。
+            #    实测给 +1 会把一批「没有小黑板、没有成绩、只是作业交齐」的学生整体抬到「良好」，
+            #    与联席的直观不符。这里只作正向记录，档位仍由风险证据决定。
+            d0 = -2 if p < 50 else (-1 if p < 70 else 0)
+            _txt = f'各项合计 {st["D"]}/{n_rec}（{p:.0f}%）'
+            if d0 == 0 and p >= 90:
+                _txt += '，提交完整（只记正向，不加分 —— 交作业是底线）'
+            rows.append(("飞书提交", _txt, d0))
+            score += d0
+            if st["zeros"] and p >= 50:
+                z = "、".join(f'{i["item"]} {i["total"]} 次全空' for i in st["zeros"][:2])
+                rows.append(("飞书提交", f"{z}（整体尚可但单项全缺）", -1))
+                score -= 1
+
+    for g in st["ratings"]:
+        item = g.get("item")
+        ta = int(g.get("tailAbsent") or 0)
+        if ta >= 2:
+            rows.append(("飞书提交", f'{item} 最近连续 {ta} 次未提交', -1))
+            score -= 1
+        elif int(g.get("nRated") or 0) >= int(g.get("minRated") or 3):
+            if g.get("trend") == "down":
+                rows.append(("飞书提交", f'{item} 评级 {g.get("first")} → {g.get("last")}，呈下滑', -1))
+                score -= 1
+            elif g.get("trend") == "up":
+                rows.append(("飞书提交", f'{item} 评级 {g.get("first")} → {g.get("last")}，呈上升', 1))
+                score += 1
+
+    ex = st["exam"]
+    if ex and chat_exam_lv in ("未知", "", None):
+        _p = f'（得分率 {ex["pct"]:.0%}{"，" + ex["assumed"] if ex.get("assumed") else ""}）' \
+            if ex.get("pct") is not None else ""
+        if ex.get("level") == "高":
+            rows.append(("成绩", f'飞书表考试 {ex["text"]}{_p}，成绩好', 3))
+            score += 3
+            exam_override = ("floor", "blue")
+        elif ex.get("level") == "中":
+            rows.append(("成绩", f'飞书表考试 {ex["text"]}{_p}，成绩中等', 1))
+            score += 1
+        elif ex.get("level") == "偏低":
+            rows.append(("成绩", f'飞书表考试 {ex["text"]}{_p}，成绩偏低', -3))
+            score -= 3
+            exam_override = ("cap", "orange")
+    elif ex:
+        rows.append(("飞书提交", f'飞书表考试 {ex["text"]}（聊天侧已有成绩，此处并列参照、不重复计分）', 0))
+    return rows, score, exam_override
+
+
+def fs_confirms_submit(st):
+    """⭐ v4.28：飞书表是否**已确认提交**（≥3 条学情记录且提交率 ≥80%）。
+
+    用途：校正聊天侧「催交后未见提交」—— 那条证据的真实语义是**群里没回话**，
+    不等于没写作业。飞书表是老师逐格打勾的提交事实（权威）。
+    ⚠️ 判据集中在这里，`learning_level()` 与 `report.four_dims()` 共用，避免两处漂移。
+    ⚠️ 门槛只要求 **≥1 条**记录（不同于 fs 自身扣分要求的 ≥3 条）：这里只用来**撤销**
+       一个「没交作业」的负面结论，有一条已交的反证就够；不用于加分，不存在放大风险。
+    """
+    if not isinstance(st, dict):
+        return False
+    p = st.get("pct")
+    n = int(st.get("D") or 0) + int(st.get("U") or 0)
+    return p is not None and n >= 1 and p >= 80
+
+
+def learning_level(s, board, fs=None):
+    """学习分层（v4.4 四类证据；v4.23 起并入「⑤ 飞书表提交」共五类）。
+
+    ① 小黑板 ② 作业闭环 ③ 老师反馈 ④ 学生成绩 ⑤ 飞书表（提交率 / 作业评级趋势 / 考试）。
+    `fs` 传 `fs_stats()` 的结果；不传或 None 时**与本改动前完全一致**（向后兼容）。
 
     report.py 统一使用本口径，避免多处漂移。
     返回 (档位key, 档位中文, 依据列表[(来源, 文本, 加减分)])
@@ -483,7 +897,9 @@ def learning_level(s, board):
         cap_key = "orange"
         add("成绩", f"{ex_why} → 成绩偏低，即使作业/配合到位，学习效果仍不足（封顶「需关注」）", -3)
     else:
-        add("成绩", "窗口内未见成绩信息（月考 / 期中成绩收集）", 0)
+        # 聊天侧没有成绩但飞书表里有 → 说明来源切换，避免依据块里出现「没看到成绩」+「成绩偏低」两条互相打架
+        add("成绩", ("聊天侧未见成绩信息（改用飞书表「考试成绩」，见下条）"
+                     if (fs and fs.get("exam")) else "窗口内未见成绩信息（月考 / 期中成绩收集）"), 0)
 
     # ---------------- ① 课堂小黑板（最硬的学习证据） ----------------
     if board and board.get("details"):
@@ -528,9 +944,21 @@ def learning_level(s, board):
     # ---------------- ② 作业闭环（催交 → 是否交 / 批改 → 是否改） ----------------
     un, uo = s.get("urge_n", 0), s.get("urge_ok", 0)
     fn, fo = s.get("fix_n", 0), s.get("fix_ok", 0)
+    # ⭐ v4.28：聊天侧「催交未见提交」的语义是**群里没回话**，不等于没写作业 ——
+    #   飞书表是老师**逐格打勾**的提交事实（权威）。实测 2026Q-SX-高二数学211层六C肖：
+    #   50 人里 28 人同一张卡上既写「催交 2 次、2 次未见提交」又写「飞书 7/7（100%）」，
+    #   自相矛盾，且这 -2 分是把人误推进「需重点关注」的主要来源。
+    #   口径：飞书有 ≥3 条学情记录且提交率 ≥80% 时，这条**不扣分**，改写为「群里未回话」。
+    _fp = (fs or {}).get("pct")
+    _fn = int((fs or {}).get("D") or 0) + int((fs or {}).get("U") or 0)
+    _fs_confirms = fs_confirms_submit(fs)
     if un > uo:
         miss = un - uo
-        add("作业", f"催交 {un} 次、{miss} 次未见提交", -2 if miss >= 2 else -1)
+        if _fs_confirms:
+            add("作业", f"催交 {un} 次、群里 {miss} 次没回话；但飞书表 {int((fs or {}).get('D') or 0)}/{_fn}"
+                        f"（{_fp:.0f}%）有提交记录 → 属「不回消息」，不按未交扣分", 0)
+        else:
+            add("作业", f"催交 {un} 次、{miss} 次未见提交", -2 if miss >= 2 else -1)
     elif un:
         add("作业", f"催交 {un} 次均已提交", 1)
     else:
@@ -565,6 +993,19 @@ def learning_level(s, board):
         add("老师反馈", f"正面评价 {tp} 处（≥3）", 2)
     elif tp >= 1:
         add("老师反馈", f"正面评价 {tp} 处（≥1）", 1)
+
+    # ---------------- ⑤ 飞书表（团队自维护：交没交 / 评级升降 / 考试） ----------------
+    # 用户要求：飞书表不是「额外附一张表」，而是**学习过程的记录** —— 作业交没交、
+    # 评级在升还是在降、考了多少分。这些进了分层，卡片右上角的结论才和实际一致。
+    _frows, _fsc, _fov = _fs_evidence(fs, ex_lv)
+    for _src, _txt, _d in _frows:
+        add(_src, _txt, _d)
+    if _fov:
+        _kind, _lk = _fov
+        if _kind == "floor":
+            floor_key = _lk
+        else:
+            cap_key = _lk
 
     # ---------------- 落档（成绩托底 / 封顶） ----------------
     key = level_by_score(score)
@@ -698,19 +1139,42 @@ FINE_TYPES = {
 
 # 老师「指出具体问题」的语气词 —— 必须明确指向学生的错 / 卡点（v4.2 收紧，去掉过泛词）
 TEA_POINT_KWS = ["你错", "错误的原因", "写错", "算错", "抄错", "没有彻底理解", "没理解", "少考虑",
-                 "要注意", "一定要考虑", "再好好想", "是不是写错", "是不是算错", "问题所在",
+                 "再好好想", "是不是写错", "是不是算错", "问题所在",
                  "没看出来", "做错", "你是不是写", "你怎么写", "你这一步", "你上面"]
+# ⚠️ v4.47：以下两词是**通用提醒**，不指向该生 —— 「这类题要注意」「一定要考虑斜率不存在」
+#   常是老师讲方法时顺口一说（联席反馈「我只是提一嘴它也会分析进去」）。
+#   仅当同句出现学生指代（你/这道题/这个题）时才算指出问题。
+TEA_POINT_WEAK_KWS = ["要注意", "一定要考虑", "注意一下", "得注意", "留意"]
+TEA_POINT_WHO = ["你", "这道题", "这个题", "这题", "该生"]
 # 老师这句话若含「假设 / 询问」语气 → 不是在指出问题（如「看有哪里是否做错」）
 TEA_POINT_EXCLUDE = ["是否", "如果", "假如", "会不会", "对不对", "有没有", "要是"]
 # 学生表达困惑 / 卡点的语气词
+# ⚠️ v4.47：删掉「为什么」——「我现在逐渐理解了为什么圆锥曲线做多了就不想念立体几何了」
+#   是感慨而非卡点，却把「立体几何」判成了薄弱。真正的疑问交给「带问号/吗呢」的
+#   STU_ASK_WEAK_KWS 兜，以及「不会/不懂/没明白」这些强信号。
 STU_LOST_KWS = ["不会", "不懂", "没懂", "不明白", "卡住", "求思路", "怎么做", "怎么算",
-                "为什么", "看不懂", "没看出", "哪里错", "急急急"]
+                "看不懂", "没看出", "哪里错", "急急急"]
+# 弱疑问词：必须配疑问语气（？/吗/呢/么）才算「提问」，单独出现不算
+STU_ASK_WEAK_KWS = ["为什么", "咋", "怎么", "啥", "什么意思"]
 # 正面语境 —— 学生自述「做得好的地方 / 已掌握」时提到的题型属**优势**，不能当薄弱点
 POSITIVE_KWS = ["做得比较好", "做得不错", "比较顺", "已经掌握", "都会了", "思路是对的",
-                "做对了", "答对了", "完全正确", "没什么问题", "没有问题", "比较熟练"]
+                "做对了", "答对了", "完全正确", "没什么问题", "没有问题", "比较熟练",
+                # v4.47：否定式正面（「没算错吧」「空间向量没问题」「课后测全对」）
+                "没问题", "没错", "没算错", "没做错", "全对", "都对了", "掌握"]
+# ⚠️ v4.47 **未来时 / 进度预告**：老师在群里预告后续内容（「之后学导数的时候我们也会碰见」
+#   「下节课讲圆锥曲线」「还没学到数列」）**不是**该生当前的薄弱点。联席反馈的核心误判即此。
+#   判定规则见 is_future()：整句是预告、且不含明确的当下卡点时才排除。
+FUTURE_KWS = ["之后学", "以后学", "后面学", "接下来学", "下次学", "下节课学", "下节讲", "下次讲",
+              "即将学", "将要学", "马上学", "将来", "会学到", "会讲到", "会碰见", "会碰到",
+              "会遇到", "会考到", "后面讲", "之后再讲", "还没学", "没有学", "没学到", "未学",
+              "没接触", "还没讲", "没讲到", "还没讲到", "到时候", "届时", "寒假学", "春季学",
+              "开学后", "才学", "再讲"]
+# 「当下明确卡点」—— 出现这些时，即使句子里带未来时词，也按真问题算（不能被预告逻辑吞掉）
+FUTURE_STRONG_PROB = ["不会", "不懂", "没懂", "不明白", "做错", "算错", "错在", "卡住", "没思路"]
 # 群通知 / 事务性消息（不参与薄弱点提取）
 NOTICE_KWS = ["上课通知", "课表", "讲义", "报名", "扫码", "教室", "群公告", "放假", "调课安排",
-              "作业记得", "记得完成", "记得交", "上课时间", "考试范围"]
+              "作业记得", "记得完成", "记得交", "上课时间", "考试范围",
+              "巩固知识", "做一下巩固", "及时做一下"]
 
 # 题干是「密集数学词汇」文本，这些词在聊天口语里是有效信号，但在题干里遍地都是
 # （「定点 B(6,2)」「投影」「斜率 k」「关于…对称」…），会让小黑板侧大量误命中。
@@ -728,16 +1192,38 @@ def is_notice(text):
 
 
 def is_positive(text):
-    """正面语境（自述已掌握 / 做得较好）。"""
+    """正面语境（自述已掌握 / 做得较好 / 明确否定有问题）。"""
     return any(k in (text or "") for k in POSITIVE_KWS)
 
 
+def is_future(text):
+    """v4.47：是否为「未来时 / 进度预告」语境（老师说之后才学、下节课才讲）。
+
+    联席反馈：只是预告「之后学导数的时候我们也会碰见」，报告就把「导数」判成该生薄弱。
+    规则：句中出现预告词，**且**没有出现当下的明确卡点（不会/做错…）→ 视为预告，不参与薄弱判定。
+    """
+    s = text or ""
+    if not any(k in s for k in FUTURE_KWS):
+        return False
+    if any(k in s for k in FUTURE_STRONG_PROB):
+        return False        # 「之后学导数会用到，但我不会」→ 仍是真问题
+    return True
+
+
 def is_tea_point(text):
-    """是否是老师「具体指出问题」的句子（不能带假设/询问语气）。"""
+    """是否是老师「具体指出问题」的句子（不能带假设/询问语气）。
+
+    v4.47：通用提醒词（要注意 / 一定要考虑）须指向该生（含「你 / 这道题」）才算，
+    否则「这类题要注意先看定义域」这类讲课话术会把全班每个学生都判成薄弱。
+    """
     s = text or ""
     if any(k in s for k in TEA_POINT_EXCLUDE):
         return False
-    return any(k in s for k in TEA_POINT_KWS)
+    if any(k in s for k in TEA_POINT_KWS):
+        return True
+    if any(k in s for k in TEA_POINT_WEAK_KWS):
+        return any(k in s for k in TEA_POINT_WHO)
+    return False
 
 
 def classify_fine(text, best_only=False):
