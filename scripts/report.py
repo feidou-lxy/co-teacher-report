@@ -1011,8 +1011,11 @@ def fs_parts(st, exam_shown=False):
         for i in st["items"]:
             pct = i["pct"]
             cls = "ok" if pct >= 90 else ("warn" if pct >= 70 else "bad")
+            _tip = f'{i["item"]}：完成 {i["done"]} 次 · 未完成 {i["undone"]} 次'
+            if i.get("excellent"):
+                _tip += f'（其中「佳作」{i["excellent"]} 次）'
             chips.append(f'<span class="fsitem {cls}" '
-                         f'title="{esc(i["item"])}：完成 {i["done"]} 次 · 未完成 {i["undone"]} 次">'
+                         f'title="{esc(_tip)}">'
                          f'{esc(i["item"])}<b>{i["done"]}/{i["total"]}</b><i>{pct:.0f}%</i></span>')
         _from = f'飞书表 · {st["nLessons"]} 次课' if st.get("nLessons") else "飞书表"
         out["items"] = (f'<div class="kv fsline"><span class="k">提交情况</span><span class="v">'
@@ -1197,6 +1200,9 @@ def diag_line(r, fst, lv_key):
     """
     s = r["s"]
     n_stu, gap, q = s.get("n_stu_sub", 0), s.get("gap_days"), s.get("q", 0)
+    # v4.50：活跃一律按「学习相关发言」判，闲聊不计（老数据没有该字段 → 退回原口径）
+    n_study = s.get("n_study", n_stu)
+    gap_s = s.get("gap_study", gap)
     mst = list((s.get("topic_mastered") or {}).keys())
     sig = s.get("topic_signals") or {}
     _av, _ac, _at, att_iss, att_sev = att_view(r)
@@ -1220,22 +1226,33 @@ def diag_line(r, fst, lv_key):
         bad.append(att_iss)
 
     # ③ 群内：「N 天没说话」与「只发过 N 条」是同一件事 → 合并成一句（原来会出两条重复）
-    _g = round(gap) if gap is not None else None
+    #    v4.50：口径从「发了多少条」改成「有多少条与学习有关」——
+    #    发了几十条闲聊和一次没说话，对学习的意义是一样的，不能因为刷屏就说他积极。
+    _g = round(gap_s) if gap_s is not None else None
     if n_stu <= 0:
         _t = "群里一次没发过言"
         if q == 0:
             _t += "，也没主动提问"
         bad.append(_t)
-    elif _g is not None and _g >= 14:
+    elif n_study <= 0:
+        # 两者要分开说：只发过 2 条是「几乎没参与」，发过 40 条却零学习内容是「参与了但没在学习」
         if n_stu <= 2:
-            _t = f"群里 {_g} 天没说话，本人一共发过 {n_stu} 条"
+            _t = f"本人在群里发过 {n_stu} 条"
+        else:
+            _t = f"群里发过 {n_stu} 条，但没有一条与学习相关"
+        if q == 0:
+            _t += "、一次没主动提问"
+        bad.append(_t)
+    elif _g is not None and _g >= 14:
+        if n_study <= 2:
+            _t = f"群里 {_g} 天没有学习相关的发言，累计只有 {n_study} 条"
             if q == 0:
                 _t += "、一次没主动提问"
         else:
-            _t = f"群里 {_g} 天没说话"
+            _t = f"群里 {_g} 天没有学习相关的发言"
         bad.append(_t)
-    elif n_stu <= 2:
-        _t = f"本人在群里发过 {n_stu} 条"
+    elif n_study <= 2:
+        _t = f"学习相关的发言只有 {n_study} 条"
         if q == 0:
             _t += "、一次没主动提问"
         bad.append(_t)
@@ -1246,8 +1263,8 @@ def diag_line(r, fst, lv_key):
     # ④ 正面事实：主动提问的信息量高于「发言多」→ 排前
     if q >= 8:
         good.append(f"主动提问 {q} 处")
-    if n_stu >= 20:
-        good.append(f"群里很活跃（{n_stu} 条）")
+    if n_study >= 8:
+        good.append(f"学习相关发言 {n_study} 条")
     if (s.get("n_other") or 0) >= 8:
         good.append(f"家长也配合（{s['n_other']} 条）")
     # ⑤ 知识点闭环是四张卡里唯一带「结果」的信息 → 放最前
@@ -1268,9 +1285,15 @@ def diag_line(r, fst, lv_key):
 
 
 def metrics_grid(r, fst):
-    """四格指标：作业提交 / 出勤 / 群内发言 / 最近活跃 —— 原来散在四个不同位置。"""
+    """四格指标：作业提交 / 出勤 / 学习发言 / 最近学习 —— 原来散在四个不同位置。
+
+    v4.50：第三、四格从「发了多少条」改成「有多少条与学习相关」——
+    否则「群里刷 80 条闲聊」会被读成活跃。总数仍在 hover 里给出，方便核对。
+    """
     s = r["s"]
     n_stu, gap = s.get("n_stu_sub", 0), s.get("gap_days")
+    n_study = s.get("n_study", n_stu)
+    gap_s = s.get("gap_study", gap)
     out = []
     if fst and (fst.get("D") + fst.get("U")):
         D, T = fst["D"], fst["D"] + fst["U"]
@@ -1282,17 +1305,20 @@ def metrics_grid(r, fst):
         out.append(("作业提交", "无记录", "mute", "飞书表无该生记录"))
     _v, _c, _t, _iss, _sev = att_view(r)
     out.append(("出勤", _v, _c, _t))
-    out.append(("群内发言", f"{n_stu} 条",
-                "ok" if n_stu >= 20 else ("mute" if n_stu >= 5 else ("bad" if n_stu <= 1 else "warn")),
-                "学生本人实质发言条数（不含礼节性回应）"))
-    if gap is None or n_stu <= 0:
-        out.append(("最近活跃", "无发言", "mute",
-                    "窗口内本人/家长都没有实质发言" if n_stu <= 0 else ""))
+    out.append(("学习发言", f"{n_study} 条",
+                "ok" if n_study >= 8 else ("mute" if n_study >= 3
+                                           else ("bad" if n_study <= 0 else "warn")),
+                f"与学习/提问相关的发言 {n_study} 条"
+                f"（本人实质发言共 {n_stu} 条，其余为闲聊、礼节性回应）—— 只算学习相关才代表积极性"))
+    if gap_s is None or n_study <= 0:
+        out.append(("最近学习", "无学习发言", "mute",
+                    f"窗口内没有与学习相关的发言（本人共发过 {n_stu} 条）"
+                    if n_stu > 0 else "窗口内本人/家长都没有实质发言"))
     else:
-        g = round(gap)
-        out.append(("最近活跃", "今天" if g <= 0 else f"{g} 天前",
+        g = round(gap_s)
+        out.append(("最近学习", "今天" if g <= 0 else f"{g} 天前",
                     "ok" if g <= 2 else ("mute" if g <= 7 else ("warn" if g <= 14 else "bad")),
-                    "最后一次本人发言距今天数"))
+                    "最后一次与学习相关的发言距今天数"))
     return "".join(f'<div class="mg"><span class="mgk">{k}</span>'
                    f'<span class="mgv {c}" title="{_html.escape(t or "")}">{v}</span></div>'
                    for k, v, c, t in out)
@@ -1637,8 +1663,7 @@ def edu_overview_block(rows, course_order=None):
 
     return f'''<div class="section edu-ov">
   <div class="edu-hd">
-    <h2>📋 教务核心数据（续报 · 在读科目 · 扩科意向）</h2>
-    <div class="edu-cnote">课程筛选在页面顶部（全局生效）</div>
+    <h2 title="续报 · 在读科目 · 扩科意向 ｜ 课程筛选在页面顶部（全局生效）｜ {_html.escape(_hint)}">📋 教务核心数据</h2>
   </div>
   <div class="kpis" style="margin-bottom:6px">
     <div class="kpi kbl" data-k="yes" onclick="eduKpi('yes')"><div class="n" id="edun-yes" data-na="{_na}">{_yes_txt}</div><div class="l">已续报</div></div>
@@ -1648,7 +1673,6 @@ def edu_overview_block(rows, course_order=None):
     <div class="kpi kbl" data-k="single" onclick="eduKpi('single')" title="当前仅在读 1 个科目（后台「在读」状态；无在读记录的不计）"><div class="n" id="edun-single">{single}</div><div class="l">单科在读</div></div>
     <div class="kpi kbl green" data-k="kuake" onclick="eduKpi('kuake')" title="聊天记录里本人提及其他科目且带扩科意图词（报名/想学/咨询…）；依据见明细表与卡片"><div class="n" id="edun-kuake">{kuake_n}</div><div class="l">有扩科意向</div></div>
   </div>
-  <div class="kpihint">{_hint}</div>
   {det}
 </div>''' + js
 
@@ -1735,7 +1759,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
             merged.append(t)
     _mst = s.get("topic_mastered") or {}
     # v4.35：已掌握但已从 top_topics 掉出去的知识点也要在可见区列出来 ——
-    #   否则「桂悦恒：不等式已自己搞懂」这类卡会什么都看不到（读者以为没查过）。
+    #   否则「某生：不等式已自己搞懂」这类卡会什么都看不到（读者以为没查过）。
     for _t in _mst:
         if not any(same_topic(_t, x) for x in merged):
             merged.append(_t)
@@ -3277,15 +3301,17 @@ def _focus_html(crows, boards_map, limit=6):
         '<th>可以做的事</th><th>依据（可核对）</th></tr>'
         + body + '</table>'
         + more_html
-        + '<div class="fadv-note">名单只复述已有证据（群聊互动状态 ／ 小黑板逐轮读图 ／ 飞书表提交与作业评级），'
-          '不评价学习态度、不预测成绩。「互动不足」＝窗口内本人实质发言 ≤3 条或已沉默，'
-          '不等于学生不用功（「一般」＝实质发言 4~11 条，属正常参与，已排除在名单外）。'
-          '排序＝先互动、后练习：「课上沉默 ＋ 作业也不交」的排最前。'
-          '互动状态与 Tab③「联席跟进 Action」同源，两处口径一致。'
-          '<b>本名单只是「先跟谁」的优先级，不等于学习分层结论</b> ——'
-          '分层看卡片右上角徽章，两者口径不同：作业全交但群里沉默的人会出现在这里，分层仍可能是「正常」。'
-          '</div>'
-        '</div>')
+        + '<details class="tadv-ev"><summary>ℹ️ 名单口径（排序 · 互动不足 · 与分层的关系）</summary>'
+        + '<div class="in"><div class="fadv-note">'
+        + '名单只复述已有证据（群聊互动状态 ／ 小黑板逐轮读图 ／ 飞书表提交与作业评级），'
+        + '不评价学习态度、不预测成绩。「互动不足」＝窗口内<b>与学习相关</b>的发言 ≤2 条或已沉默'
+        + '（发得多但全是闲聊，同样计入此处，不等于学生不用功）。'
+        + '排序＝先互动、后练习：「课上沉默 ＋ 作业也不交」的排最前。'
+        + '互动状态与 Tab③「联席跟进 Action」同源，两处口径一致。'
+        + '<b>本名单只是「先跟谁」的优先级，不等于学习分层结论</b> ——'
+        + '分层看卡片右上角徽章，两者口径不同：作业全交但群里沉默的人会出现在这里，分层仍可能是「正常」。'
+        + '</div></div></details>'
+        + '</div>')
 
 
 def teaching_advice(crows, boards_map, n_any=None):
@@ -3347,12 +3373,9 @@ def teaching_advice(crows, boards_map, n_any=None):
         line = (f'最集中的薄弱面是<b>「{top["topic"]}」</b> —— '
                 f'本组 {top["un"]}/{n_any} 人（<span class="hit">{pct}%</span>）涉及{tail}。')
     elif pct >= 35:
-        line = (f'较集中的薄弱面是<b>「{top["topic"]}」</b> —— {top["un"]} 人（{pct}%）涉及{tail}；'
-                f'其余按覆盖人数依次排列。')
+        line = (f'较集中的薄弱面是<b>「{top["topic"]}」</b> —— {top["un"]} 人（{pct}%）涉及{tail}。')
     else:
-        line = (f'本组暂无压倒性共性问题，按覆盖人数依次看即可，首条为'
-                f'<b>「{top["topic"]}」</b>（{top["un"]} 人，{pct}%）{tail}；'
-                f'结论以个体卡片为准。')
+        line = (f'暂无压倒性共性问题，首条为<b>「{top["topic"]}」</b>（{top["un"]} 人，{pct}%）{tail}。')
     if len(rank) > 1 and rank[1]["un"] >= max(3, top["un"] * 0.7):
         _s = rank[1]
         line += (f' 其次是<b>「{_s["topic"]}」</b>'
@@ -3405,35 +3428,48 @@ def teaching_advice(crows, boards_map, n_any=None):
                     + (f'<span class="fevi">{evi}</span>' if evi else '') + '</li>')
         ev_html += f'<div class="fine-t">{x["topic"]}</div><ul class="fine-l">{lis}</ul>'
 
-    return (
-        '<div class="tadv">'
-        '<div class="tadv-h">📊 学生情况概览 · 共性薄弱面</div>'
-        f'<div class="tadv-sum">{line}</div>'
-        '<table class="tadv-tab"><tr><th>优先</th><th>薄弱知识点</th><th>覆盖学生</th>'
-        '<th>群聊提及</th><th>小黑板实证</th><th>典型题型 / 卡点</th></tr>'
-        + rows + '</table>'
-        + f'<div class="tadv-cap">「覆盖学生」= 群聊提及 ∪ 小黑板涉及，分母为本组 {n_any} 人；'
-          f'「群聊提及」只统计<b>问题信号</b>消息（学生/家长说不会、提问，老师指出错误），'
-          f'讲课长文本与收费/资料/进度说明不计入；'
-          f'「小黑板实证」= 该知识点上读图判定有错误／卡点的学生数（本组小黑板读图覆盖 {n_bd} 人，'
-          f'未被素材覆盖的学生不在分母内）。'
-          f'标 <span class="mstn">N 人已掌握</span> 的，是这些人问过之后又有学生本人确认听懂／老师确认做对的记录。'
+    # v4.50（用户 2026-10-22）：口径说明与排序说明不再上屏 —— 概览页首屏只留
+    #   「一句结论 + 一张表 + 重点关注」。这两段搬进底部折叠，需要核对口径时再展开。
+    _cap = (
+        '<div class="tadv-cap">'
+        + '「覆盖学生」= 群聊提及 ∪ 小黑板涉及，分母为本组 ' + str(n_any)
+        + ' 人；「群聊提及」只统计<b>问题信号</b>消息（学生/家长说不会、提问，老师指出错误）；'
+        + '「小黑板实证」= 该知识点上读图判定有错误／卡点的学生数（本组小黑板读图覆盖 '
+        + str(n_bd) + ' 人，未被素材覆盖的学生不在分母内）。'
+        + '标 <span class="mstn">N 人已掌握</span> 的，是这些人问过之后又有学生本人确认听懂／老师确认做对的记录。'
         + ('<b>本视角未接入小黑板读图数据，「实证错误」维度为空，请以群聊高频为准。</b>'
            if n_bd == 0 else '')
         + '</div>'
+    )
+    _note = (
+        '<div class="tadv-note">'
+        + '排序：按「覆盖人数」降序；同覆盖时「有小黑板实证错误」的优先。'
+        + '<b>证据门槛分两档</b>：学生卡片只认「同一知识点 ≥2 条问题信号」，'
+        + '本表是<b>跨学生聚合</b>，所以「1 条提及 × 多个人」也会进来 —— '
+        + '凡是只靠单条提及的，行内会标「N 人仅 1 条」，请按弱证据看。'
+        + '题型旁标 <b class="hard">实证错误 N</b> 的，是读图判定<b>确实做错</b>的学生数（真的不会）；'
+        + '标「仅未完成／卡点」的，是<b>只是没写完</b>（课堂节奏 / 书写速度，非能力问题）——'
+        + '两者已按 v4.4 口径区分，不要混为一谈。文案只复述已发生的证据'
+        + '（群聊提问 / 老师指出 / 小黑板作答），不预测考情、不生成内容。</div>'
+    )
+    _evdet = (
+        '<details class="tadv-ev"><summary>📎 展开题型与原文出处（' + str(len(rank))
+        + ' 个知识点 · 可回群 / 回图逐条核对）</summary><div class="in">' + ev_html
+        + '</div></details>' if ev_html else ''
+    )
+    return (
+        '<div class="tadv">'
+        + '<div class="tadv-h">📊 学生情况概览 · 共性薄弱面</div>'
+        + '<div class="tadv-sum">' + line + '</div>'
+        + '<table class="tadv-tab"><tr><th>优先</th><th>薄弱知识点</th><th>覆盖学生</th>'
+        + '<th>群聊提及</th><th>小黑板实证</th><th>典型题型 / 卡点</th></tr>'
+        + rows + '</table>'
         + _focus_html(crows, boards_map)
-        + (f'<details class="tadv-ev"><summary>📎 展开题型与原文出处'
-           f'（{len(rank)} 个知识点 · 可回群 / 回图逐条核对）</summary>'
-           f'<div class="in">{ev_html}</div></details>' if ev_html else '')
-        + '<div class="tadv-note">排序：按「覆盖人数」降序；同覆盖时「有小黑板实证错误」的优先。'
-          '<b>证据门槛分两档</b>：学生卡片只认「同一知识点 ≥2 条问题信号」，'
-          '本表是<b>跨学生聚合</b>，所以「1 条提及 × 多个人」也会进来 —— '
-          '凡是只靠单条提及的，行内会标「N 人仅 1 条」，请按弱证据看。'
-          '题型旁标 <b class="hard">实证错误 N</b> 的，是读图判定<b>确实做错</b>的学生数（真的不会）；'
-          '标「仅未完成／卡点」的，是<b>只是没写完</b>（课堂节奏 / 书写速度，非能力问题）——'
-          '两者已按 v4.4 口径区分，不要混为一谈。文案只复述已发生的证据'
-          '（群聊提问 / 老师指出 / 小黑板作答），不预测考情、不生成内容。</div>'
-        '</div>')
+        + _evdet
+        + '<details class="tadv-ev"><summary>ℹ️ 口径与排序说明（覆盖 · 证据门槛 · 实证错误）</summary>'
+        + '<div class="in">' + _cap + _note + '</div></details>'
+        + '</div>'
+    )
 
 
 # 注（v4.10.1）：原 `_topic_table_html()` 已删除 —— 它渲染的「高频知识点 · 数据明细」表
@@ -3545,8 +3581,11 @@ def build_card_block(sec_id, crows, title, show_filter, co_opts, is_all,
                  if warn_items else "")
     disp = 'style="display:block"' if is_all else 'style="display:none"'
     # 常规学生卡区：本组没有常规学生卡时（整组都是在册但无聊天记录的学生）不渲染空标题
+    # v4.50（用户 2026-10-22）：原来这里还有一行「💡 点击上方任一统计卡…」的说明，
+    #   与上方卡片自身的行为重复，占掉首屏一行字 → 删掉，筛选人数并入下方小标题。
     cards_sec = (f'<div class="section"><h3>逐学生表现 &amp; {todo_head}'
-                 f'（需关注置顶）</h3>{cards}</div>') if crows else ''
+                 f'（需关注置顶）<span class="kpicnt" id="kpiCnt-{sec_id}"></span>'
+                 f'</h3>{cards}</div>') if crows else ''
     return f'''
 <div class="grp" id="{sec_id}" {disp}>
   {cofilter}
@@ -3557,7 +3596,6 @@ def build_card_block(sec_id, crows, title, show_filter, co_opts, is_all,
     {ktile(c_unres, "未解疑问群", "unres", "orange", "会话尾部仍有未获回应的提问")}
     {kpi_extra}
   </div>
-  <div class="kpihint">💡 点击上方任一统计卡，可只看这一类学生；再次点击（或点「学生数」）恢复全部。<span class="kpicnt" id="kpiCnt-{sec_id}"></span></div>
   {cards_sec}
   {warnbar}
   {warnzone}

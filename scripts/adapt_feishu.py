@@ -44,7 +44,12 @@ LESSON_RE = re.compile(r"^第\s*(\d+)\s*[次节]\s*课\s*[-－—_:：]?\s*(.*)$
 SKIP_COL_PATTERNS_DEFAULT = [r"数字$"]
 
 # ---- 默认口径（profile.feishu.items 可覆盖）
-DEFAULT_DONE = ["作业", "打穿题", "精题", "出门测", "框架笔记", "课前测"]
+# ⚠️ v4.50：加入「总结」—— 娜娜团队每节课最后一组子列是
+#    `第N次课-出勤 / 作业评级 / 作业闭环 / 讲题视频 / 总结 / 打穿题测试 / 得星`。
+#    「总结」是学生课后自己写的复盘，取值 `已交`917 / `佳作`503 / `未交`128 / `#N/A`2322
+#    （17 个 sheet 共 306 列 3870 个非空格，实测 2026-10-16 快照）——
+#    漏掉它等于漏掉「课后复盘」这一整条学习证据链。
+DEFAULT_DONE = ["作业", "打穿题", "精题", "出门测", "框架笔记", "课前测", "总结"]
 DEFAULT_IGNORE = ["出勤", "回放", "请假", "红包"]
 DEFAULT_ALIAS = {"课前侧": "课前测", "2号打穿题": "打穿题", "打穿题2": "打穿题"}
 # 已知存在、但属「记录型」（数值 / 星数 / 打分）而非「完成项」的子列：
@@ -820,6 +825,19 @@ def main():
             pname = COURSE_ALIAS.get(pname_raw, pname_raw)
             # ---- 完成 / 未完成分开计（v4.19.3）：别把 ✘ 当完成
             done_cnt, undone_cnt = count_done(lessons, DONE, ALIAS)
+            # v4.50：「总结」列的三档是 已交 / 佳作 / 未交 —— 「佳作」是**质量更高的完成**
+            #    （实测娜娜团队 503 格），只算进完成数会把「写得特别好」和「按时交了」抹平，
+            #    故单独计数，供报告在 hover 里点出来。
+            n_excellent = 0
+            for _ls in lessons:
+                for _k, _v in (_ls.get("items") or {}).items():
+                    if _k.split("/")[-1].strip() == "总结" and _v is not True:
+                        if "佳作" in str(_v):
+                            n_excellent += 1
+            if n_excellent:
+                excellent_cnt = {"总结": n_excellent}
+            else:
+                excellent_cnt = {}
             for k, v in undone_cnt.items():
                 sheet_undone[k] = sheet_undone.get(k, 0) + v
             # v4.19.3：超长值多半是**手记串列**（写到了课次格里）→ 报出来核对
@@ -866,6 +884,7 @@ def main():
                 "nLessons": len(lessons),
                 "done": done_cnt,
                 "undone": undone_cnt,
+                "excellent": excellent_cnt,
                 "ratings": build_ratings(lessons, RATINGS, ALIAS),
                 "lessons": lessons,
                 "meta": meta,

@@ -728,6 +728,8 @@ def fs_stats(fs):
     if not isinstance(fs, dict) or not fs:
         return None
     done, undone = fs.get("done") or {}, fs.get("undone") or {}
+    # v4.50：「总结」这类列里有更高的档次（佳作）→ 单独带出来，仅供 hover 展示，不进分母
+    _exc = fs.get("excellent") or {}
     have = set(done) | set(undone)
     items = []
     for k in [x for x in FS_ITEM_ORDER if x in have] + sorted(k for k in have if k not in FS_ITEM_ORDER):
@@ -735,7 +737,8 @@ def fs_stats(fs):
         t = d + u
         if t <= 0:
             continue
-        items.append({"item": k, "done": d, "undone": u, "total": t, "pct": d / t * 100})
+        items.append({"item": k, "done": d, "undone": u, "total": t,
+                      "pct": d / t * 100, "excellent": int(_exc.get(k) or 0)})
     ratings = []
     for k in sorted(fs.get("ratings") or {}):
         g = (fs.get("ratings") or {}).get(k)

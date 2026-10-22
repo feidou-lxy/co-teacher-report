@@ -50,6 +50,46 @@ STU_SELF = ["我自己", "我这道题", "我算", "我听", "我做", "我提�
 PARENT = ["妈妈", "爸爸", "家长", "我帮", "我替", "帮他", "替他", "已交", "帮交", "孩子", "我家",
           "他作业", "他今天", "他这个", "他没", "他不会", "他那个", "他有点", "他最近"]
 
+# —— v4.50 学习相关性判定（用户 2026-10-22 口径）——
+# 背景：原来「活跃」＝本人实质发言条数（剔除「好的/收到」这类礼节）。
+#   但实测存在整类误判：学生在群里刷几十条，内容全是「在吗」「哈哈」「几点下课」
+#   「老师今天好帅」—— 不算礼节、也不含负面信号，于是被算成高活跃，
+#   诊断句写「群里很活跃（87 条）」，联席据此认为这孩子很积极，实际一条学习内容都没有。
+# 口径（用户原话）：「活跃要从学习的积极主动性上判断，识别是学习或者问题相关的才算积极」。
+# 所以这里只认**与学习本身相关**的消息：题目/思路/提问/作业/上课/考试/知识点。
+# ⚠️ 这是「相关性」判定，不代表完成质量，也不替代完成率 —— 它的唯一用途是把闲聊剔出活跃度。
+STUDY_KW = [
+    # ⚠️ 单字「题」「课」必须收：实测学生说的是「课上的题我可能得在纸上写」「半点有物理课」，
+    #    没有这两个字就会被当成闲聊（实测某生一例，2026-10-22 复查）。
+    "题", "课",
+    # 题目与答疑
+    "题目", "这道题", "这道", "那题", "这题", "答案", "步骤", "过程", "思路", "解法", "讲解",
+    "老师讲", "讲一下", "没听懂", "听不懂", "不会做", "不会写", "没思路", "卡住", "算不出",
+    # 课程与资料
+    "上课", "课堂", "课程", "直播", "回放", "录播", "讲义", "笔记", "复习", "预习", "资料", "视频",
+    "黑板", "卷子", "作业本", "练习册", "课本",
+    # 上课条件：设备/网络出问题同样属学习受阻，联席要看见（不是闲聊）
+    "classin", "class in", "网络", "网课", "设备", "登录", "登不进", "进不去",
+    # 作业与考试
+    "作业", "提交", "打卡", "练习", "刷题", "错题", "订正", "改错", "考试", "成绩", "分数",
+    "期中", "期末", "月考", "模拟", "测试", "满分", "丢分", "扣分",
+    # 学科与知识点（覆盖高一高二常见模块，避免「函数/几何」这类词漏判）
+    "知识点", "公式", "定理", "函数", "几何", "三角", "概率", "数列", "不等式", "方程",
+    "集合", "向量", "导数", "立体", "解析", "统计", "复数", "指数", "对数",
+]
+# 反例：这些词出现时，即使带「怎么/为什么」也判为闲聊（问价、约见、寒暄、教务事务）
+STUDY_EXCL = ("在吗", "在不在", "吃了吗", "吃了没", "晚安", "早安", "早上好", "生日快乐",
+              "哈哈", "红包", "多少钱", "几点了", "下课了", "放学", "天气", "退费",
+              "优惠", "报名", "见面", "接送", "价格", "收费", "续费", "缴费", "贵")
+
+# 预编译：一条消息只需一次正则匹配（1117 人 × 数十条，逐词 in 会明显变慢）
+STUDY_RE = re.compile("|".join(
+    re.escape(k) for k in sorted(set(STUDY_KW + [
+        # 提问类：从 Q_ASK 里取，但剔除 "?" "？" 两个纯标点 —— 否则「在吗？」会被算成学习
+        k for k in Q_ASK if k not in ("?", "？")
+    ]), key=len, reverse=True)))
+
+
 # —— 「无需回复」消息（礼节性收尾：确认/致谢/应承）——
 # 这类消息不构成待回应提问，也不计入实质互动；统一在未闭环判定与配合度统计中剔除。
 ACK_SET = {
@@ -437,6 +477,21 @@ def is_noise(t):
     return False
 
 
+def is_study_msg(t):
+    """这条消息是否与「学习」相关 —— 把闲聊从活跃度里剔掉的唯一判据（v4.50）。
+
+    ⚠️ 只判「相关性」，不判完成质量、不判对错，也不替代完成率。
+    反例表优先：命中「在吗 / 哈哈 / 多少钱 / 退费」这类词一律不算，
+    避免「怎么这么贵？」被当成学习提问。
+    """
+    s = (t or "").strip()
+    if not s:
+        return False
+    if any(k in s for k in STUDY_EXCL):
+        return False
+    return bool(STUDY_RE.search(s))
+
+
 def parse_dt(ts):
     """解析消息时间戳为 datetime，失败返回 None。
 
@@ -700,6 +755,7 @@ def main():
                            [("低", "维持常规跟进，关注后续作业与提问", "窗口内无聊天")])
             students[stu] = {
                 "group": g, "n_text": 0, "n_stu": 0, "n_stu_sub": 0, "n_ack": 0, "n_tea": 0, "voice": 0,
+                "n_study": 0, "gap_study": None,
                 "newest": None, "oldest": None, "att_n": 0, "hw": 0, "q": 0,
                 "pos": 0, "neg": 0, "hw_neg": 0, "att_leave": 0,
                 "student_coop": 0, "parent_coop": 0, "speakers": [], "n_other": 0, "parent_sig": 0,
@@ -736,6 +792,8 @@ def main():
         n_stu = len(stu_all)
         n_ack = len(ack_stu)
         n_stu_sub = len(sub_stu)
+        # v4.50：实质发言里再筛出「学习相关」的 —— 这才是活跃度该看的东西
+        n_study = sum(1 for t in sub_stu if is_study_msg(t))
         n_tea = len(tea_txt)
         voice = sum(1 for m in msgs if m.get("msgType") == "voice")
         # 群内发言者分布（v4.5）：学生侧按 name 聚合 —— 学生群常态是「学生本人高频 + 家长个位数」，
@@ -888,21 +946,35 @@ def main():
         d_ls, d_nw = parse_dt(last_stu), parse_dt(newest)
         if d_ls and d_nw and d_nw >= d_ls:
             gap_days = round((d_nw - d_ls).total_seconds() / 86400.0, 1)
+        # v4.50：最后一次**学习相关**发言距今多少天（「最近活跃」用它，而不是「最近说过话」）
+        _study_ts = [ts for ts, r, t in triples
+                     if r == 2 and t and not is_noise(t) and not is_ack(t)
+                     and is_study_msg(t)]
+        gap_study = None
+        if _study_ts:
+            d_std, d_nw2 = parse_dt(_study_ts[-1]), parse_dt(newest)
+            if d_std and d_nw2 and d_nw2 >= d_std:
+                gap_study = round((d_nw2 - d_std).total_seconds() / 86400.0, 1)
         if n_stu_sub == 0:
             interact, interact_lv = "沉默不回复", "bad"
             interact_evi = "窗口内学生/家长无实质发言"
-        elif gap_days is not None and gap_days >= 14:
+        elif gap_study is None:
+            # v4.50：发过消息但全是闲聊 → 不能算「积极」，也不该说「沉默」，单列一档
+            interact, interact_lv = "只闲聊不学习", "warn"
+            interact_evi = (f"本人实质发言 {n_stu_sub} 条，但无一条与学习相关"
+                            f"（无题目/提问/作业/课程内容）")
+        elif gap_study >= 14:
             interact, interact_lv = "近期沉默", "bad"
-            interact_evi = f"最近一次本人发言距窗口末尾 {gap_days:.0f} 天"
-        elif q >= 3 or n_stu_sub >= 12:
+            interact_evi = f"最后一次学习相关发言距窗口末尾 {gap_study:.0f} 天"
+        elif n_study >= 8 or q >= 3:
             interact, interact_lv = "积极", "ok"
-            interact_evi = f"本人实质发言 {n_stu_sub} 条、主动提问 {q} 处"
-        elif n_stu_sub <= 3:
+            interact_evi = f"学习相关发言 {n_study} 条、主动提问 {q} 处"
+        elif n_study <= 2:
             interact, interact_lv = "不积极", "warn"
-            interact_evi = f"本人实质发言仅 {n_stu_sub} 条"
+            interact_evi = f"学习相关发言仅 {n_study} 条（本人实质发言 {n_stu_sub} 条）"
         else:
             interact, interact_lv = "一般", "warn"
-            interact_evi = f"本人实质发言 {n_stu_sub} 条"
+            interact_evi = f"学习相关发言 {n_study} 条"
         urge_n, urge_ok, urge_fail = pair_after(triples, URGE, SUBMIT)      # 催交 → 是否交
         fix_n, fix_ok, fix_fail = pair_after(triples, FIX_REQ, FIX_ACK)     # 要求订正 → 是否改
         ask_lv = "高" if q >= 8 else ("中" if q >= 3 else ("低" if q >= 1 else "无"))
@@ -966,6 +1038,7 @@ def main():
                 todos.append(("低", "维持常规跟进，关注下次作业与提问", "无明显风险信号"))
         students[stu] = {
             "group": g, "n_text": len(texts), "n_stu": n_stu, "n_stu_sub": n_stu_sub, "n_ack": n_ack,
+            "n_study": n_study, "gap_study": gap_study,
             "n_tea": n_tea,
             "voice": voice, "newest": newest, "oldest": oldest,
             # att_n = 聊天中「请假/回放/没来/缺课」的提及次数（与 merge.py 的后台出勤字段 att 区分，避免覆盖）
