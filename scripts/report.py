@@ -1245,6 +1245,78 @@ def att_view(r):
             _iss_t, 2 if absent >= 2 else 1)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# v4.53：只有飞书学习数据、没有企微群聊的学生 → 也出**完整学生卡**
+# ---------------------------------------------------------------------------
+# 用户口径（2026-10-22）：「只要有飞书学习数据，就出一张完整卡」。
+#
+# 背景：常规学生卡来自 analysis_merged（**只含有聊天记录的学生**），
+#   所以「在册 + 有飞书数据 + 但企微群未采集到」的学生以前只能落进预警卡区。
+#   实测六C谢胡：132 人里只有 25 人有群聊，而**129 人有飞书数据**（98%）——
+#   104 人明明有作业提交率 / 评级 / 总结 / 学生问题，却只剩一行摘要。
+#
+# 🔒 铁律：群维度「没采集到」**绝不许**写成「学生不说话 / 不配合 / 沉默」。
+#   卡片必须显式标注「企微群未采集到」，四格第四格写「未采集」而非「0 条」。
+# ══════════════════════════════════════════════════════════════════════════
+def _fs_only_s(v, att=None, buy=""):
+    """给「无群聊、有飞书数据」的学生造一份**空群聊骨架**信号 dict。
+
+    全部键都补齐（card_html 里 `s["neg"]` / `s["top_topics"]` / `s["todos"]` 是直接下标的），
+    值一律取「零 / 空」，并打 `_fs_only=True` 让 diag_line / metrics_grid 走飞书口径分支。
+    """
+    return {
+        "group": {}, "n_text": 0, "n_stu": 0, "n_stu_sub": 0, "n_ack": 0,
+        "n_study": 0, "gap_study": None, "n_tea": 0, "voice": 0,
+        "newest": "", "oldest": "", "att_n": 0, "hw": 0, "q": 0, "pos": 0, "neg": 0,
+        "hw_neg": 0, "att_leave": 0, "student_coop": 0, "parent_coop": 0,
+        "speakers": {}, "n_other": 0, "parent_sig": 0, "same_person": False,
+        "top_topics": [], "top_topics_evi": {}, "topic_signals": {},
+        "topic_mastered": {}, "unresolved": False, "unresolved_at": "",
+        "unresolved_q": [], "unres_evi": [], "resp_n": 0, "resp_max_h": 0,
+        "resp_slow": False, "resp_slow_cnt": 0, "resp_at": "", "resp_q": [],
+        "resp_pend_n": 0, "resp_evi": [], "summary": "", "todos": [],
+        "interact": "", "interact_lv": "", "interact_evi": "",
+        "gap_days": None, "urge_n": 0, "urge_ok": 0, "urge_fail": 0,
+        "fix_n": 0, "fix_ok": 0, "fix_fail": 0, "ask_lv": "", "tea_pos": 0,
+        "tea_neg": 0, "exam": None, "recent3": {}, "fine": {}, "att": att,
+        "leave": [], "buy_type": buy, "_fs_only": True,
+    }
+
+
+def _diag_fs_only(r, fst):
+    """v4.53：无群聊学生的诊断句 —— 只讲飞书表与出勤能证实的，末句显式交代群通道缺失。"""
+    bad, good = [], []
+    if fst and (fst.get("D") + fst.get("U")):
+        D, T = fst["D"], fst["D"] + fst["U"]
+        if D == 0:
+            bad.append(f"作业 {T} 项一次没交")
+        elif D / T < 0.6:
+            bad.append(f"作业 {T} 项里交了 {D} 项")
+        elif D / T >= 0.85:
+            # v4.53：高提交率下面还会单独说一句「各项提交 D/T（X%）」→ 这里不重复同一批数字
+            if not (fst.get("pct") is not None and fst["pct"] >= 90 and T >= 4):
+                good.append(f"作业 {D}/{T} 交齐")
+        else:
+            good.append(f"作业 {D}/{T}")
+    # 评级连续下滑 / 连续未交（fs_stats.badges 里 down = 有负面结论）
+    for _it, _bd, _cls in (fst or {}).get("badges") or []:
+        if _cls == "down":
+            bad.append(f"{_it}{_bd}")
+    _av, _ac, _at, att_iss, att_sev = att_view(r)
+    if att_iss:
+        bad.append(att_iss)
+    if (fst or {}).get("pct") is not None and fst["pct"] >= 90 and (fst["D"] + fst["U"]) >= 4:
+        good.insert(0, f'各项提交 {fst["D"]}/{fst["D"] + fst["U"]}（{fst["pct"]:.0f}%）')
+    if not bad and not good:
+        parts = ["飞书表有记录，学习侧暂未见异常"]
+    elif bad and good:
+        parts = bad[:2] + ["但" + good[0]]
+    else:
+        parts = (bad[:2] or good[:2])
+    # 🔒 必须交代：群内数据不是「没有」，是「没采集到」
+    return "；".join(parts) + "；企微群未采集到，群内沟通维度无数据"
+
+
 def diag_line(r, fst, lv_key):
     """一眼诊断句：2~3 个短句，**全部来自已有事实**，不推断、不加形容词。
 
@@ -1253,6 +1325,9 @@ def diag_line(r, fst, lv_key):
     负档「先说问题，再说反差」；正常档「先说状态，再点隐患」。
     """
     s = r["s"]
+    # v4.53：无群聊、有飞书数据 → 走飞书口径诊断句（不能写「群里一次没发过言」）
+    if s.get("_fs_only"):
+        return _diag_fs_only(r, fst)
     n_stu, gap, q = s.get("n_stu_sub", 0), s.get("gap_days"), s.get("q", 0)
     # v4.50：活跃一律按「学习相关发言」判，闲聊不计（老数据没有该字段 → 退回原口径）
     n_study = s.get("n_study", n_stu)
@@ -1338,11 +1413,13 @@ def diag_line(r, fst, lv_key):
     return "；".join(parts) if parts else "窗口内证据不足，无法判断"
 
 
-def metrics_grid(r, fst):
+def metrics_grid(r, fst, board=None):
     """四格指标：作业提交 / 出勤 / 学习发言 / 最近学习 —— 原来散在四个不同位置。
 
     v4.50：第三、四格从「发了多少条」改成「有多少条与学习相关」——
     否则「群里刷 80 条闲聊」会被读成活跃。总数仍在 hover 里给出，方便核对。
+    v4.53：无群聊、有飞书数据的学生（`_fs_only`）后两格换成
+    「课堂作答 / 群通道」—— 群维度写「未采集」，不写 0 条（那是误导）。
     """
     s = r["s"]
     n_stu, gap = s.get("n_stu_sub", 0), s.get("gap_days")
@@ -1359,6 +1436,26 @@ def metrics_grid(r, fst):
         out.append(("作业提交", "无记录", "mute", "飞书表无该生记录"))
     _v, _c, _t, _iss, _sev = att_view(r)
     out.append(("出勤", _v, _c, _t))
+    if s.get("_fs_only"):
+        # 第三格：课堂小黑板（唯一与「群」无关的过程证据）
+        _bsc = (board or {}).get("status_counts") or {}
+        _full = int(_bsc.get("完整作答") or 0)
+        _part = int(_bsc.get("部分作答") or 0)
+        _blank = int(_bsc.get("空白未提交") or 0) + int(_bsc.get("空白") or 0)
+        _tot = int((board or {}).get("rounds") or 0) or (_full + _part + _blank)
+        if _tot:
+            _done = _full + _part
+            out.append(("课堂作答", f"{_done}/{_tot}",
+                        "ok" if _done / _tot >= 0.7 else ("warn" if _done else "bad"),
+                        f"小黑板 {_tot} 轮：完整作答 {_full} · 部分作答 {_part} · 空白未提交 {_blank}"))
+        else:
+            out.append(("课堂作答", "无记录", "mute", "该生没有课堂小黑板图片"))
+        out.append(("群通道", "未采集", "mute",
+                    "接口未返回该生企微群 roomId，群内发言/响应属于「没有数据」，"
+                    "不等于学生不说话 —— 需教务补建/补录服务群"))
+        return "".join(f'<div class="mg"><span class="mgk">{k}</span>'
+                       f'<span class="mgv {c}" title="{_html.escape(t or "")}">{v}</span></div>'
+                       for k, v, c, t in out)
     out.append(("学习发言", f"{n_study} 条",
                 "ok" if n_study >= 8 else ("mute" if n_study >= 3
                                            else ("bad" if n_study <= 0 else "warn")),
@@ -1934,6 +2031,15 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         todos_list.insert(0, ("高" if _sev0 >= 2 else "中", _act, f"购课类型 {_buy0 or '—'} · {_av0}"))
     # ③ 只此一处给动作清单：第 1 条即「最该盯」（v4.0 取消②里与之重复的「最该盯」独立块），
     # 用 .t1 高亮 + 「最该盯」标签，让行动入口唯一、不被重复内容稀释。
+    # v4.53：无群聊、有飞书数据的学生可能一条 To-Do 都没有（没有群聊动作、作业也正常）
+    #   → 卡片会留一个「最该做 —」。这里补一条最低优先级的可执行动作，保证卡不空。
+    if not todos_list:
+        _good_fs = bool(fst and (fst.get("pct") or 0) >= 80)
+        todos_list = [("低", "常规跟进：作业提交与课堂作答均无异常，继续保持",
+                        "飞书表提交率 ≥80%")
+                      if _good_fs else
+                      ("中", "核对飞书表缺口：确认是未提交、还是表里漏记",
+                       "飞书表提交率 <80%")]
     _lis = []
     for _i, (p, a, b) in enumerate(todos_list):
         _cls = ' class="t1"' if _i == 0 else ""
@@ -1984,7 +2090,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     # ⚠️「学习分层判定依据（需重点关注 · 累计 −3）· 展开」整行**不渲染**（用户明确要求隐藏）——
     #    分档结论仍在卡头徽章，明细里不再重复一遍加减分，判档口径统一挪到报告页脚。
     _diag = diag_line(r, fst, lv_key)
-    _mgrid = metrics_grid(r, fst)
+    _mgrid = metrics_grid(r, fst, board)
     _a1, _a1_full = act_brief(todos_list[0]) if todos_list else ("—", "")
     _a2 = act_brief(todos_list[1])[0] if len(todos_list) > 1 else ""
     _a2_html = (f'<div class="act2"><span class="actk">其次</span>{_a2}</div>') if _a2 else ""
@@ -3228,10 +3334,14 @@ def _collect_items(crows, boards_map, max_evi=2):
 # 每行都附原文依据，可回群 / 回图逐条核对。
 # ============================================================
 _FOCUS_SEV = {"bad": 0, "warn": 1}
-_FOCUS_CLS = {"bad": "bad", "warn": "warn", "blank": "bd", "unfin": "bd", "hard": "bd", "fs": "bd"}
+_FOCUS_CLS = {"bad": "bad", "warn": "warn", "blank": "bd", "unfin": "bd", "hard": "bd",
+              "fs": "bd", "fs_hard": "bd"}
 _FOCUS_ACT = {
     "bad": "主动点名 —— 先抛一个他大概率答得上的问题，把人带进课堂节奏",
     "warn": "多给一次点名提问 / 小黑板任务，把人调动起来",
+    # v4.53：无群聊、只因飞书作业掉队入榜 —— 群内点名对他们是无效动作（人不在群里），
+    #   必须走教务/私聊路径，所以单独给一句动作。
+    "fs_hard": "先补服务群，再由教务/联席私聊确认作业欠账原因（群里点不到这个人）",
 }
 # 入榜门槛（v4.13）：**只收「课上互动不足」的学生** —— 主讲一节课能额外点的就几个人，
 # 门槛必须聚焦，否则人人上榜等于没筛（实测本课 48 人里 26 人群内互动不足，宽门槛会命中大半）。
@@ -3257,13 +3367,31 @@ def focus_students(crows, boards_map, limit=6):
     for r in crows:
         s = r["s"]
         bd = (boards_map or {}).get(common.norm_name(r["stu"]))
+        # v4.23 飞书表取数（v4.53 提到门槛之前：无群聊 + 飞书有硬问题的人也要能入榜）
+        _fs = (FS_MAP.get((common.norm_name(r["stu"]), (r.get("g") or {}).get("productName")))
+               or FS_MAP.get((common.norm_name(r["stu"]), r.get("course_raw"))))
+        _fst = common.fs_stats(_fs)
+        _fs_risk = bool(_fst and _fst.get("risks"))
         # ① 入榜门槛：互动状态（extract 四维）
+        #   v4.53（用户 2026-10-22 拍板「有飞书数据就出完整卡」的配套）：
+        #     没有企微群、但飞书表硬问题的人**同样入榜** —— 他们进不了「互动不足」，
+        #     可作业正在掉队（连续未交 / 提交率 <60%），比群里不说话更急。
         ilv = s.get("interact_lv")
         iact = (s.get("interact") or "").strip() or "不足"
-        if not (ilv == "bad" or (ilv == "warn" and iact in _FOCUS_WARN_OK)):
+        _fs_hard = bool(s.get("_fs_only") and _fst and (
+            # ⚠️ 提交率低但**样本只有 1~2 项**的不算（实测 3 人：0/1、1/2、1/2 ——
+            #   一项没交就是 0%，那是「表没记」而不是「作业没交」）
+            ((_fst.get("pct") is not None and _fst["pct"] < 60
+              and (int(_fst.get("D") or 0) + int(_fst.get("U") or 0)) >= 3)
+            or any(("未交" in t or "下滑" in t) for _, t in (_fst.get("risks") or [])))))
+        if not (ilv == "bad" or (ilv == "warn" and iact in _FOCUS_WARN_OK) or _fs_hard):
             continue
-        kinds, why, evi = [ilv], [], []
-        why.append(f"互动「{iact}」")
+        kinds = [k for k in (ilv, "fs_hard" if _fs_hard else None) if k]
+        why, evi = [], []
+        if s.get("_fs_only"):
+            why.append("无群聊 · 飞书表作业未落实")
+        else:
+            why.append(f"互动「{iact}」")
         if s.get("interact_evi"):
             evi.append(s["interact_evi"])
         # ② 小黑板课堂作答：附加理由（不作门槛），用于排前与说明
@@ -3298,12 +3426,13 @@ def focus_students(crows, boards_map, limit=6):
             evi.append("飞书表：" + "；".join(t for _, t in _fst["risks"][:2]))
         out.append(dict(
             stu=r["stu"], co=r.get("co") or "未分配联席",
-            sev=_FOCUS_SEV[ilv], lead=ilv, kinds=kinds, why=why, evi=evi,
+            sev=_FOCUS_SEV.get(ilv, 1), lead=ilv or "fs_hard", kinds=kinds, why=why, evi=evi,
             has_fs=_fs_risk,
             has_board=bool({"blank", "unfin", "hard"} & set(kinds)),
             board_lead=next((k for k in ("blank", "unfin", "hard") if k in kinds), "hard"),
-            # 「沉默不回复」（窗口内 0 条实质发言）比「近期沉默」（只是最近没说话）更值得先点
-            sub=(0 if iact == "沉默不回复" else 1),
+            # 「沉默不回复」（窗口内 0 条实质发言）比「近期沉默」（只是最近没说话）更值得先点；
+            # v4.53：无群聊但作业掉队的人同样排前 —— 作业是硬证据，比「最近没说话」更急。
+            sub=(0 if (iact == "沉默不回复" or s.get("_fs_only")) else 1),
             newest=(s.get("newest") or ""), strength=(s.get("n_stu_sub") or 0),
         ))
     if not out:
@@ -3312,6 +3441,9 @@ def focus_students(crows, boards_map, limit=6):
                             x["newest"], x["strength"], x["stu"]))
     n_bad = sum(1 for x in out if x["sev"] == 0)
     n_warn = len(out) - n_bad
+    # v4.53：无群聊、仅因飞书作业未落实入榜的人单独计数（不能混进「互动不足」）
+    n_nog = sum(1 for x in out if x["lead"] not in ("bad", "warn"))
+    n_grp = len(out) - n_nog
     # v4.24：原来只数「小黑板作答问题」，没有小黑板数据的团队会恒为 0 ——
     #   而飞书表里「作业评级 4 次全未交」同样是硬证据，必须一起数（本课实测 0 → 1）。
     n_evid = sum(1 for x in out if x["has_board"] or x.get("has_fs"))
@@ -3321,8 +3453,9 @@ def focus_students(crows, boards_map, limit=6):
                    f'这些人既没在群里出现、作业也没落实，最该被主动点到。')
     else:
         _ev_txt = '这批人只是群里没怎么说话，课堂作答与作业提交暂无异常 —— 属「安静但在学」，按常规节奏点名即可。'
-    summary = (f'全组 <b>{len(crows)}</b> 人中 <b>{len(out)}</b> 人群内互动不足'
-               f'（沉默不回复／近期沉默 {n_bad} · 实质发言 ≤3 条的 {n_warn}），'
+    _dist = (f'沉默不回复／近期沉默 {n_bad} · 实质发言 ≤3 条的 {n_warn}'
+             + (f' · 无群聊但作业未落实 {n_nog}' if n_nog else ''))
+    summary = (f'全组 <b>{len(crows)}</b> 人中 <b>{len(out)}</b> 人需要先跟进（{_dist}），'
                + _ev_txt)
     return out[:limit], len(out), summary
 
@@ -3802,6 +3935,62 @@ def main():
         rows.append(dict(score=score, stu=stu, s=s, g=g, slow=slow,
                          unreply=unreply, course=course, course_raw=course_raw,
                          co=co, att=s.get("att")))
+
+    # ---------- v4.53：有飞书学习数据的在册学生 → 也出**完整学生卡** ----------
+    # 用户口径（2026-10-22）：「只要有飞书学习数据，就出一张完整卡」。
+    # 以前这批人（在册 ✓ 飞书 ✓ 群聊 ✗）只能落进预警卡区；实测六C谢胡 132 人里
+    # 129 人有飞书数据、只有 25 人有群聊 → 104 人的作业/总结/成绩/问题全被压成一行摘要。
+    # 升级后：他们照常进 rows（参与分层排序、Tab② 共性薄弱、KPI 筛选），
+    # 群维度一律标「未采集」，不写「未发言」。
+    _FS_UPG = 0
+    if cov:
+        _att_all, _buy_all = {}, {}
+        # 出勤明细：预警卡只存了汇总（nAtt/nLes），完整卡要 classes 明细才能算出勤口径
+        _ap = os.path.join(wd, "snapshot", "attendance.json")
+        if os.path.exists(_ap):
+            try:
+                for _a in json.load(open(_ap, encoding="utf-8")):
+                    _att_all[(_a.get("studentNameNorm"), _a.get("productName"))] = _a
+            except Exception:
+                _att_all = {}
+        # 购课类型（回放 / 直播）—— 同一份出勤，买回放和买直播要读出不同意思
+        _rp = os.path.join(wd, "roster.json")
+        if os.path.exists(_rp):
+            try:
+                _rd = json.load(open(_rp, encoding="utf-8"))
+                for _x in (_rd if isinstance(_rd, list) else (_rd.get("students") or [])):
+                    _n0 = common.norm_name(_x.get("stuName") or "")
+                    _t0 = str(_x.get("purchaseType") or _x.get("cIncomeProductType") or "")
+                    if _n0 and _t0:
+                        _buy_all[_n0] = ("回放" if "回放" in _t0
+                                         else ("直播" if "直播" in _t0 else ""))
+            except Exception:
+                _buy_all = {}
+        _in_rows = {common.norm_name(r["stu"]) for r in rows}
+        for _k, _v in list((cov or {}).items()):
+            _nm = _v.get("stuNameNorm") or common.norm_name(_v.get("stuName") or "")
+            if not _nm or _nm in _in_rows:
+                continue
+            _c2, _craw2 = course_of("", _v.get("productName"))
+            _fs2 = (FS_MAP.get((_nm, _v.get("productName")))
+                    or FS_MAP.get((_nm, _craw2)))
+            if not common.fs_stats(_fs2):
+                continue          # 飞书也查不到 → 留在预警卡区（真无学习痕迹）
+            _att2 = (_att_all.get((_nm, _v.get("productName")))
+                     or _att_all.get((_nm, _craw2)))
+            rows.append(dict(
+                score=(0, 0, 0), stu=_v.get("stuName") or "",
+                s=_fs_only_s(_v, att=_att2, buy=_buy_all.get(_nm, "")),
+                g={"productName": _v.get("productName"),
+                   "coTeacherName": _v.get("coTeacherName"),
+                   "classTeacherName": _v.get("classTeacherName")},
+                slow=False, unreply=False, course=_c2, course_raw=_craw2,
+                co=_v.get("coTeacherName") or "未分配联席", att=_att2))
+            _in_rows.add(_nm)
+            _FS_UPG += 1
+        if _FS_UPG:
+            print(f"   ↳ v4.53：{_FS_UPG} 名「有飞书数据 / 无群聊」的学生改为"
+                  f"完整学生卡（群维度标注未采集）")
     # ---------- v4.29：卡片顺序 = 学习分层（需重点关注 → 需关注 → 正常 → 良好）----------
     # 用户要求（并明确「很久之前说过」）：**需要关注的排在上方，正常的在下方**。
     # ⚠️ 这确实是回归，不是新需求：v4.0 把卡片右上角的红黄绿定档换成「学习分层徽章」时，
@@ -3833,7 +4022,8 @@ def main():
     # 常规学生卡来自 analysis_merged（**只有有聊天记录的学生**才在里面），
     # 因此「在册但一条聊天记录都没有」的学生（失联 / 出勤但无沟通）在 Tab③ 里是**完全缺席**的 ——
     # 而他们恰恰是最该被看见的一批人。这里把他们从 coverage 里捞出来，渲染为左红边预警卡。
-    _body_norms = {common.norm_name(k) for k in A}
+    # v4.53：rows 已包含「有飞书数据、无群聊」的升级卡 → 预警区只留真有学习痕迹为零的人
+    _body_norms = {common.norm_name(r["stu"]) for r in rows}
     warn_all = []
     for _v in (cov or {}).values():
         _nm = _v.get("stuNameNorm") or common.norm_name(_v.get("stuName") or "")
