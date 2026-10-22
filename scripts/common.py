@@ -690,8 +690,12 @@ def fs_issues(note):
 #    上屏的每一句都是表内原文子串，可回飞书表逐字核对。
 SCORE_KW = ("月考", "期中", "期末", "小测", "周测", "模考", "统考", "中考", "考试",
             "成绩", "分数", "得分", "丢分", "满分", "及格", "排名", "名次",
-            "班排", "年排", "级排", "校排", "偏科", "理科", "文科",
-            "进步", "退步", "发挥", "考的", "考得", "考砸", "考差", "考好")
+            "班排", "年排", "级排", "校排", "进步", "退步", "发挥",
+            "考的", "考得", "考砸", "考差", "考好",
+            # ⚠️ 「理科 / 文科」不能裸用：实测「理科都觉得难」会被当成成绩句，
+            #    实际那是难度反馈（属「学生问题」）。只认带评价的偏科写法。
+            "偏科", "理科好", "理科差", "理科强", "理科弱",
+            "文科好", "文科差", "文科强", "文科弱")
 # 只有「有没有考 / 什么时候考 / 考什么范围」这类**不是成绩结论** → 跳过
 SCORE_NEVER = ("没有月考", "没月考", "无月考", "没有考试", "没考试", "没有期中",
                "月考范围", "考试范围", "月考时间", "考试时间", "什么时候考",
@@ -749,12 +753,21 @@ def fs_score_notes(note):
         if not _has_num and not any(k in s for k in SCORE_KW):
             return
         # 「月考八号九号」「10、10月考」这类只有考试日期、没有结论 → 跳过
-        _has_result = (any(k in s for k in SCORE_GOOD + SCORE_LOW)
+        _verdict = SCORE_GOOD + SCORE_LOW + ("偏科", "理科好", "理科差", "理科强", "理科弱",
+                                            "文科好", "文科差", "文科强", "文科弱", "有好有坏")
+        _has_result = (any(k in s for k in _verdict)
                        or any(k in s for k in ("成绩", "分数", "排名", "名次", "分")))
         if not _has_result and SCORE_DATE_ONLY_RE.search(s):
             return
+        # 最后一道闸：**必须**有定性结论 / 数值 / 名次，否则只是「考试」两个字 → 不占位
+        #   （挡掉「期中考试」这种日期残句、「月考也不参加」这种不参加的说明）
+        if not _has_result and not _has_num and not SCORE_RANK_RE.search(s):
+            return
         if not _has_result and ("考完" in s or "考了" in s or "结束" in s):
             return                                  # 「月考已经考完了」单独成句 → 无结论，不占位
+        # 「学校每周都有小测试」「之后考」这类**考试安排**，没有结论也不占位
+        if not _has_result and re.search(r"每周|每次|都有|将要|之后考|直接期中", s):
+            return
         key = re.sub(r"[\s，,。；;、]", "", s)
         if key in seen:
             return
