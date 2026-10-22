@@ -2018,17 +2018,16 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         _w1 = "、".join(_html.escape(x) for x in _weak1[:6]) + ("…" if len(_weak1) > 6 else "")
         _det.append(_kv("群内提及",
                         f'<span class="mute">仅提过 1 次、未到定性门槛（不计入薄弱点）：{_w1}</span>'))
-    if fine:
+    # v4.52（用户拍板 2026-10-22 14:52）：**只在没有可见区 chips 时才落到折叠区**。
+    #   ⚠️ v4.51 曾经在这里「始终」再输出一份「🎯 具体薄弱点 · 完整清单」，本意是怕读者
+    #   不知道该点标签；但用户实测后指出：点开 chip 看到的就是同一批「知识点 → 题型 → 原文」，
+    #   和下面那份逐字相同（原话「这两部分是相同的内容，保留上方的方式和内容即可」）。
+    #   → 恢复单一出口：有 chips 就只走 chips；chip 也没有（粗知识点没对齐上，极罕见）才落到这里。
+    #   ⛔ 别再加回来了。
+    if fine and not _tp_html:
         _fine = re.sub(r'<div class="note">.*?</div>', '', fine_html, flags=re.S)
-        if not _tp_html:
-            # 没有可见区 chips 时，这一块就是唯一出口（去掉空标题，避免两级标题叠在一起）
-            _fine = re.sub(r'<div class="fine-h">.*?</div>', '', _fine, flags=re.S)
-        else:
-            # v4.51（用户要求）：可见区 chips 只能点一枚看一个知识点，展开「补充信息」后
-            #   **要能一次看全**（知识点 → 题型 / 方法 → 原文出处），不必逐个点开。
-            _fine = _fine.replace(
-                '🎯 具体薄弱点（下钻到题型 / 方法，每条附原文出处，可回群核对）',
-                '🎯 具体薄弱点 · 完整清单（与上方「薄弱点」同源；知识点 → 题型 → 原文出处）')
+        # 没有可见区 chips 时，这一块就是唯一出口（去掉空标题，避免两级标题叠在一起）
+        _fine = re.sub(r'<div class="fine-h">.*?</div>', '', _fine, flags=re.S)
         _det.append(_fine)
     if adv and adv != "—":                          # 优势（剥掉与指标格重复的前半句）
         _adv = re.sub(r'^飞书表各项提交[^，]*，', '', adv)
