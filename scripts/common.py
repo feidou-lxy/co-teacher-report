@@ -676,6 +676,130 @@ def fs_issues(note):
     return out
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# v4.51 飞书表备注里的「成绩 / 分数」信息 → 独立成行、优先展示
+# ══════════════════════════════════════════════════════════════════════════
+# ⭐ 用户要求（2026-10-22）：「学生情况备注」里「月考还可以」「成绩还算稳定」
+#    「月考年级第 3，新定义全年级唯一一个拿到 9 分」这类内容**属于重要信息，要优先展示**。
+#
+# ⚠️ 之前它们走的是 `fs_issues()` 的 soft 通道 ——「考的不好」被当问题没错，但
+#    「月考还可以」也被打成橙色「问题」chip，语义完全反了；而没有问题词的
+#    「成绩还算稳定」「理科好文科差」则被整句丢弃，信息直接消失。
+#
+# 🔒 反编造铁律：只切句 + 摘数字 + 定性着色，**不改写、不归纳、不补造分数**；
+#    上屏的每一句都是表内原文子串，可回飞书表逐字核对。
+SCORE_KW = ("月考", "期中", "期末", "小测", "周测", "模考", "统考", "中考", "考试",
+            "成绩", "分数", "得分", "丢分", "满分", "及格", "排名", "名次",
+            "班排", "年排", "级排", "校排", "偏科", "理科", "文科",
+            "进步", "退步", "发挥", "考的", "考得", "考砸", "考差", "考好")
+# 只有「有没有考 / 什么时候考 / 考什么范围」这类**不是成绩结论** → 跳过
+SCORE_NEVER = ("没有月考", "没月考", "无月考", "没有考试", "没考试", "没有期中",
+               "月考范围", "考试范围", "月考时间", "考试时间", "什么时候考",
+               "还没考", "没考完", "还没出分", "没出分", "没有成绩", "无成绩",
+               "还没出", "考到不等式", "开始学")
+SCORE_GOOD = ("还不错", "还可以", "不错", "挺好", "很好", "挺好", "稳定", "有进步",
+              "进步", "没问题", "唯一一个", "满分", "考得好", "考的挺好", "发挥不错",
+              "有信心", "正反馈", "还可以", "挺适应", "适应")
+SCORE_LOW = ("不好", "不太好", "不理想", "不是很理想", "不很理想", "没发挥",
+             "发挥不好", "发挥不太好", "退步", "偏低", "砸", "崩", "丢了",
+             "没考好", "考的差", "考的不好", "不太匹配", "不太理想", "考砸")
+# 名次（`年级第 3` / `年排68` / `班排7`）—— 单独摘出来，不参与分数计算
+SCORE_RANK_RE = re.compile(
+    r"(?:年级|班|校|级)?\s*第\s*(\d{1,4})\s*(?:名|，|,|。|；|;|$)"
+    r"|(?:班排|年排|级排|校排|排名|名次)\s*[:：]?\s*(\d{1,4})")
+# 只有日期、没有结果词（`月考八号九号` / `10、10月考`）→ 不是成绩结论
+SCORE_DATE_ONLY_RE = re.compile(r"[号日]|[\d]{1,2}\s*[、,，]\s*[\d]{1,2}\s*月考|月考\s*[\d]{1,2}")
+
+
+def _score_level(text, pct, assumed):
+    """成绩句 → 'good' / 'low' / ''。只在**有明确依据**时着色。"""
+    if any(k in text for k in SCORE_LOW):
+        return "low"
+    if any(k in text for k in SCORE_GOOD):
+        return "good"
+    # ⚠️ 「按 150 分制推断」的单个数字不着色 —— 小测常按 100 分制，
+    #    硬按 150 算会把 70 分判成「偏低」，属于凭空结论。
+    if pct is not None and not assumed:
+        if pct < 0.6:
+            return "low"
+        if pct >= 0.8:
+            return "good"
+    return ""
+
+
+def fs_score_notes(note):
+    """飞书表备注 → [{'text','full','shown','pct','level'}]（只取成绩/分数相关子句）。
+
+    与 `fs_issues()` 用同一套切句规则（`ISSUE_SPLIT` + `ISSUE_CLAUSE`），保证
+    「同一句不会被一边当问题、一边当成绩」；调用方负责把这里命中的句子从
+    issues 里剔除，避免同一句话出现两次。
+    """
+    if not note:
+        return []
+    out, seen = [], set()
+
+    def push(clause, origin):
+        s = ISSUE_LEAD_CONJ.sub("", ISSUE_DATE_PREFIX.sub("", clause)).strip(" ，,、：:;；")
+        if len(s) < 2:
+            return
+        if any(k in s for k in SCORE_NEVER):
+            return
+        # 入口门槛：要么有成绩语境词，要么句子里带**分数/比值**形态（「9 分的同学」）
+        _has_num = bool(re.search(r"\d{1,3}\s*分(?!钟)|\d+\s*/\s*\d+", s))
+        if not _has_num and not any(k in s for k in SCORE_KW):
+            return
+        # 「月考八号九号」「10、10月考」这类只有考试日期、没有结论 → 跳过
+        _has_result = (any(k in s for k in SCORE_GOOD + SCORE_LOW)
+                       or any(k in s for k in ("成绩", "分数", "排名", "名次", "分")))
+        if not _has_result and SCORE_DATE_ONLY_RE.search(s):
+            return
+        if not _has_result and ("考完" in s or "考了" in s or "结束" in s):
+            return                                  # 「月考已经考完了」单独成句 → 无结论，不占位
+        key = re.sub(r"[\s，,。；;、]", "", s)
+        if key in seen:
+            return
+        seen.add(key)
+        ex = parse_fs_exam(s)                       # 复用既有解析（含名次剔除、30~full 区间）
+        pct = (ex or {}).get("pct")
+        assumed = (ex or {}).get("assumed") or ""
+        rank = SCORE_RANK_RE.search(s)
+        rank_txt = ""
+        if rank:
+            num = rank.group(1) or rank.group(2)
+            if rank.group(1):
+                rank_txt = f"第 {num} 名"
+            else:
+                rank_txt = f"排第 {num}"
+        shown = ""
+        # ⚠️ parse_fs_exam 在「只判定偏低、没解出分数」时会把整句塞进 shown
+        #    （`中考就是数学考砸了`）→ 必须只认纯数字形态，否则会拼出「… 分」
+        _sn = str((ex or {}).get("shown") or "").strip()
+        if _sn and re.fullmatch(r"[\d.]+\s*(?:/\s*[\d.]+)?", _sn):
+            shown = f"{_sn} 分"
+        elif rank_txt:
+            shown = rank_txt
+        _full = ISSUE_LEAD_CONJ.sub("", ISSUE_DATE_PREFIX.sub("", origin)).strip(" ，,、：:;；")
+        out.append({"text": s, "full": _full or s, "shown": shown,
+                    "pct": pct, "assumed": assumed,
+                    "level": _score_level(s, pct, assumed)})
+        return
+
+    for _sent in ISSUE_SPLIT.split(str(note)):
+        _sent = (_sent or "").strip()
+        if not _sent:
+            continue
+        # ⚠️ 这里**一律按逗号切**（不像 fs_issues 只切 >40 字的长句）——
+        #   成绩句常与问题句挤在一句里：「最近作业也不按时交，考的不好，家长想退费」，
+        #   整句当成绩会把「不按时交作业」「想退费」一起吞掉，那两条才是教务最该看的。
+        for _c in ISSUE_CLAUSE.split(_sent):
+            if len(_c.strip()) >= 2:
+                push(_c, _sent)
+    # 偏低的排前面（教务/联席最先要知道「考砸了」），其次有数字/名次的，最后定性「还可以」
+    _ord = {"low": 0, "": 1, "good": 2}
+    out.sort(key=lambda x: (_ord.get(x["level"], 1), 0 if x["shown"] else 1))
+    return out
+
+
 def _fs_risks(st):
     """从飞书信号里挑出「需要关注的点」（最多 3 条，按严重度排序）。
 
@@ -747,6 +871,19 @@ def fs_stats(fs):
     meta = fs.get("meta") or {}
     exam = parse_fs_exam(meta.get("examScore") or meta.get("exam_score"))
     note = str(meta.get("note") or "").strip()
+    # v4.51：备注里的「月考 / 分数 / 名次」句子单独摘出来（优先展示在卡片可见区）
+    _sn = fs_score_notes(note)
+    # 表里没有独立「考试成绩」列时，用备注里**分母明确**的那句兜底当成绩
+    #   ⚠️ 只认 `assumed == ""`（写了 `76/100` 这种显式分母），
+    #   「分数76」这种按 150 分制推断的不上卡头 —— 小测多为 100 分制，会算错档。
+    if not exam:
+        for _x in _sn:
+            if _x.get("pct") is not None and not _x.get("assumed"):
+                _e = parse_fs_exam(_x["text"])
+                if _e:
+                    _e["fromNote"] = True
+                    exam = _e
+                    break
     if not items and not ratings and not exam and not note:
         return None
     D = sum(i["done"] for i in items)
@@ -764,7 +901,13 @@ def fs_stats(fs):
     }
     st["risks"] = _fs_risks(st)
     # v4.37：表内「学生学情/问题点」→ 可直接上卡片可见区的问题句（只切句分类，不改写）
-    st["issues"] = fs_issues(note)
+    # v4.51：成绩句已经单独成行 → 从问题句里剔除**完全同一句**，同一句话不出现两次。
+    #   ⚠️ 只剔「完全相同」，不做包含判断：「应该比较粗心，月考试卷答题卡都丢了」
+    #   会被切成「月考试卷答题卡都丢了」进成绩行，但「粗心」那半句不能跟着丢。
+    _score_keys = {re.sub(r"[\s，,。；;、]", "", x["text"]) for x in _sn}
+    st["issues"] = [(sev, s, full) for (sev, s, full) in fs_issues(note)
+                    if re.sub(r"[\s，,。；;、]", "", s) not in _score_keys]
+    st["score_notes"] = _sn
     # 评级结论徽章（与 report.rating_block 同一优先级：先连续未交，再趋势）
     st["badges"] = []
     for g in ratings:

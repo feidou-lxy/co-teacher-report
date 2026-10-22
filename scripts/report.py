@@ -534,7 +534,8 @@ def topic_row_html(names, chip_map, fine, sig, evi, mst, limit=4):
     if not chips:
         return "", []
     html = ('<div class="trow"><span class="trowk">薄弱点</span>'
-            f'<div class="tchips">{"".join(chips)}</div></div>')
+            f'<div class="tchips">{"".join(chips)}'
+            f'<span class="thint">点知识点看题型与原文</span></div></div>')
     return html, rest
 
 
@@ -584,6 +585,59 @@ def issue_row(fst, limit=2):
                      f'<span class="chip iss more">还有 {len(rest)} 条</span></summary>'
                      f'<div class="tchipd">{inner}</div></details>')
     return ('<div class="trow irow"><span class="trowk">学生问题</span>'
+            f'<div class="tchips">{"".join(chips)}</div></div>')
+
+
+def score_row(fst, limit=4):
+    """v4.51：卡片可见区「成绩」一行 —— 飞书表备注里的月考 / 分数 / 名次。
+
+    ⭐ 用户原话：「月考成绩或者分数相关的内容……这些也属于重要信息，需要优先展示」。
+       之前这些句子只有带问题词的才会被 `fs_issues()` 当成**橙色问题 chip**
+       （「月考还可以」被打成问题，语义反了）；不带问题词的（「成绩还算稳定」
+       「理科好文科差」）则被整句丢弃 —— 信息直接消失。
+
+    🔒 上屏的是表内**原句子句**（只剥日期前缀），点开给整句原文 ＋ 表名行号，可回表核对。
+       颜色：绿=考得好 / 红=考砸了或偏低 / 灰=中性事实（偏科、考试安排）。
+    """
+    rows = (fst or {}).get("score_notes") or []
+    if not rows:
+        return ""
+    src = ""
+    if fst.get("sheet"):
+        src = f'飞书表「{_html.escape(str(fst["sheet"]))}」'
+        if fst.get("row"):
+            src += f' 第 {int(fst["row"])} 行'
+
+    def chip_html(x):
+        lv = x.get("level") or ""
+        cls = {"good": "good", "low": "low"}.get(lv, "flat")
+        txt = str(x.get("text") or "")
+        short = txt if len(txt) <= 26 else txt[:26] + "…"
+        shown = str(x.get("shown") or "")
+        num = f'<i class="scnum">{_html.escape(shown)}</i>' if shown else ""
+        assumed = str(x.get("assumed") or "")
+        body = (f'<div class="tchipd"><div class="tpda">表内原话：'
+                f'{_html.escape(str(x.get("full") or txt))}</div>'
+                + (f'<div class="tpda mute">{_html.escape(shown)}'
+                   f'{("（" + _html.escape(assumed) + "）") if assumed else ""}</div>'
+                   if shown else "")
+                + (f'<div class="isrc">{src}</div>' if src else "") + "</div>")
+        return (f'<details class="tchip schip {cls}">'
+                f'<summary><span class="chip scr {cls}" title="{_html.escape(txt)}">'
+                f'{_html.escape(short)}</span>{num}</summary>{body}</details>')
+
+    chips = [chip_html(x) for x in rows[:limit]]
+    rest = rows[limit:]
+    if rest:
+        inner = "".join(
+            f'<div class="tpda">表内原话：{_html.escape(str(x.get("full") or x.get("text") or ""))}</div>'
+            for x in rest)
+        if src:
+            inner += f'<div class="isrc">{src}</div>'
+        chips.append(f'<details class="tchip schip more"><summary>'
+                     f'<span class="chip scr more">还有 {len(rest)} 条</span></summary>'
+                     f'<div class="tchipd">{inner}</div></details>')
+    return ('<div class="trow srow"><span class="trowk">成绩</span>'
             f'<div class="tchips">{"".join(chips)}</div></div>')
 
 
@@ -1903,6 +1957,8 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     # v4.37：飞书表「学生学情/问题点」里的问题句 → **可见区**（比薄弱点更靠上：它常是
     #   群里读不出来、只有表里写过的那部分，且往往直接决定教务/联席要不要马上联系）
     _issue_html = issue_row(fst)
+    # v4.51：飞书表备注里的月考 / 分数 / 名次 → **排在学生问题之前**（用户要求「优先展示」）
+    _score_html = score_row(fst)
     # 成绩（v4.4 第四类证据）：有成绩时在 ① 顶部前置展示，无则整行不出现（不占版面）
     # v4.36：成绩已提到**卡头**（学校名下面），这里不再重复算一遍；`_exam_shown` 由 exam_head 给出，
     #   用于让「需要关注」里的「考试偏低」不再重复同一条。
@@ -1962,9 +2018,17 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         _w1 = "、".join(_html.escape(x) for x in _weak1[:6]) + ("…" if len(_weak1) > 6 else "")
         _det.append(_kv("群内提及",
                         f'<span class="mute">仅提过 1 次、未到定性门槛（不计入薄弱点）：{_w1}</span>'))
-    if fine and not _tp_html:
+    if fine:
         _fine = re.sub(r'<div class="note">.*?</div>', '', fine_html, flags=re.S)
-        _fine = re.sub(r'<div class="fine-h">.*?</div>', '', _fine, flags=re.S)
+        if not _tp_html:
+            # 没有可见区 chips 时，这一块就是唯一出口（去掉空标题，避免两级标题叠在一起）
+            _fine = re.sub(r'<div class="fine-h">.*?</div>', '', _fine, flags=re.S)
+        else:
+            # v4.51（用户要求）：可见区 chips 只能点一枚看一个知识点，展开「补充信息」后
+            #   **要能一次看全**（知识点 → 题型 / 方法 → 原文出处），不必逐个点开。
+            _fine = _fine.replace(
+                '🎯 具体薄弱点（下钻到题型 / 方法，每条附原文出处，可回群核对）',
+                '🎯 具体薄弱点 · 完整清单（与上方「薄弱点」同源；知识点 → 题型 → 原文出处）')
         _det.append(_fine)
     if adv and adv != "—":                          # 优势（剥掉与指标格重复的前半句）
         _adv = re.sub(r'^飞书表各项提交[^，]*，', '', adv)
@@ -2046,6 +2110,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
       {_xsum}
       <div class="dx dx-{lv_key}">{_diag}</div>
       <div class="mgrid">{_mgrid}</div>
+      {_score_html}
       {_issue_html}
       {_tp_html}
       <div class="actbox">
@@ -2744,6 +2809,18 @@ details.meth[open]>summary:before{content:"▾ "}
 .chip.iss.hard{background:#fff1f0;color:#cf1322;box-shadow:inset 0 0 0 1px #ffccc7}
 .chip.iss.soft{background:#fff7e6;color:#c76a00;box-shadow:inset 0 0 0 1px #ffe1b3}
 .chip.iss.more{background:#f5f6f8;color:#7a828c;font-weight:400;box-shadow:inset 0 0 0 1px #e3e8ef}
+/* v4.51 卡片可见区「成绩」行（飞书表备注里的月考 / 分数 / 名次） */
+.srow .trowk{flex:0 0 56px;color:#1f6b45}
+.chip.scr{font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip.scr.good{background:#f0fbf4;color:#1f7a4d;box-shadow:inset 0 0 0 1px #c6ead5}
+.chip.scr.low{background:#fff1f0;color:#cf1322;box-shadow:inset 0 0 0 1px #ffccc7}
+.chip.scr.flat{background:#f4f7ff;color:#3a5bdb;box-shadow:inset 0 0 0 1px #d6e0ff}
+.chip.scr.more{background:#f5f6f8;color:#7a828c;font-weight:400;box-shadow:inset 0 0 0 1px #e3e8ef}
+.scnum{font-style:normal;font-size:11px;color:#1f7a4d;font-weight:700;margin-left:3px;white-space:nowrap}
+.schip.low .scnum{color:#cf1322}
+.schip.flat .scnum{color:#3a5bdb}
+/* v4.51 「薄弱点」chips 的可点提示（否则读者以为只是标签，不知道能展开） */
+.thint{font-size:11px;color:#9aa1ab;align-self:center;white-space:nowrap;margin-left:2px}
 .ichip>summary::after{color:#c9a06a}
 .tchipd .isrc{margin-top:4px;font-size:10.5px;color:#a3aab4}
 .actbox{background:#fffdf7;border:1px solid #ffe6bf;border-radius:9px;padding:10px 12px}
