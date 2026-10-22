@@ -248,7 +248,7 @@
         <h3>生成学情分析</h3>
         <span class="when">每次出分析</span>
       </div>
-      <p>在<strong>新对话</strong>里，先想清楚<b>用哪个视角</b>（看谁的学生），再说一句话：<strong>技能 ＋ 谁 ＋ 哪段时间</strong>（如 <b>9月1日-9月30日</b>）。下面把三种视角<b>并列成三个页签，点一下切换查看</b>；每种都标明了<strong>你要准备什么、操作几步、会得到什么</strong> —— 照抄「你说」那一行即可。<b>想连课堂小黑板一起分析，就看橙色「别忘了加小黑板」一行，照着说就不会漏。</b></p>
+      <p>在<strong>新对话</strong>里，先想清楚<b>用哪个视角</b>（看谁的学生），再说一句话：<strong>技能 ＋ 谁（括号里带上团队）＋ 哪段时间</strong>（如 <b>9月1日-9月30日</b>）。<b>团队名照飞书表归属写</b>（现在有「孙一文组」「娜娜组」两个；它是飞书表配置的入口，写错了报告里的作业提交、成绩、总结就拉不到）。下面把三种视角<b>并列成三个页签，点一下切换查看</b>；每种都标明了<strong>你要准备什么、操作几步、会得到什么</strong> —— 照抄「你说」那一行即可。<b>想连课堂小黑板一起分析，就看橙色「别忘了加小黑板」一行，照着说就不会漏。</b></p>
 
       <div class="vtabs" role="tablist">
         <button type="button" class="vt on" onclick="vtab(0)"><span class="i">👤</span><b>① 联席视角</b><em>联席本人 / 代联席出报告</em></button>
@@ -263,14 +263,14 @@
         <div class="role">
           <div class="role-h"><span class="ic">👤</span><b>① 联席视角</b><span class="who">联席本人 / 代联席出报告</span></div>
           <div class="role-b">
-            <div class="rrow"><span class="rk">你要准备</span><span class="rv">一位<b>联席的姓名</b>（与后台一致，如「张巍」）＋ <b>分析的时间段</b>（写清起止，如 <b>2026年9月1日-9月30日</b>；只写「9月」即按整月算）</span></div>
+            <div class="rrow"><span class="rk">你要准备</span><span class="rv">一位<b>联席的姓名</b>（与后台一致，如「张巍」）＋ <b>所在团队</b>（如「孙一文组」）＋ <b>分析的时间段</b>（写清起止，如 <b>2026年9月1日-9月30日</b>；只写「9月」即按整月算）</span></div>
             <div class="rrow"><span class="rk">操作步骤</span><span class="rv">
-              <div class="rstep"><span class="n">1</span><span>确认要出<b>哪位联席</b>的报告（姓名照后台写）＋ 要分析的<b>起止日期</b></span></div>
+              <div class="rstep"><span class="n">1</span><span>确认要出<b>哪位联席</b>的报告（姓名照后台写）＋ 他<b>属于哪个团队</b> ＋ 要分析的<b>起止日期</b></span></div>
               <div class="rstep"><span class="n">2</span><span>对 WorkBuddy 说这句话：</span></div>
-              <span class="q">用 co-teacher-report 技能，生成 张巍（联席） 2026年9月1日-9月30日 的学情分析</span>
+              <span class="q">用 co-teacher-report 技能，生成 张巍（联席 · 孙一文组） 2026年9月1日-9月30日 的学情分析</span>
               <div class="rstep"><span class="n">3</span><span>等它自动<b>取数 → 分析 → 排版</b>（首次约几分钟），直接给你一份 HTML</span></div>
             </span></div>
-            <div class="rrow bb"><span class="rk">🖍 别忘了加小黑板（可选）</span><span class="rv">想把该联席学生的<b>课堂小黑板</b>也一起分析，就把上面那句话补成：<span class="q">用 co-teacher-report 技能，生成 张巍（联席） 2026年9月1日-9月30日 的学情分析，并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</span></span></div>
+            <div class="rrow bb"><span class="rk">🖍 别忘了加小黑板（可选）</span><span class="rv">想把该联席学生的<b>课堂小黑板</b>也一起分析，就把上面那句话补成：<span class="q">用 co-teacher-report 技能，生成 张巍（联席 · 孙一文组） 2026年9月1日-9月30日 的学情分析，并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</span></span></div>
             <div class="rrow"><span class="rk">取什么数</span><span class="rv">该联席<b>名下的全部学生</b>（只算他负责的群，不混入别的老师）</span></div>
             <div class="rrow"><span class="rk">得到什么</span><span class="rv"><b>按课程 Tab 切换</b>；每个课程下再可「筛选联席」下钻。报告分<b>三大 Tab</b>（见下方「报告打开后先看哪」）。<br>每张学生卡是<b>「一眼 + 两折」</b>（v4.34 精简，不用跨块拼结论）：<b>一眼</b>＝一句话<b>诊断</b> ＋ <b>四格指标</b>（作业提交 / 出勤 / 群内发言 / 最近活跃）＋ <b>学生问题</b> ＋ <b>薄弱知识点</b> ＋ <b>最该做 / 其次</b>；<b>两折</b>＝「补充信息」（作业明细 / 跟进痕迹 / 老师手记）与「其余跟进建议」（第 3 条起）。右上角 1 枚<b>学习分层</b>徽章。<b>为「学习效果」负责，出勤只作背景。</b></span></div>
           </div>
@@ -282,14 +282,14 @@
         <div class="role">
           <div class="role-h"><span class="ic">🧑‍💼</span><b>② 教务视角</b><span class="who">教务本人 / 代教务出报告</span></div>
           <div class="role-b">
-            <div class="rrow"><span class="rk">你要准备</span><span class="rv">一位<b>教务的姓名</b>（如「罗绂燕」）＋ <b>分析的时间段</b>（如 <b>2026年9月1日-9月30日</b>）</span></div>
+            <div class="rrow"><span class="rk">你要准备</span><span class="rv">一位<b>教务的姓名</b>（如「罗绂燕」）＋ <b>所在团队</b>（如「孙一文组」）＋ <b>分析的时间段</b>（如 <b>2026年9月1日-9月30日</b>）</span></div>
             <div class="rrow"><span class="rk">操作步骤</span><span class="rv">
-              <div class="rstep"><span class="n">1</span><span>确认要出<b>哪位教务</b>的管辖报告 ＋ 要分析的<b>起止日期</b></span></div>
+              <div class="rstep"><span class="n">1</span><span>确认要出<b>哪位教务</b>的管辖报告 ＋ <b>所在团队</b> ＋ 要分析的<b>起止日期</b></span></div>
               <div class="rstep"><span class="n">2</span><span>对 WorkBuddy 说：</span></div>
-              <span class="q">用 co-teacher-report 技能，生成 罗绂燕（教务） 2026年9月1日-9月30日 的学情分析</span>
+              <span class="q">用 co-teacher-report 技能，生成 罗绂燕（教务 · 孙一文组） 2026年9月1日-9月30日 的学情分析</span>
               <div class="rstep"><span class="n">3</span><span>等它出报告（人数多，时间会长一点）</span></div>
             </span></div>
-            <div class="rrow bb"><span class="rk">🖍 别忘了加小黑板（可选）</span><span class="rv">想把该教务名下学生的<b>课堂小黑板</b>也一起分析，就把上面那句话补成：<span class="q">用 co-teacher-report 技能，生成 罗绂燕（教务） 2026年9月1日-9月30日 的学情分析，并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</span></span></div>
+            <div class="rrow bb"><span class="rk">🖍 别忘了加小黑板（可选）</span><span class="rv">想把该教务名下学生的<b>课堂小黑板</b>也一起分析，就把上面那句话补成：<span class="q">用 co-teacher-report 技能，生成 罗绂燕（教务 · 孙一文组） 2026年9月1日-9月30日 的学情分析，并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</span></span></div>
             <div class="rrow"><span class="rk">取什么数</span><span class="rv">该教务<b>管辖的全部学生</b>（跨多个下属联席）</span></div>
             <div class="rrow"><span class="rk">得到什么</span><span class="rv">顶部<b>一键切换「按课程 / 按联席」两种维度</b> —— 按课程：课程 Tab ＋ 课程内「筛选联席」两级下钻；按联席：每 Tab 一名下属联席，便于横向对比。<br>⭐ <b>教务专属 A · 页面顶部「课程」标签条</b>（v4.41）：课程在这里是<b>整体筛选维度</b>，点哪个课程，顶部 KPI、Tab②③ 全部跟着变（再点「全部课程」取消）。<br>⭐ <b>教务专属 B · Tab② 顶部「📋 教务核心数据」</b>（v4.39~v4.45）：6 张可点 KPI（已续报 / 未续报·其他 / 续报未确认 / 多科目在读 / 单科在读 / 有扩科意向）＋ 学生级明细表。<br>⭐ <b>教务专属 C · 学生卡头部身份行</b>（v4.39）：<b>在读科目 · 续报状态 · 扩科意向</b>（扩科后面直接跟 ±25 字原文依据，不用悬停）。<br>其余同联席视角：卡片也是<b>「一眼 + 两折」</b>。<b>出勤是核心关切</b>：出勤一句话下另附逐节明细。<b>为「续报」负责，看重出勤与家长沟通。</b></span></div>
           </div>
@@ -301,14 +301,14 @@
         <div class="role">
           <div class="role-h"><span class="ic">📚</span><b>③ 课程视角</b><span class="who">按一门课看整体</span></div>
           <div class="role-b">
-            <div class="rrow"><span class="rk">你要准备</span><span class="rv"><b>完整的课程名</b>（⚠️ 去后台「响应时效」列表的「课程」列，<b>连前缀一起整串复制</b>，如 <b>2026Q-SX-高二数学清北层日E邵</b>；<b>不要照抄群名</b> —— 群名常漏班型 / 缺字 / 写成另一门课）＋ <b>分析的时间段</b>（如 <b>2026年9月1日-9月30日</b>）</span></div>
+            <div class="rrow"><span class="rk">你要准备</span><span class="rv"><b>完整的课程名</b>（⚠️ 去后台「响应时效」列表的「课程」列，<b>连前缀一起整串复制</b>，如 <b>2026Q-SX-高二数学清北层日E邵</b>；<b>不要照抄群名</b> —— 群名常漏班型 / 缺字 / 写成另一门课）＋ <b>所在团队</b>（如「孙一文组」）＋ <b>分析的时间段</b>（如 <b>2026年9月1日-9月30日</b>）</span></div>
             <div class="rrow"><span class="rk">操作步骤</span><span class="rv">
-              <div class="rstep"><span class="n">1</span><span>打开后台「响应时效」列表，把「课程」列的字（含 <b>2026Q-SX-</b> 这类前缀）<b>整串复制</b>出来</span></div>
+              <div class="rstep"><span class="n">1</span><span>打开后台「响应时效」列表，把「课程」列的字（含 <b>2026Q-SX-</b> 这类前缀）<b>整串复制</b>出来，并确认这课<b>归哪个团队</b></span></div>
               <div class="rstep"><span class="n">2</span><span>对 WorkBuddy 说：</span></div>
-              <span class="q">用 co-teacher-report 技能，生成 2026Q-SX-高二数学清北层日E邵（课程） 2026年9月1日-9月30日 的学情分析</span>
+              <span class="q">用 co-teacher-report 技能，生成 2026Q-SX-高二数学清北层日E邵（课程 · 孙一文组） 2026年9月1日-9月30日 的学情分析</span>
               <div class="rstep"><span class="n">3</span><span>等它出报告</span></div>
             </span></div>
-            <div class="rrow bb"><span class="rk">🖍 别忘了加小黑板（可选 · 课程视角最常用）</span><span class="rv">课程报告<b>最该带小黑板</b>（同一门课一次课的图最齐），把上面那句话补成：<span class="q">用 co-teacher-report 技能，生成 2026Q-SX-高二数学清北层日E邵（课程） 2026年9月1日-9月30日 的学情分析，并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</span></span></div>
+            <div class="rrow bb"><span class="rk">🖍 别忘了加小黑板（可选 · 课程视角最常用）</span><span class="rv">课程报告<b>最该带小黑板</b>（同一门课一次课的图最齐），把上面那句话补成：<span class="q">用 co-teacher-report 技能，生成 2026Q-SX-高二数学清北层日E邵（课程 · 孙一文组） 2026年9月1日-9月30日 的学情分析，并分析桌面「邵清北课上小黑板」文件夹里的学生小黑板图片</span></span></div>
             <div class="rrow"><span class="rk">取什么数</span><span class="rv">该课程下的<b>全部学生</b>（一门课跨多个联席）</span></div>
             <div class="rrow"><span class="rk">得到什么</span><span class="rv"><b>单课程结构</b>（无课程 Tab）；顶部「筛选联席」下拉可下钻到具体联席，学生卡标注「联席：XXX」；卡片同样为<b>「一眼 + 两折」</b>，其余结构同联席视角。</span></div>
             <div class="rrow"><span class="rk">进阶</span><span class="rv">只想看该课程里<b>某位联席</b>负责的部分 —— 补一句「<b>只看该课程下张巍负责的学生</b>」即可。</span></div>
