@@ -58,23 +58,38 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 TGZ="$TMP/$NAME.tgz"
-if command -v curl >/dev/null 2>&1; then
-  # --http1.1：部分网络/代理在 HTTP2 下会报 "Error in the HTTP2 framing layer"
-  # --retry：国内网络偶发中断，自动重试两次比让用户重跑更省事
-  if ! curl -fsSL --http1.1 --retry 2 --retry-delay 1 --connect-timeout 20 \
-       "$REPO/archive/refs/heads/$BRANCH.tar.gz" -o "$TGZ"; then
+
+# 优先直连 codeload：github.com/archive 会 302 到 codeload，部分代理/网络
+# 在重定向那一步失败（实测报 502 或 HTTP2 framing）。直连少一跳，明显更稳。
+SLUG="${REPO#https://github.com/}"; SLUG="${SLUG%/}"
+if [ "$SLUG" != "$REPO" ]; then
+  PRIMARY="https://codeload.github.com/$SLUG/tar.gz/refs/heads/$BRANCH"
+else
+  PRIMARY="$REPO/archive/refs/heads/$BRANCH.tar.gz"
+fi
+FALLBACK="$REPO/archive/refs/heads/$BRANCH.tar.gz"
+
+# --http1.1：避开 HTTP2 framing 错误；--retry：国内网络偶发中断
+CURL_OPTS=(-fsSL --http1.1 --retry 2 --retry-delay 1 --connect-timeout 20)
+
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl "${CURL_OPTS[@]}" "$1" -o "$TGZ"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$TGZ" "$1"
+  else
+    echo "❌ 需要 curl 或 wget，请先安装其中之一。" >&2
+    exit 1
+  fi
+}
+
+if ! fetch "$PRIMARY"; then
+  echo "   直连下载失败，换备用地址重试…"
+  if ! fetch "$FALLBACK"; then
     echo "❌ 下载失败（网络问题）。请检查网络后重跑同一条命令；" >&2
     echo "   若在开代理/VPN，先关掉再试。" >&2
     exit 1
   fi
-elif command -v wget >/dev/null 2>&1; then
-  if ! wget -qO "$TGZ" "$REPO/archive/refs/heads/$BRANCH.tar.gz"; then
-    echo "❌ 下载失败（网络问题）。请检查网络后重跑同一条命令。" >&2
-    exit 1
-  fi
-else
-  echo "❌ 需要 curl 或 wget，请先安装其中之一。" >&2
-  exit 1
 fi
 
 tar -xzf "$TGZ" -C "$TMP"
