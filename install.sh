@@ -59,9 +59,19 @@ trap 'rm -rf "$TMP"' EXIT
 
 TGZ="$TMP/$NAME.tgz"
 if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$REPO/archive/refs/heads/$BRANCH.tar.gz" -o "$TGZ"
+  # --http1.1：部分网络/代理在 HTTP2 下会报 "Error in the HTTP2 framing layer"
+  # --retry：国内网络偶发中断，自动重试两次比让用户重跑更省事
+  if ! curl -fsSL --http1.1 --retry 2 --retry-delay 1 --connect-timeout 20 \
+       "$REPO/archive/refs/heads/$BRANCH.tar.gz" -o "$TGZ"; then
+    echo "❌ 下载失败（网络问题）。请检查网络后重跑同一条命令；" >&2
+    echo "   若在开代理/VPN，先关掉再试。" >&2
+    exit 1
+  fi
 elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$TGZ" "$REPO/archive/refs/heads/$BRANCH.tar.gz"
+  if ! wget -qO "$TGZ" "$REPO/archive/refs/heads/$BRANCH.tar.gz"; then
+    echo "❌ 下载失败（网络问题）。请检查网络后重跑同一条命令。" >&2
+    exit 1
+  fi
 else
   echo "❌ 需要 curl 或 wget，请先安装其中之一。" >&2
   exit 1
