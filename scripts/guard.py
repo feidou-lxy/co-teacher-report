@@ -249,22 +249,41 @@ def load_local_credentials():
 
 
 def deploy_team(workdir, team):
-    """把内置模板复制成 <workdir>/profile.json（已存在则不覆盖）。"""
-    if team not in TEAMS:
-        raise SystemExit(f"❌ 未知团队「{team}」。可选：{'、'.join(sorted(set(TEAMS)))}")
-    src = os.path.join(TEAM_DIR, TEAMS[team])
-    if not os.path.exists(src):
-        raise SystemExit(f"❌ 技能里缺少模板 {src}（安装包不完整，请重新安装技能）。")
+    """把内置模板复制成 <workdir>/profile.json（已存在则不覆盖）。
+
+    v4.85：团队不在内置清单（还没接飞书表）时**不再报错**，而是降级成「无飞书」配置 ——
+    出勤 / 群聊 / 小黑板 / 薄弱点照常，只有飞书来源的几块（作业提交、评级、成绩核对）为空。
+    原因：其他团队的同事也要能用技能，不能因为「组名不认识」就整条链路停住。
+    """
     os.makedirs(workdir, exist_ok=True)
     dst = os.path.join(workdir, "profile.json")
     if os.path.exists(dst):
         print(f"ℹ️ {dst} 已存在，保留原文件不覆盖。")
         return dst
-    with open(src, encoding="utf-8") as f:
-        cfg = json.load(f)
+    fname = TEAMS.get(team)
+    src = os.path.join(TEAM_DIR, fname) if fname else None
+    if src and os.path.exists(src):
+        with open(src, encoding="utf-8") as f:
+            cfg = json.load(f)
+    elif fname:
+        raise SystemExit(f"❌ 技能里缺少模板 {src}（安装包不完整，请重新安装技能）。")
+    else:
+        cfg = {
+            "team": team,
+            "_no_feishu_note": (
+                "该团队尚未接入飞书表。作业提交 / 作业评级 / 成绩核对等飞书来源的模块会显示「无记录」，"
+                "出勤、群聊、小黑板、薄弱点、分层（按剩余证据）照常。"
+                "要补齐这几块，把该团队的飞书表地址交给管理员，加进技能后重装。"
+            ),
+            "feishu": None,
+        }
+        print(f"ℹ️ 「{team}」还没有接入飞书表 → 按「无飞书」模式配置。")
+        print("   报告里作业提交 / 作业评级 / 成绩核对会是「无记录」，其余照常。")
+        print("   要把这几块补齐，把该团队的飞书表地址发给管理员。")
     with open(dst, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=1)
-    print(f"✅ 已按「{team}」布署配置 → {dst}")
+    if fname:
+        print(f"✅ 已按「{team}」布署配置 → {dst}")
     return dst
 
 
@@ -272,7 +291,7 @@ def deploy_team(workdir, team):
 def main():
     ap = argparse.ArgumentParser(description="团队配置布署 + 公司身份验证")
     ap.add_argument("--workdir", help="报告工作目录（如 ~/.workbuddy/reports/edu-张三）")
-    ap.add_argument("--team", help="团队名：娜娜组 / 孙一文组")
+    ap.add_argument("--team", help="团队名：娜娜组 / 孙一文组（其他团队也可，未接飞书表时自动降级为「无飞书」）")
     ap.add_argument("--status", action="store_true", help="查看本机验证状态")
     ap.add_argument("--reset", action="store_true", help="清除本机验证记录")
     ap.add_argument("--account", help="公司手机号或邮箱（不给则交互式询问；也可用环境变量 CTR_EMPLOYEE_ACCOUNT）")
@@ -315,6 +334,10 @@ def main():
                 auth = ((json.load(f).get("feishu") or {}).get("auth") or {})
         except Exception as e:
             raise SystemExit(f"❌ 读取 {dst} 失败：{e}")
+        if not auth.get("appSecret"):
+            # v4.85：无飞书表的团队也要过门禁 —— 用技能内置的凭证（它只用来查通讯录）
+            _aid, _sec = load_local_credentials()
+            auth = {"appId": _aid, "appSecret": _sec}
         ensure_access(auth.get("appId"), auth.get("appSecret"), account=args.account)
         return
 
