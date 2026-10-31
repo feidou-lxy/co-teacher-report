@@ -3415,6 +3415,10 @@ bash <(curl -sL https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/m
 ⚠️ **仓库里只有 `*.template.json`（`appSecret` 为空）**，`.gitignore` 挡住 `assets/teams/*.json`。
 所以仓库公开也不泄露密钥 —— 这是刻意的设计，别再往仓库里塞真凭证。
 
+⚠️ **改过 `install.sh` 就要 +1 手册里的 `?v=` 参数**（当前 `?v=484`）。
+`raw.githubusercontent.com` 有 CDN 缓存（实测推完 5 分钟仍返回旧版），
+不带 `?v=` 的话同事会拉到旧脚本、在下载那步报错。改完要在浏览器里打开手册重新生成一份。
+
 ### 同事第一次跑报告会卡在哪（务必照这个处理）
 
 同事的工作目录（`~/.workbuddy/reports/edu-张三`）是新建的，**没有 `profile.json`**，
