@@ -3399,25 +3399,44 @@ lessonCount = len(cl)
   然后重新生成手册、重发给所有同事。这是共享凭证的固有代价，不是 bug，别试图用代码绕。
 - 🔒 别把 `assets/teams/*.json` 贴进任何 gist、聊天截图、issue。
 
-### 同事的正式路径：一条命令装完（2026-10-31 起）
+### 同事的正式路径：在 WorkBuddy 里说一句话（2026-10-31 起，首选）
 
-同事**不再需要拿 secret**，也不需要私聊要凭证。命令由《同事安装手册》（本机 `最终产物/学情分析技能_同事安装手册.html`，
-**不进仓库**）给出，形如：
+**绝大多数同事不该碰终端。** 让他在 WorkBuddy 新对话里粘一段话即可（文字由《同事安装手册》给出，
+该手册在本机 `最终产物/学情分析技能_同事安装手册.html`，**不进仓库**）：
 
-```bash
-bash <(curl -sL https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/main/install.sh) \
-  --secret=<手册里的那串>
+```
+帮我安装学情分析技能，执行这条命令：
+bash <(curl -sL "https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/main/install.sh?v=485") --secret=<手册里的那串>
 ```
 
+> 🔑 **AI 看到这段该怎么处理**（这段是给 AI 的，不是给同事的）：
+> 1. 直接执行那条 `bash <(curl …)`。**不要**把 `?v=` 去掉，也不要改成先 `git clone`。
+> 2. 脚本输出 `ℹ️ 技能已装好，还差最后一步：验证公司身份（需要你的 11 位公司手机号）`
+>    就是**装完了**，此时**必须主动问同事要手机号**，别自己编、别跳过。
+> 3. 拿到手机号后执行：
+>    `python3 ~/.workbuddy/skills/co-teacher-report/scripts/guard.py --verify --account=<手机号>`
+> 4. 看到 `✅ 验证通过：姓名（138****xxxx）` 才算完成。失败就按提示改用**公司邮箱**再试一次。
+
+为什么必须问手机号：WorkBuddy 的 bash 没有终端，脚本里 `input()` 会 EOFError，
+所以 `install.sh` 检测到 `[ ! -t 0 ]` 时会**跳过交互**并打印下一步命令。
+`--account` 就是把手机号随命令一起传进去，一条命令走完验证。
+
 `install.sh` 会：下载 → 把 secret 注入 `assets/teams/*.template.json` 生成本机 `*.json`（权限 600）
-→ 装到 `~/.workbuddy/skills/` → 自动跑 `guard.py --verify` 要求输一次公司手机号。
+→ 装到 `~/.workbuddy/skills/` → 自动验证公司身份（有 tty 时交互询问，无 tty 时输出下一步）。
+
+**习惯终端的人**也可以用一条命令（手动输入手机号）：
+```bash
+bash <(curl -sL "https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/main/install.sh?v=485") \
+  --secret=<手册里的那串>
+```
 
 ⚠️ **仓库里只有 `*.template.json`（`appSecret` 为空）**，`.gitignore` 挡住 `assets/teams/*.json`。
 所以仓库公开也不泄露密钥 —— 这是刻意的设计，别再往仓库里塞真凭证。
 
-⚠️ **改过 `install.sh` 就要 +1 手册里的 `?v=` 参数**（当前 `?v=484`）。
-`raw.githubusercontent.com` 有 CDN 缓存（实测推完 5 分钟仍返回旧版），
-不带 `?v=` 的话同事会拉到旧脚本、在下载那步报错。改完要在浏览器里打开手册重新生成一份。
+⚠️ **改过 `install.sh` 就要 +1 手册里的 `?v=` 参数**（当前 `?v=485`）。
+`raw.githubusercontent.com` 有 CDN 缓存（实测推完 3~5 分钟内仍返回旧版，
+现象是 `grep -c account` 为 0 或下载步骤报错）。改完必须重新生成手册，并在推送后
+用 `curl …?v=<新号> | grep -c <新特征>` 确认线上已生效再发给同事。
 
 ### 同事第一次跑报告会卡在哪（务必照这个处理）
 
@@ -3449,10 +3468,16 @@ CTR_EMPLOYEE_ACCOUNT=138xxxxxxxx python3 scripts/guard.py \
 python3 scripts/pull_feishu.py --workdir ~/.workbuddy/reports/edu-张三
 
 # 3. 只验证身份（不布署，install.sh 用的就是这条）/ 查状态 / 换人换机时清除
-python3 scripts/guard.py --verify
+python3 scripts/guard.py --verify                          # 交互式，会问手机号
+python3 scripts/guard.py --verify --account 138xxxxxxxx    # 非交互，AI 代为执行时用这条
 python3 scripts/guard.py --status
 python3 scripts/guard.py --reset
 ```
+
+🐛 **无终端环境的坑**：WorkBuddy 的 bash 没有 tty，`input()` 直接 `EOFError`。
+所以 `install.sh` 用 `[ -t 0 ]` 分流：有终端才交互，没终端就打印「把手机号填进
+`guard.py --verify --account=…`」这一步。**AI 看到那句要主动问同事要手机号**，
+不要因为「脚本跑完了」就当装好了。
 
 `pull_feishu.py` 在 `via=api` 时**自动**过一遍 `guard.ensure_access()`，
 所以即使跳过第 1 步，第一次取数也会被要求验证 —— 第 1 步只是把配置先铺好。
