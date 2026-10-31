@@ -11,6 +11,7 @@
 # 其他参数：
 #   --appid=cli_xxx     覆盖应用 App ID（默认已内置，一般不用传）
 #   --secret=xxx        应用 App Secret（必填，否则装完取数会失败）
+#   --account=138xxx    公司手机号/邮箱，随命令一起验证（不给则装完交互询问）
 #   --no-verify         跳过手机号验证（仅调试用，正式使用不要加）
 #   --team=娜娜组       顺便把配置部署到某个工作目录（配合 --workdir）
 #   --workdir=<路径>    见上
@@ -34,6 +35,7 @@ SECRET="${CTR_APP_SECRET:-}"
 VERIFY=1
 TEAM=""
 WORKDIR=""
+ACCOUNT="${CTR_EMPLOYEE_ACCOUNT:-}"
 
 # ── 参数解析（兼容 --k=v 与 --k v） ────────────────────────────────────
 while [ $# -gt 0 ]; do
@@ -46,6 +48,8 @@ while [ $# -gt 0 ]; do
     --team)      TEAM="${2:-}"; shift ;;
     --workdir=*) WORKDIR="${1#*=}" ;;
     --workdir)   WORKDIR="${2:-}"; shift ;;
+    --account=*) ACCOUNT="${1#*=}" ;;
+    --account)   ACCOUNT="${2:-}"; shift ;;
     --no-verify) VERIFY=0 ;;
     -h|--help)   sed -n '2,25p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "⚠️  忽略未知参数：$1" >&2 ;;
@@ -138,12 +142,29 @@ echo "✅ 技能已安装到：$DEST"
 # ── 企业身份验证（一次，管 180 天） ────────────────────────────────────
 if [ "$VERIFY" = "1" ] && [ -n "$SECRET" ]; then
   echo
-  python3 "$DEST/scripts/guard.py" --verify || {
+  if [ -n "$ACCOUNT" ]; then
+    # 账号随命令一起传入（终端里用 --account=，AI 代为执行时也走这条）
+    python3 "$DEST/scripts/guard.py" --verify --account "$ACCOUNT" || {
+      echo
+      echo "⚠️  身份验证没通过，技能已装好，但暂时拉不到数据。" >&2
+      echo "    常见原因：手机号不是公司飞书账号。" >&2
+      echo "    改用公司邮箱重试：python3 $DEST/scripts/guard.py --verify" >&2
+    }
+  elif [ -t 0 ]; then
+    # 有终端 → 正常交互询问
+    python3 "$DEST/scripts/guard.py" --verify || {
+      echo
+      echo "⚠️  身份验证没通过，技能已装好，但暂时拉不到数据。" >&2
+      echo "    常见原因：输入的手机号不是公司飞书账号。重试：" >&2
+      echo "      python3 $DEST/scripts/guard.py --verify" >&2
+    }
+  else
+    # 没有终端（AI / 脚本代为执行）：别去等 input()，直接给可执行的一步
+    echo "ℹ️  技能已装好，还差最后一步：验证公司身份（需要你的 11 位公司手机号）。"
+    echo "    把手机号填进下面这条命令后执行即可："
     echo
-    echo "⚠️  身份验证没通过，技能已装好，但暂时拉不到数据。" >&2
-    echo "    常见原因：输入的手机号不是公司飞书账号。重试：" >&2
-    echo "      python3 $DEST/scripts/guard.py --verify" >&2
-  }
+    echo "      python3 $DEST/scripts/guard.py --verify --account=你的手机号"
+  fi
 fi
 
 # ── 可选：顺手把某个团队配置部署到工作目录 ─────────────────────────────
