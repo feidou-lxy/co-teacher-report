@@ -1,0 +1,138 @@
+{
+ "_readme": [
+  "团队配置**模板**（随技能分发的公开文件）。不含任何密钥。",
+  "安装时由 install.sh --secret=… 生成本机 assets/teams/*.json（含凭证、权限 600）。"
+ ],
+ "team": "高二数学 · 孙一文组",
+ "_team_note": "用户 2026-10-16 更正：孙一文团队属**高二数学**（此前误记为高一数学）。佐证：本团队 8 张表的课程名主体是「高二数学…」（清北层日E邵 / 211层六C肖 / 进度一985层六B袁 等）；少数「【26届】高一数学…零点五加三直升班」是 26 届学生在上高一内容的直升班，不改变团队归属。",
+ "minVersion": "4.19",
+ "feishu": {
+  "via": "api",
+  "_via_note": "cli = 走本机 lark-cli（用户身份，调试用）；api = 直连飞书开放平台 tenant_access_token（生产用，需 appId + appSecret）",
+  "sourceType": "wiki",
+  "source": "PXqPwBtu6i54v2kFuxjcpnjTnXg",
+  "_source_note": "wiki 节点 token。sourceType=sheet 时这里直接填 spreadsheetToken。",
+  "spreadsheetToken": "Ju8gs9IC0hZt5stL82ac8LlxnWd",
+  "_spreadsheetToken_note": "已解析出的真实表格 token（= wiki get_node 的 obj_token）。留空则每次自动解析。",
+  "auth": {
+   "appId": "cli_a95f759091bddcd5",
+   "appSecret": "",
+   "_note": "模板文件：appSecret 由 install.sh --secret 注入。仓库里永远留空。"
+  },
+  "sheets": {
+   "include": [
+    "NPMSWD",
+    "MbVgf8",
+    "mslXT3",
+    "KR6aiI",
+    "QeOc0A",
+    "7nJWyD",
+    "eQpf4k",
+    "QAVvKs"
+   ],
+   "exclude": {
+    "cT5Pf6": "空壳：仅 学生/课程/课程类型 有值，18 个课次列全空（用户 2026-10-16 拍板不纳入）",
+    "lGUOs8": "扁平草稿表：仅 6 列且数据极少（用户 2026-10-16 拍板不纳入）",
+    "ypyJDq": "空表 Sheet4",
+    "ZtzqKZ": "空表 红包记录",
+    "sKcxBL": "看板页，非数据表",
+    "0HKx4u": "派生统计：联席作业提交率汇总（数据来自课程表，重复）",
+    "RW7Tcs": "派生统计：联席作业提交率明细",
+    "0zeMZw": "班型统计明细表（续报汇总，非学情）",
+    "219ad1": "班级及分工（映射表）",
+    "7EMwD5": "谢排班（岗位职责说明）",
+    "UNX5g4": "系统数据10.10（系统导出快照；用户拍板：花名册仍以后台接口为准）",
+    "K59Rgc": "「山」——2026-10-31 批量核对时线上新增，用户拍板不纳入",
+    "9FQUs9": "「杰的加课时间表」——加课排课表，非课次学情项（用户 2026-10-31 拍板不纳入）"
+   }
+  },
+  "items": {
+   "done": [
+    "作业",
+    "打穿题",
+    "精题",
+    "出门测",
+    "框架笔记",
+    "课前测"
+   ],
+   "_done_note": "标准「完成项」词表。宽表的子列名与窄表的逗号分词，都归一到这几个词，计入完成率。",
+   "ignore": [
+    "出勤",
+    "回放",
+    "请假",
+    "红包"
+   ],
+   "_ignore_note": "出勤/回放/请假 = 出勤类 → 用户口径「出勤只信系统」，直接丢弃；红包 = 非学情项。",
+   "passive": [
+    "额外加分",
+    "当日星星",
+    "模块打分",
+    "小黑板",
+    "加课"
+   ],
+   "_passive_note": "已知存在、但**不计入完成率**的子项（数值/星数/描述型）。原值照样保留在 lessons.items 里，只是不参与统计、也不报「未登记」。徐圣杰表的「小黑板」按用户口径「不需要对齐标准子列」放在这里；每节课「课程服务」下的「加课」也是记录型（v4.27 并入 meta.extraClass）。",
+   "alias": {
+    "课前侧": "课前测",
+    "2号打穿题": "打穿题",
+    "打穿题2": "打穿题"
+   },
+   "_alias_note": "窄表里出现的错别字/变体 → 标准词。"
+  },
+  "sheetProductMap": {
+   "_note": "sheet 名不是课程全名、且表内又没有「课程」列时的兜底映射：sheetId → 后台课程全名。留空则会报降级声明。",
+   "mslXT3": "2026Q-SX-高二数学211层六C肖"
+  },
+  "_sheetProductMap_note": "「mslXT3 高二肖211」表内无「课程」列，由用户 2026-10-16 给出对应关系。其余 sheet 的课程名可自解析（NPMSWD/MbVgf8 用 sheet 名、KR6aiI/QeOc0A 有「课程」列、7nJWyD 见 columnRoles）。",
+  "courseAlias": {
+   "_note": "飞书表里写的是**简写课程名**、后台是**全名**时，在这里做归一。解析出的课程名最后统一过一遍本表。key 用飞书表里的原文。",
+   "985层零点五加三直升班日C": "2026Q-SX-【26届】高一数学985层零点五加三直升班日C王",
+   "进度二211层日E王": "2026Q-SX-高二数学进度二211层日E王",
+   "进度一985层六E王": "2026Q-SX-高二数学进度一985层六E王"
+  },
+  "metaAlias": {
+   "_note": "团队自定义列名 → 标准字段，优先级高于内核默认表（v4.20 入口）。",
+   "_why": "本团队部分 sheet 有「加课」与「电话沟通」两类列；内核默认表里「电话沟通情况」「10月沟通结果」原本归到 note（学情手记），现在单独立成 phoneComm，让报告能在学生情况上方单独一条汇总。",
+   "电话沟通情况": "phoneComm",
+   "电话沟通": "phoneComm",
+   "10月沟通结果": "phoneComm",
+   "沟通结果": "phoneComm",
+   "加课时间内容": "extraClass",
+   "加课时间，内容": "extraClass",
+   "加课时间": "extraClass",
+   "加课内容": "extraClass",
+   "数列加课": "extraClass",
+   "加课": "extraClass"
+  },
+  "columnRoles": {
+   "_note": "表头文字匹配不到的列在此显式声明。col 可写列字母(A)或 1-based 数字(1)。fillDown=true 表示该列用合并单元格按段填写，需向下继承上一个非空值。",
+   "7nJWyD": {
+    "productName": {
+     "col": "A",
+     "fillDown": true,
+     "_why": "徐圣杰表用 A 列按课程分段（合并单元格），A 列表头为空 → 文字匹配不到。实测 A 列恰有 3 个值，与用户给的 3 条 courseAlias 一一对应。"
+    }
+   },
+   "QeOc0A": {
+    "productName": {
+     "col": "M",
+     "fillDown": true,
+     "_why": "「罗」sheet 是教务汇总表，一个 sheet 混 7 门课；课程名在第 13 列(M)，表头被合并成空 → 只能显式声明。实测 M 列 6 门课共 128 人。"
+    }
+   }
+  },
+  "dedupe": {
+   "_note": "复合键 (studentNameNorm, productName) 撞键时的取舍规则：order 里的 sheet 优先级从高到低，未列出的排在后面（按各 sheet 的解析顺序）。被覆盖的记录不丢弃，全量记进 feishuMeta.dedupe.dropped[]。",
+   "_why": "用户 2026-10-16 拍板：同一门课有两份记录时「固定取马表」。实测 28 人重复全部集中在 7nJWyD(徐圣杰) ↔ QAVvKs(马) 之间，且 27/28 是马表记录更全（5 节 vs 2 节）、27/28 两份课次有交集（同一节课两边都记）→ 属重复维护，不是互补。",
+   "order": [
+    "QAVvKs",
+    "7nJWyD"
+   ]
+  },
+  "columns": {
+   "_note": "列别名可覆盖（一般不用填，代码里已有默认表覆盖各 sheet 的已知叫法）。示例：\"学生\": \"stuName\"",
+   "override": {}
+  },
+  "_courseAlias_why_v455": "2026-10-22 罗绂燕（教务）视角：**刻意不给「清北层日D谢胡」加别名** —— 本课卡片侧课程名来自 legacy 群信息（「高二数学清北层日D谢胡」），后台花名册却是「…进化班日D谢胡」。加 alias 反而会让 117 人的复合键全部落空，卡片退回「作业提交 无记录」。两者差异交由报告侧的别名兜底处理。"
+ },
+ "_added_v455": "2026-10-22 从 _feishu_pilot 复制到 edu-罗绂燕 工作目录（此前该目录无 profile.json，飞书整条链路从未跑过）"
+}

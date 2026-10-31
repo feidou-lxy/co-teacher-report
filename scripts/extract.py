@@ -20,6 +20,7 @@ from collections import Counter
 
 sys.path.insert(0, sys.path[0])
 import common
+import knowledge_dict   # v4.75：后台知识树 → 识别词表的并集桥接（见该文件头部的取舍说明）
 
 WINDOW_DEFAULT = "2026-09-01"
 
@@ -37,8 +38,27 @@ URGE = ["交作业", "作业交", "交一下", "提交", "补交", "还没交", 
         "抓紧", "按时", "今天交", "尽快交", "别忘", "要交", "快交"]
 SUBMIT = ["交了", "已交", "提交了", "已经交", "交了作业", "发你了", "发了", "发了哦", "上传了",
           "写完了", "做完了", "完成了", "拍照发了", "拍给你", "传了", "发了老师"]
-FIX_REQ = ["订正", "改正", "改一下", "改下", "重做", "重新写", "重新做", "改错", "错题",
-           "再算一遍", "再看一遍", "重新算", "更正", "纠正"]
+# ⚠️ v4.72：这里的词必须是「**老师在要求学生去改**」的指令词，不能是描述性名词。
+#   2026-10-28 实测：词表里的「错题」把一条教务群发命中成订正要求 ——
+#   「期中考试有啥想听的加课内容不？你可以文字说，也可以直接发错题的图片～」
+#   本课 119 人全部被判「批改后未订正」，实际一次都没布置过订正。
+#   → 删掉「错题」「纠正」「再看一遍」（名词/泛指），只留明确动作。
+FIX_REQ = ["订正", "改正", "改一下", "改下", "重做", "重新写", "重新做",
+           "再算一遍", "重新算", "更正", "改完发我", "改好发我", "改了发我",
+           # 「改错」单独一个词太脏：它同时是名词（改错本 / 改错的题 / 改错都没问题）。
+           # 只收带语气或祈使标记的组合形态（实测语料里老师就是这么说的）。
+           "改改错", "改一改错", "改错哟", "改错啦", "改错哈", "先改错", "把错改"]
+# 反向语境：老师说的是「不用改」「已经改过了」「改得不错」—— 这不是新要求。
+# ⚠️ 这类句子在真实语料里非常多，且都和「要求订正」只差几个字，必须逐条挡：
+#   「我刚上完课，不用重新写」/「这是已经改正完的嘛」/「改错的基本上都没问题」
+FIX_NO_REQ = ["不用订正", "不必订正", "无需订正", "不需要订正", "不用改", "不必改",
+              "不需要改", "不用重做", "不用重新写", "不用重写", "已订正", "已经订正",
+              "已经改好", "已经改正", "已改正", "又重新写", "这是已经",
+              "自己改正就更", "改好了就不用", "不用管", "下次注意",
+              # 「及时改正，值得表扬」= 老师在夸他，不是布置任务
+              "值得表扬", "写得不错",
+              # 「我把这个题改一下」= 老师自己在改题面（课堂举例），不是要求学生
+              "我把", "我给你改"]
 FIX_ACK = ["改好了", "订正了", "改正了", "改完", "重做了", "重新写了", "重新做了", "已改", "改过来了",
            "改好了老师", "更正了", "改过了"]
 # 老师反馈（只统计老师消息）：用于「学习情况分层」的第三类证据
@@ -143,6 +163,16 @@ RESP_WARN_H = 12.0     # ≥ 12 小时 → 展示为「偏慢」提示（多为�
 # 老师已在回复中说明缘由（假期/休息日/稍后细看）→ 属「已沟通的延迟」，不判迟缓、不计定档
 RESP_EXCUSE = ("休息", "放假", "假期", "节后", "调休", "这两天", "晚一点", "晚些", "晚些时候",
                "尽快", "稍后", "抽时间", "回头", "出差", "忙完")
+# —— v4.60：响应迟缓的「时效衰减」（用户 2026-10-22 晚原话）——
+# 「对于这种已经过去几天了，且已经又有后续继续沟通，家长没有表达不满的，不必强调
+#   作为最该做的事情，可以当作提示提醒后续注意。」
+# 背景：某生 10-02 提问、约 35 小时后才回复，而窗口末尾已是 10-22 —— 这 20 天里群内
+#   一直在正常沟通、家长没有任何不满表达。此时仍把它挂在「最该做」上，等于让教务去
+#   打一通「事情早就过去了」的电话，还会把真正该做的事（如回放补齐）挤到「其次」。
+# 判定（三条同时满足才降级，缺一仍按原「高」处理）：
+#   ① 延迟发生距今 ≥ RESP_STALE_D 天；② 回复之后学生/家长仍有发言（沟通没断）；
+#   ③ 窗口内无任何负面情绪信号（neg == 0）。→ 不进 To-Do，只留弱提示 resp_hint。
+RESP_STALE_D = 7.0
 
 TOPICS = {
     "立体几何/空间向量": ["立体几何", "空间向量", "法向量", "建系", "异面直线", "二面角",
@@ -254,8 +284,18 @@ def _kw_windows(txt, kw, win=TOPIC_CTX_WIN):
         i = txt.find(kw, i + 1)
 
 
-def _topic_hit_clean(txt, kws):
-    """该知识点在句内是否有「干净」的出现位置（语境窗口里没有预告/正面/事务词）。"""
+def _topic_hit_clean(txt, kws, unit=None):
+    """该知识点在句内是否有「干净」的出现位置（语境窗口里没有预告/正面/事务词）。
+
+    v4.75：加 `unit` —— 单元级排除词（`knowledge_dict.UNIT_EXCL`）。
+    有些词本身在群里另有日常含义（「集合一下」「集合啦」＝人到齐），只对那个单元生效，
+    不进全局 `TOPIC_SKIP_MSG`（那条是**整条消息**跳过，「集合一下，我们讲集合的运算」会被整条丢掉）。
+    """
+    excl = knowledge_dict.UNIT_EXCL.get(unit) if unit else None
+    if excl and any(e in txt for e in excl):
+        # 只排除「整条里除了这些搭配没有别的内容」的情况：把搭配本身从判断文本里剔掉后重判
+        for e in excl:
+            txt = txt.replace(e, "")
     for kw in kws:
         if kw not in txt:
             continue
@@ -297,7 +337,7 @@ def topic_problem_stats(triples):
         for disp, kws, _key in TOPIC_UNITS:
             if disp in seen:
                 continue
-            if not _topic_hit_clean(txt, kws):      # v4.47：知识点级语境判定
+            if not _topic_hit_clean(txt, kws, disp):      # v4.47 语境判定 + v4.75 单元级排除
                 continue
             seen.add(disp)
             cnt[disp] += 1
@@ -402,19 +442,39 @@ def topic_mastery(triples, seq):
 # 产生假条目（真实数据实测）。故统一剥离引用头，只留正文。
 # ⚠️ 分隔符实际是「- - - -」（连字符之间有空格），必须写成 (?:[-—]\s*){2,}；
 # 早期版本用 [-—]{2,} 直接匹配连续连字符，真实数据里**一条都匹配不上**（实测 58 群）。
-QUOTE_HEAD_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*(?:[-—]\s*){2,}")
-QUOTE_ONLY_RE = re.compile(r"^「[^」]{0,80}：(?:\[[^\]]{1,14}\]|[^」]{0,80})」\s*(?:[-—]\s*){2,}\s*$")
+QUOTE_HEAD_RE = re.compile(r"^「[^」]*」\s*(?:[-—]\s*){2,}")
+QUOTE_ONLY_RE = re.compile(r"^「[^」]*」\s*(?:[-—]\s*){2,}\s*$")
+# 第二种引用格式（企微另一客户端/版本）：
+#   这是一条引用/回复消息：
+#   “霍天伟：
+#   [图片]”
+#   ------
+#   @霍天伟 老师，我能看懂，但为啥我自己的带不出来呢？
+# 分隔线固定是 6 个半角连字符；引号有全角“”与半角""两种。
+QUOTE_MSG_RE = re.compile(r"^这是一条引用/回复消息[：:]\s*\n?[\s\S]*?\n\s*-{2,}\s*\n?")
 
 
 def strip_quote(t):
-    """剥离微信引用回复头部，返回真正的回复正文（无引用头时原样返回）。"""
+    """剥离微信引用回复头部，返回真正的回复正文（无引用头时原样返回）。
+
+    v4.63：两处修正（2026-10-24 王露萱「最该做」里的引用原文在群里找不到）
+    1. **去掉 80 字符上限**。原正则 `[^」]{0,80}` 只认短引用；老师群发的
+       期中征集文案有 120+ 字，超长 → 正则不匹配 → 整条（引用块 + 家长真正的
+       回复）被当成正文，报告于是把「老师自己说的话」写成「学生提问内容」。
+    2. **支持「这是一条引用/回复消息：…------」** 这种格式（本课 341 条，其中
+       学生侧 4 条），原来完全不处理，正文里混着引用头。
+    """
     s = (t or "").strip()
-    if not s.startswith("「"):
-        return s
-    if QUOTE_ONLY_RE.match(s):
-        return ""                          # 只引用了图片/文件、没有正文
-    m = QUOTE_HEAD_RE.match(s)
-    return s[m.end():].strip() if m else s
+    if s.startswith("「"):
+        if QUOTE_ONLY_RE.match(s):
+            return ""                      # 只引用了图片/文件、没有正文
+        m = QUOTE_HEAD_RE.match(s)
+        return s[m.end():].strip() if m else s
+    if s.startswith("这是一条引用/回复消息"):
+        m = QUOTE_MSG_RE.match(s)
+        return s[m.end():].strip() if m else s
+    return s
+
 
 
 def get_text(m):
@@ -557,6 +617,43 @@ def _short(t, n=30):
 _SENT_SPLIT = re.compile(r"[。！？；!?;\n]+")
 
 
+def _tea_followup_substantive(triples_all, start_i, min_len=8):
+    """老师在 start_i 之后是否还有**实质动作**（不是一句礼节性收尾）。
+
+    v4.64：判「应允未答 / 没讲透」时，原实现只看老师**紧邻的那一条**回复，
+    完全不看后方。真实数据里因此出现两条假条目（2026-10-24 用户核对）：
+      · 周子嘉：老师 17:35 回「还有别的时间吗 这两个都已经有课了」（这句其实是
+        **老师在问家长**），17:46 发图、17:51 长段讲不等式、当晚约好会议 —— 全被忽略
+      · 崔安琪：学生 22:06 说「后面的就看不懂了」，老师 22:08~22:35 连讲 20 多条，
+        学生自己想出「那最大值不就是取四吗」、老师确认「没错」—— 也判成了没讲透
+    只要老师后面还有一条像样的内容（≥ min_len 字、且不是「好的/收到/表情」这类），
+    就认为已经跟进，不再算未解决。
+    """
+    for k in range(start_i + 1, len(triples_all)):
+        _ts, r, t = triples_all[k]
+        if r != 1 or not t:
+            continue
+        if is_ack(t) or is_noise(t):
+            continue
+        if len(str(t).strip()) >= min_len:
+            return True
+    return False
+
+
+def _is_question_msg(t):
+    """这条消息是不是在**提问**（而不是在应允/承诺）。
+
+    「还有别的时间吗 / 这个题第二问考点是啥知道不」是老师在问对方，
+    不应被 DEFER_KWS 里的「有时间」误判成「老师应允稍后回答」。
+    """
+    s = str(t or "").strip()
+    if not s:
+        return False
+    if "？" in s or "?" in s:
+        return True
+    return s.rstrip("。.!~… ").endswith(("吗", "呢", "嘛"))
+
+
 def recent_pending(triples_all, anchor_ts, days=RECENT_DAYS):
     """近 N 天「待回应」清单（v3.9）：以窗口内最新一条消息为基准往前推 N 天。
 
@@ -593,14 +690,18 @@ def recent_pending(triples_all, anchor_ts, days=RECENT_DAYS):
         else:
             ts_t, _, t_t = triples_all[j]
             # 应允未答：老师回复命中延宕词，且不是在说排课/假期等正常安排（v4.1）
+            # v4.64：老师那条若是**问句**（「还有别的时间吗」），是老师在问对方，
+            #        不是在应允，不能算；且若老师其后仍有实质跟进，同样不算。
             defer = (bool(t_t) and any(k in t_t for k in DEFER_KWS)
-                     and not any(x in t_t for x in DEFER_EXCLUDE))
+                     and not any(x in t_t for x in DEFER_EXCLUDE)
+                     and not _is_question_msg(t_t)
+                     and not _tea_followup_substantive(triples_all, j))
             if defer:
                 kind = "问题未解决"
                 evi = f"{ts[:10]} 提问「{_short(t)}」，老师 {ts_t[:10]} 应允「{_short(t_t, 18)}」后仍无下文"
             else:
                 d_rep = parse_dt(ts_t)
-                reask, reask_txt = False, ""
+                reask, reask_txt, reask_i = False, "", -1
                 for k in range(j + 1, n):           # 老师回复后，学生再次追问
                     ts2, r2, t2 = triples_all[k]
                     if r2 != 2 or not t2 or is_noise(t2) or is_ack(t2) or not hits(t2, Q_ASK):
@@ -611,8 +712,12 @@ def recent_pending(triples_all, anchor_ts, days=RECENT_DAYS):
                     if (d_rep and d2 and d2 > d_rep
                             and (d2 - d_rep).total_seconds() <= 24 * 3600
                             and any(x in t2 for x in REASK_KWS)):
-                        reask, reask_txt = True, t2
+                        reask, reask_txt, reask_i = True, t2, k
                     break
+                # v4.64：学生再追问 ≠ 没讲透 —— 关键看老师**有没有接着答**。
+                # 崔安琪 22:06 追问后，老师 22:08~22:35 连讲 20 多条 → 已闭环。
+                if reask and _tea_followup_substantive(triples_all, reask_i):
+                    reask = False
                 if reask:
                     kind = "问题未解决"
                     evi = (f"{ts[:10]} 提问「{_short(t)}」，老师已回复，但学生当日再问"
@@ -684,11 +789,12 @@ def fine_weaknesses(triples_all, per_topic=4, per_student=8):
     return keep
 
 
-def pair_after(triples, trig_kws, resp_kws, within_h=72.0):
+def pair_after(triples, trig_kws, resp_kws, within_h=72.0, neg_kws=None):
     """配对判定：老师在 t 时刻发出「要求」（催交作业 / 要求订正），其后 within_h 小时内
     学生是否给出对应「响应」（交作业 / 已订正）。
 
     联席四维里的「催作业→是否交」「批改后→是否改正」两条都靠它。
+    `neg_kws`：命中即**不算一次要求**（「不用订正」「已经改好了」这类反向语境）。
     返回 (触发数, 已响应数, [(日期, 触发摘要), ...] 未响应明细)。
     同一轮内的连续催交（相邻触发之间无学生响应）只计一次，避免刷量。
     """
@@ -697,6 +803,8 @@ def pair_after(triples, trig_kws, resp_kws, within_h=72.0):
     for i, (ts, r, t) in enumerate(triples):
         if r != 1 or not t or not any(k in t for k in trig_kws):
             continue
+        if neg_kws and any(k in t for k in neg_kws):
+            continue                                    # 反向语境：不是要求
         d0 = parse_dt(ts)
         if last_trig and d0 and (d0 - last_trig).total_seconds() / 3600.0 <= 6.0:
             continue                                    # 6 小时内的重复催 → 同一轮，只计一次
@@ -718,6 +826,38 @@ def pair_after(triples, trig_kws, resp_kws, within_h=72.0):
     return trig, ok, fail
 
 
+def count_img_after(triples, trig_kws, neg_kws=None, within_h=72.0, mark="\x01IMG"):
+    """触发「要求」后 within_h 内，学生**发过图、但没有文字确认**的次数（v4.72）。
+
+    用途只有一个：把「未改」说清楚一点 —— 「他发过图，可能已经改了，只是没打字」。
+    **绝不因此算作已完成**：图里也可能是别人的作业、题目截图、表情包。
+    宁可让联席核一眼，也不要把「要求订正后未见回应」放宽成「已改」。
+    """
+    n = 0
+    for i, (ts, r, t) in enumerate(triples):
+        if r != 1 or not t or not any(k in t for k in trig_kws):
+            continue
+        if neg_kws and any(k in t for k in neg_kws):
+            continue
+        d0 = parse_dt(ts)
+        got_ack = got_img = False
+        for j in range(i + 1, len(triples)):
+            ts2, r2, t2 = triples[j]
+            d1 = parse_dt(ts2)
+            if d0 and d1 and (d1 - d0).total_seconds() / 3600.0 > within_h:
+                break
+            if r2 != 2 or not t2:
+                continue
+            if any(k in t2 for k in FIX_ACK):
+                got_ack = True
+                break
+            if mark in t2:
+                got_img = True
+        if got_img and not got_ack:
+            n += 1
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
@@ -731,6 +871,26 @@ def main():
     role = common.resolve_scope(args)[0]
     is_edu = role == "edu"
     wd = common.workdir(args)
+    # ── v4.76：知识点**以后台为准**（范围以后台树为准，措辞用群聊自然说法）─────
+    #   为什么在这里而不是模块级：要按 --workdir 找 snapshot/knowledge_points.json。
+    #   后台没有的模块直接剔除（不再用内置词表兜底），剔除清单落进 knowledge_used.json
+    #   由报告口径区写出 —— 用户 2026-10-29 定：后台当前即全量，后续会陆续补录。
+    global TOPIC_UNITS
+    TOPIC_UNITS, _kp = knowledge_dict.augment(TOPIC_UNITS, wd)
+    _kp["window"] = args.window
+    if _kp.get("degraded"):
+        print(f"⚠️ 知识点识别退回内置词表：{_kp['why']}")
+        print("   报告仍可出，但知识点不含后台节点；补跑 pull_knowledge.py 后重跑本步。")
+    else:
+        print(f"知识点以后台为准：后台 {_kp['backend_nodes']} 节点，"
+              f"并入命中词 {_kp['added']} 个，识别单元 {len(TOPIC_UNITS)} 个"
+              + (f"，新增 {'/'.join(_kp['new_units'])}" if _kp.get("new_units") else "")
+              + (f"，剔除后台未建 {'/'.join(_kp['dropped'])}" if _kp.get("dropped") else "")
+              + (f"，{'/'.join(_kp['pending'])}后台暂无节点、按教学口径单独保留"
+                 if _kp.get("pending") else "")
+              + f"；方法类节点 {_kp.get('method_nodes', 0)} 个")
+    json.dump(_kp, open(f"{wd}/knowledge_used.json", "w", encoding="utf-8"),
+              ensure_ascii=False, indent=1)
     CUT = args.window
     CUT_END = args.end          # v4.16：闭区间上界；None = 不设上界（与旧行为完全一致）
     d = json.load(open(f"{wd}/chats.json", encoding="utf-8"))
@@ -746,6 +906,12 @@ def main():
                 and (not CUT_END or (m.get("msgTime") or "")[:10] <= CUT_END)]
         msgs.sort(key=lambda m: m.get("msgTime") or "")
         triples_all = [((m.get("msgTime") or ""), m.get("role"), get_text(m)) for m in msgs]
+        # v4.72：订正「响应」的**弱证据** —— 学生发图（多半是改正后的作业照片）。
+        # ⚠️ 不回写进 triples：那会影响发言者统计、关键词匹配、n_text 等一堆既有口径。
+        #   单独一条 triples_img，只给 count_img_after() 用，用来在卡片上说清「他发过图」。
+        triples_img = [((ts), r, ("\x01IMG" if (not x and r == 2
+                                                and m.get("msgType") in ("image", "file")) else x))
+                       for (ts, r, x), m in zip(triples_all, msgs)]
         # 剔除「空文本」与「占位噪声」（[图片]/[revoke]/[该消息类型暂不能展示] 等，无正文不参与分析）
         triples = [x for x in triples_all if x[2] and not is_noise(x[2])]
         texts = [(r, t) for _, r, t in triples]
@@ -915,6 +1081,39 @@ def main():
             resp_evi = f"窗口末尾仍有 {len(pend)} 条学生/家长提问未获老师回应"
         else:
             resp_evi = "窗口内无学生实质提问"
+        # ── v4.60：历史延迟的时效衰减（口径见文件头 RESP_STALE_D）────────────────
+        # resp_slow 仍然保留（它是**事实**，卡片 data-slow / 「补充信息·响应」还要用），
+        # 但一旦满足「久、已续、无不满」，就不再生成为 To-Do 的「最该做」，只留一条弱提示。
+        resp_stale = False
+        resp_stale_d = 0.0
+        resp_after_n = 0
+        resp_hint = ""
+        if resp_slow:
+            _qdt = parse_dt(_w[1])
+            _reply_dt = (_qdt + datetime.timedelta(hours=_w[0])) if _qdt else None
+            _nw_dt = parse_dt(newest)
+            # ⚠️「距今」必须按**报告生成日**算，不能按群内最后一条消息算 ——
+            #   用户看的是今天要做的事。本课实测：某生 10-02 提问、10-03 才回复，但该群
+            #   最后一条消息停在 10-04 —— 若按 10-04 算「只过了 1 天」，就仍会被判成
+            #   「当下最该做」，而用户 10-22 看报告时的感受是「这都过去半个月了」。
+            _ref_dt = parse_dt(f"{CUT_END}T23:59:59") if CUT_END else None
+            if not _ref_dt:
+                _ref_dt = datetime.datetime.now()
+            if _reply_dt and _ref_dt > _reply_dt:
+                resp_stale_d = round((_ref_dt - _reply_dt).total_seconds() / 86400.0, 1)
+                # 老师回复之后学生/家长还说过话 → 后续沟通没断（不是「回完就没人理了」）
+                resp_after_n = sum(
+                    1 for _ts2, _r2, _t3 in triples_all
+                    if _r2 == 2 and parse_dt(_ts2) and parse_dt(_ts2) > _reply_dt)
+                resp_stale = (resp_stale_d >= RESP_STALE_D
+                              and resp_after_n > 0 and neg == 0)
+            if resp_stale:
+                _h = (f"{resp_at} 曾有一次约 {_w[0]:.0f} 小时的延迟回复"
+                      f"（此后群内仍有 {resp_after_n} 条沟通、家长未表达不满，"
+                      f"距今 {resp_stale_d:.0f} 天，已自然消化）")
+                resp_hint = (_h + "；日后学生提问先回一句「收到，稍后详细讲」再接题，"
+                                  "避免同类延时，不必专门回头追说明。") if is_edu else (
+                            _h + "；今后先回一句「收到」再详细答，避免问题悬空，不必再补说明。")
         parts = [f"近窗覆盖 {oldest[:10]} ~ {newest[:10]}（共 {len(texts)} 条可分析消息；学生/家长 {n_stu} 条＝实质 {n_stu_sub} + 礼节 {n_ack}；老师 {n_tea} 条）。"]
         parts.append(f"高频问题集中在：{ '、'.join(top_topics) }。" if top_topics else "未提取到明确知识点主题。")
         if att:
@@ -976,7 +1175,9 @@ def main():
             interact, interact_lv = "一般", "warn"
             interact_evi = f"学习相关发言 {n_study} 条"
         urge_n, urge_ok, urge_fail = pair_after(triples, URGE, SUBMIT)      # 催交 → 是否交
-        fix_n, fix_ok, fix_fail = pair_after(triples, FIX_REQ, FIX_ACK)     # 要求订正 → 是否改
+        fix_n, fix_ok, fix_fail = pair_after(triples, FIX_REQ, FIX_ACK,
+                                             neg_kws=FIX_NO_REQ)             # 要求订正 → 是否改
+        fix_img = count_img_after(triples_img, FIX_REQ, neg_kws=FIX_NO_REQ)  # 发过图但没文字确认
         ask_lv = "高" if q >= 8 else ("中" if q >= 3 else ("低" if q >= 1 else "无"))
         # 老师反馈（学习情况分层的第三类证据）：只统计老师侧消息
         tea_pos = sum(hits(t, TEA_POS) for t in tea_txt)
@@ -989,7 +1190,7 @@ def main():
                     todos.append(("高", f"{_it['at']} 联席未回复学生提问「{_it['q']}」：提醒联席当日回应，必要时先向家长说明", _it["evi"]))
                 else:
                     todos.append(("高", f"{_it['at']} 提问「{_it['q']}」仍未解决：盯联席闭环，并把进展同步家长", _it["evi"]))
-            if resp_slow:
+            if resp_slow and not resp_stale:
                 todos.append(("高", f"{resp_at} 该生提问后约 {resp_max_h:.0f} 小时才获回复：主动向家长说明并同步答疑进展，避免满意度下滑", resp_evi))
             if unresolved and not rt["items"]:
                 todos.append(("高", f"该生仍有未闭环疑问{tp_s}，把跟进进展反馈家长，让家长看到服务闭环", unres_evi))
@@ -1017,7 +1218,7 @@ def main():
                 todos.append(("高", f"学生互动{interact}（{interact_evi}）：主动发起一次一对一沟通，确认学习状态与真实卡点", interact_evi))
             elif interact_lv == "warn":
                 todos.append(("中", f"学生互动{interact}（{interact_evi}）：课上多给一次点名提问 / 小黑板任务，把人调动起来", interact_evi))
-            if resp_slow:
+            if resp_slow and not resp_stale:
                 todos.append(("高", f"{resp_at} 该生提问后约 {resp_max_h:.0f} 小时才回复：补一句追问确认问题已解决，避免悬空", resp_evi))
             if unresolved and not rt["items"]:
                 todos.append(("高", f"回复学生未解答疑问{tp_s}（{unresolved_at} 提问）", unres_evi))
@@ -1027,8 +1228,13 @@ def main():
                 todos.append(("中", f"催交作业未响应 {_n} 次：改「私信 + 明确截止时间」再盯一次作业提交", _ev))
             if fix_n > fix_ok:
                 _n = fix_n - fix_ok
-                _ev = f"布置订正 {fix_n} 次、{_n} 次未见改正" + (f"（最近 {fix_fail[-1][0]}）" if fix_fail else "")
-                todos.append(("中", f"批改后未订正 {_n} 次：挑最近一次错题要求回批，盯到改正为止", _ev))
+                # v4.72：只有老师**明确要求过订正**才会走到这里（判定已收紧，见 FIX_REQ）。
+                #   文案要说清「要求过」，否则联席会以为系统在指责学生没自觉改错。
+                _ev = f"老师明确要求订正 {fix_n} 次、其中 {_n} 次未见学生回应"
+                if fix_fail:
+                    _ev += f"（最近 {fix_fail[-1][0]}：「{fix_fail[-1][1]}」）"
+                todos.append(("中", f"要求订正后未见回应 {_n} 次：把最近这次单独拎出来，"
+                                    f"让学生拍改正后的照片发你，收到才算完", _ev))
             elif urge_n == 0 and hw_bad > 0:
                 todos.append(("中", f"学生自述作业「{hw_s}」：针对性辅导或订正跟进", f"作业负面信号 {hw_bad} 处"))
             if ask_lv in ("低", "无") and interact_lv != "bad":
@@ -1057,12 +1263,15 @@ def main():
             "resp_n": resp_n, "resp_max_h": resp_max_h, "resp_slow": resp_slow,
             "resp_slow_cnt": resp_slow_cnt, "resp_at": resp_at, "resp_q": resp_q,
             "resp_pend_n": len(pend), "resp_evi": resp_evi,
+            # v4.60：延迟已「久 + 已续 + 无不满」→ 不进 To-Do，只留一条弱提示（不进「最该做」）
+            "resp_stale": resp_stale, "resp_stale_d": resp_stale_d,
+            "resp_after_n": resp_after_n, "resp_hint": resp_hint,
             "summary": summary, "todos": todos,
             # 联席四维（v3.7）
             "interact": interact, "interact_lv": interact_lv, "interact_evi": interact_evi,
             "gap_days": gap_days,
             "urge_n": urge_n, "urge_ok": urge_ok, "urge_fail": urge_fail,
-            "fix_n": fix_n, "fix_ok": fix_ok, "fix_fail": fix_fail,
+            "fix_n": fix_n, "fix_ok": fix_ok, "fix_fail": fix_fail, "fix_img": fix_img,
             "ask_lv": ask_lv,
             "tea_pos": tea_pos, "tea_neg": tea_neg,   # 老师反馈（学习分层第三类证据）
             # 学生成绩（v4.4，学习分层第四类证据）：群聊里定期收集的月考/期中成绩，认不出即「未知」

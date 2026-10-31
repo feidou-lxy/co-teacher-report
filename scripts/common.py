@@ -162,7 +162,12 @@ def norm_name(s):
 #   报告里这些人的「提交情况」会整行消失（实测 2026Q-SX-高二数学211层六C肖 2 人）。
 #   ⚠️ 只做**只读匹配的兜底**（`report.py` 建索引时 setdefault，精确键优先），
 #      不改 norm_name 本身 —— 聊天侧发言人归一依赖它，动它会牵连全部团队的既有分档。
-_STATUS_SUFFIX_RE = re.compile(r"\s*[（(]\s*(?:退|回|转|回退|退课|转班|休学|停课)\s*[）)]\s*$")
+# v4.58：孙一文团队的表用另外几种后缀 —— `张芃（退费）` / `王煜煊（退费）` /
+#   `王玺晨（费用留存)`（注意**半角右括号**）/ `王一鸣（新）`。旧词表只有单个「退」，
+#   遇到「退费」就不剥 → 这些人在报告里「作业提交 无记录」（实测罗绂燕视角 4 人）。
+#   ⚠️ 长词必须排在短词前面，否则「退」先命中、后面跟着「费）」匹配不上而整体失败。
+_STATUS_SUFFIX_RE = re.compile(
+    r"\s*[（(]\s*(?:费用留存|退费留存|退费|退课|回退|转班|休学|停课|退|回|转|新)\s*[）)]\s*$")
 
 
 def norm_name_loose(s):
@@ -326,10 +331,30 @@ EXAM_FULL_KWS = ["满分", "总分", "卷面", "共", "总共"]
 # v4.28：裸数字后面紧跟这些字 → 更像「题号 / 序号」，不是分数
 #   （实测：老师原话「10求对称点咋能不会捏」被当成 10 分）
 EXAM_BARE_BAD_TAIL = "求|道|这|那|题|页|步|行|讲|说|问|看|写|改|做|算|的|是|和|与|再|又|也|都|就"
+# ⚠️ v4.64 日期/单位字：裸数字后面跟这些 → 是日期或数量，不是分数
+#   实测踩坑：「没有月考，11月2日期中考试」→ 「11月」的 11 被当成 11/150 = 7% →
+#   成绩偏低 → 「成绩托底/封顶」规则把学生从正常直接打成「需重点关注」。
+EXAM_BARE_BAD_TAIL2 = "月|日|号|点|时|分(?!数)|周|星|届|楼|班|组|页|章|节|元|块|岁|年"
+# ⚠️ 裸数字后面紧跟顿号/逗号 → 列举（题号「第 17、18、19、20 题」），不是分数
+#   ⚠️ 不能直接写进正则尾巴：会把正常写法「月考73，满分100」也误杀（踩过）。
+#   只在「数字 + 标点 + 数字」这种真列举形态下判否，见 extract_exam 里的 _is_enum。
+EXAM_ENUM_TAIL_RE = re.compile(r"^\s*[、，,；;/]\s*\d")
 EXAM_PAIR_RE = re.compile(r"(\d{2,3}(?:\.\d)?)\s*/\s*(\d{2,3})")        # 128/150
 EXAM_SCORE_RE = re.compile(r"(\d{2,3}(?:\.\d)?)\s*分")                  # 128分
-EXAM_BARE_RE = re.compile(r"(?<![\d.%/])(\d{2,3})(?![\d.%/])"
-                          r"(?!\s*(?:人|名|位|个|题|分钟|小时|天|次|" + EXAM_BARE_BAD_TAIL + r"))")
+# ⚠️ v4.64 时间形态：`10:00`、`9:30`、`10：00` → 是上课/考试时间，不是分数
+#   实测踩坑：群发「线上摸底考明天 10:00—12:00 腾讯会议进行」→ 13 人被打成 10/150 = 7%
+#   ⚠️ 后向断言也必须排除冒号：否则「10:00」排除掉 10 后，正则会继续匹配到「00」当 0 分
+#      （「9:30」→ 30 分，实测踩过）
+EXAM_BARE_RE = re.compile(r"(?<![\d.%/:：])(\d{2,3})(?![\d.%/:：])(?!\s*[:：]\s*\d)"
+                          r"(?!\s*(?:人|名|位|个|题|分钟|小时|天|次|" + EXAM_BARE_BAD_TAIL
+                          + r"|" + EXAM_BARE_BAD_TAIL2 + r"))")
+# ⚠️ v4.64 整句级排除：这些句子说的是「还没考 / 考试时间」，压根不是本人成绩
+#   ⚠️ 刻意**不含**「没考」单独一项 —— 会把「没考好，才 60 分」这种真实低分误杀
+EXAM_NONE_SENT = ("没有月考", "没月考", "无月考", "还没考", "还没月考", "还没有考", "月考还没",
+                  "成绩没出", "还没出分", "没出分", "还没出成绩", "成绩还没出来",
+                  "没出成绩", "考完再说", "不知道成绩", "没参加考试", "未参加")
+# 班级/年级平均分 ≠ 学生本人成绩（实测：「今天考的一个算是单元测吧，平均60多分」）
+EXAM_AVG_SENT = ("平均", "班平", "均分", "全班", "年级平均", "班级平均", "平均分")
 EXAM_FULL_RE = re.compile(r"(?:满分|总分|卷面)\s*[:：]?\s*(\d{2,3})")
 EXAM_RANK_RE = re.compile(r"(?:第\s*(\d{1,3})\s*名|排名\s*[:：]?\s*(\d{1,3}))")
 EXAM_TOTAL_RE = re.compile(r"(?:/\s*(\d{2,4})|共\s*(\d{2,4})\s*人|总人数\s*[:：]?\s*(\d{2,4})|(\d{2,4})\s*人)")
@@ -342,7 +367,8 @@ EXAM_NON_NAME = ["成绩", "得分", "分数", "总分", "满分", "考了", "�
 EXAM_SUBJ_FULL = {"数学": 150, "语文": 150, "英语": 150, "物理": 100, "化学": 100,
                   "生物": 100, "政治": 100, "历史": 100, "地理": 100}
 # 成绩关键词附近的「事务性」表述（考试范围 / 时间 / 报名…不算成绩）
-EXAM_SKIP_KWS = ["范围", "时间", "安排", "报名", "几点", "考场", "记得", "准备", "复习", "加油"]
+EXAM_SKIP_KWS = ["范围", "时间", "安排", "报名", "几点", "考场", "记得", "准备", "复习", "加油",
+                 "开考", "考试日期", "几号考", "什么时候考"]
 # ⚠️ v4.28 误命中修复：这些词里**包含**考试关键词，但语义与考试无关 ——
 #   实测踩坑：老师原话「10求对称点咋能不会捏…和咱们课上第一题也是**一模一样**滴」，
 #   被「一模」命中 → 又把题号 10 当 10 分 → 得分率 7% → 触发「成绩偏低封顶需关注」。
@@ -394,6 +420,9 @@ def _exam_attributed(sent, name, value_str):
         m = re.search(r"([\u4e00-\u9fa5]{2,4})\s*[:：]?\s*" + re.escape(value_str), sent)
         if m:
             tok = m.group(1)
+            # ⚠️ v4.64：「平均 60 多分」是班级/年级平均，不是本人 → 必须排除
+            if any(k in tok for k in EXAM_AVG_SENT):
+                return False
             if any(k in tok for k in EXAM_NAME_KWS) or any(k in tok for k in EXAM_NON_NAME):
                 return True
             return False
@@ -423,7 +452,12 @@ def extract_exam(triples, stu_name, subject=""):
             if not s or len(s) > 120:
                 continue
             kws = _exam_kws(s)
-            if not kws or any(k in s for k in EXAM_SKIP_KWS):
+            if not kws:
+                continue
+            # ⚠️ v4.64 两处整句排除（都是「把非成绩读成成绩」的反向误判，会直接改档位）：
+            #   ① 未考/未出分：「没有月考，11月2日期中考试」→ 原来取「11月」的 11
+            #   ② 考试时间安排：「期中 11 月 9 日开考」→ 同理
+            if any(k in s for k in EXAM_SKIP_KWS) or any(k in s for k in EXAM_NONE_SENT):
                 continue
             full = None
             mf = EXAM_FULL_RE.search(s)
@@ -442,6 +476,7 @@ def extract_exam(triples, stu_name, subject=""):
                     total = int(tv) if tv else None
             # —— 分数候选：按可信度优先 ——
             value = None
+            hit = None          # 命中点的字符下标（v4.65：报告要围绕它截原话窗口）
             mp = EXAM_PAIR_RE.search(s)
             if mp:
                 try:
@@ -450,16 +485,24 @@ def extract_exam(triples, stu_name, subject=""):
                     v2 = f2 = None
                 if v2 is not None and f2 in EXAM_PLAUSIBLE_FULL:
                     value, full = v2, f2
+                    hit = mp.start()
             if value is None:
                 ms = EXAM_SCORE_RE.search(s)
                 if ms and not any(k in s[max(0, ms.start() - 4):ms.start()] for k in EXAM_FULL_KWS):
                     value = float(ms.group(1))
+                    hit = ms.start()
             if value is None and rank is None:
                 mb = EXAM_BARE_RE.search(s)
                 if mb and not any(k in s[max(0, mb.start() - 4):mb.start()] for k in EXAM_FULL_KWS):
+                    # ⚠️ v4.64：真列举形态（「第 17、18、19、20 题」）是题号，不是分数
+                    if EXAM_ENUM_TAIL_RE.match(s[mb.end():mb.end() + 6]):
+                        continue
                     value = float(mb.group(1))
+                    hit = mb.start()
             if value is None and rank is None:
                 continue
+            if hit is None and mr is not None:      # 只报了名次（无分数）→ 围绕「第 N 名」截
+                hit = mr.start()
             if not _exam_attributed(s, name, (f"{value:g}" if value is not None else None)):
                 continue
             assumed = False
@@ -473,13 +516,17 @@ def extract_exam(triples, stu_name, subject=""):
                     pct = value / f
             elif rank and total:
                 pct = 1 - (rank / total)      # 名次换成分位（越靠前越高）
+            _evi, _evi_full = exam_evi(s, hit)
             found.append({"date": (t or "")[:10], "label": kws[0], "value": value,
                           "full": (full or (EXAM_SUBJ_FULL.get(subject, 100) if value is not None else None)),
                           "rank": rank, "total": total, "pct": pct, "assumed": assumed,
-                          "at": t or "", "evi": clip_txt(s, 60)})
+                          "at": t or "", "evi": _evi, "evi_full": _evi_full,
+                          "who": _role})
     if not found:
         return {"latest": None, "history": [], "level": "未知", "why": ""}
-    found.sort(key=lambda x: (x["at"] or "", x["label"]))
+    # ⚠️ v4.64：同一时刻多段命中时，**显式分数形态**（有分母 / 带「分」）优先于**裸数字推断**。
+    #   否则按 label 的中文码点排序，「期中11月9日开考」的 11 会盖掉同一句里的「这次小测100」。
+    found.sort(key=lambda x: (x["at"] or "", x["assumed"], x["label"]))
     latest = found[-1]
     lv = _exam_level(latest["pct"])
     if latest["value"] is not None:
@@ -1062,8 +1109,18 @@ def learning_level(s, board, fs=None):
 
     # ---------------- ① 课堂小黑板（最硬的学习证据） ----------------
     if board and board.get("details"):
-        ds = board.get("details") or []
-        rounds = board.get("rounds") or len(ds)
+        # ⚠️ v4.66：读图**技术失败**的轮次必须排除在分母与各档之外。
+        #   旧逻辑里失败被写成「空白未提交」→ 直接触发「空白 ≥40% ⇒ -2 分」，
+        #   一次视觉模型故障就能把一批学生按「没交白板」降档（技术问题变学生问题）。
+        _ds_all = board.get("details") or []
+        ds = [d for d in _ds_all if not d.get("failed")]
+        _failed = [d for d in _ds_all if d.get("failed")]
+        if not ds:
+            add("小黑板", f"{len(_ds_all)} 轮读图全部失败 → 无有效作答证据"
+                          "（技术问题，不参与判定；请重跑 read_boards.py）", 0)
+            ds = []
+        rounds = (len({d.get("round") for d in ds if d.get("round")}) or len(ds)
+                  or board.get("rounds") or len(_ds_all))
         r = max(1, rounds)
         lc = board.get("lesson_count") or len(board.get("lessons") or [])
         head = f"{lc} 次课 · {rounds} 轮"
@@ -1075,6 +1132,9 @@ def learning_level(s, board, fs=None):
         rb, rr, ru, rf = len(blank) / r, len(real_err) / r, len(unfin) / r, len(clean) / r
         add("小黑板", f"{head}作答分布：空白 {len(blank)}（{rb:.0%}）｜实质错误 {len(real_err)}（{rr:.0%}）"
                       f"｜仅未完成收尾 {len(unfin)}（{ru:.0%}）｜完整且无错 {len(clean)}（{rf:.0%}）", 0)
+        if _failed and ds:      # 全失败时上面已经说过一次，不重复
+            add("小黑板", f"另有 {len(_failed)} 轮读图失败（已排除在分母外；"
+                          "技术问题，不代表学生没交）", 0)
         if rb >= 0.4:      # 参与度
             add("小黑板", f"空白未提交 {len(blank)} 轮（{rb:.0%} ≥40%，属参与度问题）", -2)
         elif rb >= 0.2:
@@ -1124,9 +1184,11 @@ def learning_level(s, board, fs=None):
         add("作业", "窗口内无催交记录", 0)
     if fn > fo:
         miss = fn - fo
-        add("作业", f"批改 {fn} 次、{miss} 次未见改正", -2 if miss >= 2 else -1)
+        # v4.72：fn 的语义是「老师**明确要求**订正的次数」，不是「批改次数」。
+        #   写错文案会让联席以为系统在怪学生不主动改错（判定源头见 extract.FIX_REQ）。
+        add("作业", f"老师要求订正 {fn} 次、{miss} 次未见回应", -2 if miss >= 2 else -1)
     elif fn:
-        add("作业", f"批改 {fn} 次均已改正", 1)
+        add("作业", f"老师要求订正 {fn} 次，均已回应", 1)
     else:
         add("作业", "窗口内无批改记录", 0)
     if s.get("hw_neg", 0) >= 2:
@@ -1250,7 +1312,9 @@ FINE_TYPES = {
         ("平行与垂直的证明", ["线面平行", "面面垂直", "∥平面", "平行于平面", "证平行", "证垂直"]),
     ],
     "直线和圆": [
-        ("含参直线过定点", ["含参", "过定点", "定点"]),
+        # v4.79：原来是裸「含参」——「含参不等式」「含参二次根式定义域」全被它吃掉，
+        #   高一阶段实测 32 轮 / 32 人误判成直线题。改成专指形态，只有「含参直线／过定点」才算。
+        ("含参直线过定点", ["含参直线", "过定点", "定点"]),
         ("斜率是否存在（分类讨论）", ["斜率不存在", "斜率", "两种情况", "分类讨论"]),
         ("弦长／截线问题", ["弦长", "截得", "所截", "公共弦", "弦"]),
         ("点到直线距离", ["点到直线", "圆心到直线"]),
@@ -1276,7 +1340,21 @@ FINE_TYPES = {
         ("定义与轨迹判定", ["求轨迹方程", "轨迹方程", "点的轨迹", "到定直线", "到定点",
                             "距离之和", "距离之差", "定直线", "定点F", "轨迹"]),
     ],
-    "函数与导数": [
+    # v4.79：新增「不等式/参数」这一组。
+    #   来源：修掉裸「含参」误判后，26 人原先挤在「含参直线过定点」里的证据全部散成题面原文
+    #   （「含参二次根式定义域（恒成立求参数范围）」7 人、「含参不等式」5 人、
+    #    「含参恒成立求参数范围」4 人…共 8 条近义条目）。同一类题被拆成 8 行，读起来比误判更糟。
+    #   这里给它们一个正式题型名，让证据归并成一条；措辞取真实题面里反复出现的说法。
+    #   ⚠️ 关键词不含裸「含参」：它在 BOARD_KW_BLOCK 里已被小黑板侧屏蔽（见该常量注释）。
+    "不等式/参数": [
+        ("含参不等式与恒成立", ["恒成立", "求参数范围", "求参数k范围", "含参不等式"]),
+    ],
+    # v4.81（用户 2026-10-30）：「函数和导数并没有在一起讲，是分开的」——
+    #   这一组三条本来就是**导数**内容（复合求导 / 单调性与极值 / 导数的几何意义），
+    #   挂在「函数与导数」这个合并 key 下，会被 `_bk_name` 一起折进「函数」。
+    #   拆出独立的「导数」key，配合 report 侧的 `BK_UNIT_NAME["导数"]="导数"`，
+    #   让导数在报告里单列成行（后台暂无节点，属用户批准的例外）。
+    "导数": [
         ("复合函数求导", ["复合函数", "复合"]),
         ("单调性与极值", ["单调", "极值"]),
         ("导数的几何意义", ["切线", "求导"]),
@@ -1338,11 +1416,21 @@ NOTICE_KWS = ["上课通知", "课表", "讲义", "报名", "扫码", "教室", 
 # 题干是「密集数学词汇」文本，这些词在聊天口语里是有效信号，但在题干里遍地都是
 # （「定点 B(6,2)」「投影」「斜率 k」「关于…对称」…），会让小黑板侧大量误命中。
 # 故**仅在小黑板侧**屏蔽它们，聊天侧照旧使用。
-BOARD_KW_BLOCK = {"定点", "投影", "斜率", "对称", "轨迹"}
+BOARD_KW_BLOCK = {"定点", "投影", "斜率", "对称", "轨迹",
+                  # v4.79：裸「含参」是本章节最大的误判源 —— 高一阶段「含参不等式 / 含参二次根式定义域 /
+                  #   含参函数值域」满黑板都是，读图只要提到「含参」就被抢判成「含参直线过定点」，
+                  #   实测 32 轮 / 32 人（乔紫涵、崔倚嘉、范英泽…）全被挂在「函数与导数」下当直线题。
+                  #   小黑板侧屏蔽它，改由「含参直线」「过定点」这类专指词命中；聊天侧照旧可用。
+                  "含参"}
 
 # 题型 → 强制归属知识点（v4.6，用户口径）：有些题型无论读图把所属章节标成什么，都应归到固定大类。
 # 用途：① 修正读图侧把「定义与轨迹判定」误标为「圆锥曲线」；② 兼容此前已归档的读图结果（无需重读图）。
 ITEM_TOPIC = {"定义与轨迹判定": "曲线与方程"}
+# v4.81 考虑过也把导数三条题型（复合函数求导 / 单调性与极值 / 导数的几何意义）强制归「导数」，
+#   但关键词都不是导数专有：「单调」在高一函数单调性里遍地、「切线」在圆的切线里遍地、
+#   「复合」在复合函数定义域里遍地 —— 强制归属会把函数内容判成导数。故**不加**，
+#   只让 `_bk_name("导数") → "导数"` 生效：读图把它标成「导数」时才单列，标成合并名时仍归函数，
+#   宁可少归、不要错归。等真上导数课、语料里出现「求导 / 极值点 / 导函数」这类专有词再补规则。
 
 
 def is_notice(text):
@@ -1410,6 +1498,42 @@ def clip_txt(t, n=38):
     return _re.sub(r"\s+", " ", (t or "")).strip()[:n]
 
 
+def exam_evi(sent, pos, before=12, after=30):
+    """成绩原话窗口：**围绕命中的那个数字**截，而不是从句首截（v4.65）。
+
+    血泪来源（用户截图）：卡片上写着
+        「「@联席-小尹老师（嘿袜精 ） 老师，徐…」  月考 · 10-15」
+    原句是「…老师，徐麦月考60分，她说很多知识点会…」，而卡片只取了**句首 22 字**，
+    「60分」被切在窗口外 → 看到这行字根本没发判断这条成绩真假，等于没溯源。
+
+    所以这里改成分两截存：
+      · `evi`      —— 命中点前后各留一段（带「…」标记），保证分数一定在窗口里；
+      · `evi_full` —— 整句原文（含开头的 @ 提及，上限放宽），供报告里点开看全文。
+    ⚠️ 窗口前会先剥掉句首的 `@某某（昵称）`：它占十几个字却对溯源无用，
+       留着会把窗口挤到「小尹老师（嘿袜精 ） 老师，徐…」这种残片。
+    返回 (evi, evi_full)。
+    """
+    raw = re.sub(r"\s+", " ", (sent or "")).strip()
+    if not raw:
+        return "", ""
+    full = raw[:200]
+    m_at = re.match(r"(?:@[^\s，,（]{1,20}(?:（[^）]{0,16}）)?\s*)+", raw)
+    cut = m_at.end() if m_at else 0
+    s = raw[cut:]
+    p = (pos - cut) if pos is not None else None
+    if p is None or p < 0 or p > len(s):
+        return clip_txt(s or raw, 60), full
+    a = max(0, p - before)
+    b = min(len(s), p + after)
+    seg = s[a:b].strip()
+    if a > 0:
+        seg = "…" + seg
+    if b < len(s):
+        seg = seg + "…"
+    return seg, full
+
+
+
 def fine_from_board(board, per_topic=6):
     """小黑板逐轮读图 → 细粒度薄弱点（v4.2 起**全量轮次**参与，不再只取一轮）。
 
@@ -1440,7 +1564,7 @@ def fine_from_board(board, per_topic=6):
             continue
         # 题型名：在题面 + 卡点里找词表命中项，**同知识点的命中优先、其次命中的关键词更长者优先**。
         # BOARD_KW_BLOCK 里的泛词在题干语境下不可靠，小黑板侧一律不采信（聊天侧不受影响）。
-        blob = f"{prob} {stuck}"
+        blob = f"{prob} {stuck} {topic}"
         best = None
         for t2, items2 in FINE_TYPES.items():
             for it2, kws in items2:
@@ -1454,9 +1578,21 @@ def fine_from_board(board, per_topic=6):
                         best = (score, it2)
         item = best[1] if best else ""
         if not item:
-            item = (f"课堂作答卡点：{clip_txt(stuck, 20)}" if stuck
-                    else f"课堂作答卡点：{clip_txt(prob, 18) or '未完成'}")
-        evi = f"原题：{clip_txt(prob, 26)}" if prob else "小黑板作答"
+            # v4.53：2×2 拼屏读图**不产出题面原文**（图里题面被拼屏压缩，逐字抄易错），
+            #   只产出 `topic`（如「求函数解析式（换元法）」）。此时必须用 topic 当题型名 ——
+            #   它是读图字段原文，符合「题型名只能来自词表或字段原文」的口径。
+            #   ⚠️ 不能退化成「课堂作答卡点：未完成」：同一学生多轮都会撞成同名条目，
+            #   下钻里只剩一条「未完成」，把真正的差异全抹平（v4.53 实测 94 人全踩）。
+            if stuck:
+                item = f"课堂作答卡点：{clip_txt(stuck, 20)}"
+            elif prob:
+                item = f"课堂作答卡点：{clip_txt(prob, 18)}"
+            elif topic:
+                item = clip_txt(topic, 20)
+            else:
+                item = "课堂作答卡点：未完成"
+        evi = (f"原题：{clip_txt(prob, 26)}" if prob
+               else (f"题型：{topic}" if topic else "小黑板作答"))
         if stuck:
             evi += f"｜卡点：{clip_txt(stuck, 22)}"
         elif errs:

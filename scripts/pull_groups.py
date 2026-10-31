@@ -24,6 +24,7 @@ coTeacherName, classTeacherName, ownerName, subjectName}]
 import argparse
 import datetime
 import json
+import os
 import re
 import sys
 import time
@@ -74,6 +75,31 @@ def owner_matches(owner, target):
     return first == str(target or "").strip()
 
 
+def merge_prev_groups(wd, out, keep):
+    """v4.55：本次接口没返回、但历史 groups.json 里已确认属于本范围的群，保留下来。
+
+    为什么：`wxworkSessionStat` 返回的**不是「群存在」的全集**，而是某个统计口径下的
+    子集 —— 月维度只覆盖指定月，`day` 维度实测严重不全（v4.56 实测：9 月月维度
+    本课程 24 个群，10 月逐日每天只回 1~9 个，9 个群一次都没出现）。
+    于是重拉一次就可能把 25 个群变成 23 个，报告里有人从「有群」退回「无群」。
+    群一旦建了就存在，不该因一次拉取而消失。
+    """
+    p = f"{wd}/groups.json"
+    if not os.path.exists(p):
+        return out
+    try:
+        prev = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return out
+    have = {x.get("roomId") for x in out if x.get("roomId")}
+    extra = [x for x in prev
+             if x.get("roomId") and x["roomId"] not in have and keep(x)]
+    if extra:
+        names = "、".join(sorted({x.get("studentName") or "?" for x in extra}))
+        print(f"   ↺ 保留历史群 {len(extra)} 个（本次接口未返回）：{names}")
+    return out + extra
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", default=".")
@@ -88,12 +114,32 @@ def main():
     wd = common.workdir(args)
     token = common.load_token(wd)
 
-    # 月维度：窗口起始月第一天（过去月已聚合，覆盖完整）
-    month_first = f"{args.month}-01"
-    rows = pull_dimension(token, "month", month_first, args.year, args.term)
-    # 当前月「月维度」后台尚未聚合（返回 0）：改为**逐日**补当月 1 号 ~ 今天，
-    # 否则会把当月 1~(今天-1) 号有活动、但今天无活动的群漏掉（实测一门课因此少 8 个群）。
+    # 月维度：**逐月**拉（v4.56）
+    # ⚠️ 实测（2026-10-22 六C谢胡）：`day` 维度**不是「当天有消息」的全集** ——
+    #   10 月 1~22 日每天只回 1~9 个本课程群（9 月月维度有 24 个）；
+    #   朱鹏羽 / 董芳菲 / 于熙桐 等 9 个群一次都没出现过，尽管月维度里
+    #   lastAskTime 明确落在 10-18 / 10-21 / 10-22。
+    #   当月月维度又要等下月才聚合（当月 total=0）。所以：
+    #     ① 月维度从「起始月」逐月拉到当前月，任一月返回 0 就显式提示；
+    #     ② `day` 只作补充，**不能**据此判「学生无群」。
+    # `--month` 可传 "2026-09" 也可传 "2026-08,2026-09"（取最早一个月为起点）。
     today = datetime.date.today()
+    cur_m = f"{today.year}-{today.month:02d}"
+    starts = [m.strip() for m in str(args.month or "").split(",") if m.strip()]
+    months = []
+    if starts:
+        y, mo = int(starts[0][:4]), int(starts[0][5:7])
+        while f"{y}-{mo:02d}" <= cur_m:
+            months.append(f"{y}-{mo:02d}")
+            mo += 1
+            if mo > 12:
+                y, mo = y + 1, 1
+    rows = []
+    for mm in months:
+        got = pull_dimension(token, "month", f"{mm}-01", args.year, args.term)
+        flag = "  ⚠️ 该月月维度无数据（当月未聚合 / 该月未开展）" if not got else ""
+        print(f"  月维度 {mm}：{len(got)} 行{flag}")
+        rows += got
     for d in range(1, today.day + 1):
         rows += pull_dimension(token, "day",
                                f"{today.year}-{today.month:02d}-{d:02d}",
@@ -156,6 +202,76 @@ def main():
                     continue
                 out.append(rec(g, g.get("productName") or ""))
 
+        _roster = set()
+        _sp = f"{wd}/students.json"
+        if os.path.exists(_sp):
+            try:
+                _roster = {common.norm_name(x.get("stuName"))
+                           for x in json.load(open(_sp, encoding="utf-8"))}
+            except Exception:
+                _roster = set()
+
+        # v4.55：接口会返回「已退课学生」的旧群（群还没解散，productName 仍是本课程）。
+        #   本课实测 29 个群里有 4 个是已退课学生（周若愚 / 明达 / 贾一丁 / 张博越），
+        #   他们不在 students.json，却会被下游当成在册学生拉聊天、进分析 → 报告里混进无关的人。
+        #   只按**非空 studentName** 过滤（studentName 为空时保留，避免误删只有课程名的群）。
+        if _roster:
+            _before = len(out)
+            out = [x for x in out
+                   if not (x.get("studentName")
+                           and common.norm_name(x["studentName"]) not in _roster)]
+            if len(out) < _before:
+                print(f"   ⤷ 剔除 {_before - len(out)} 个「学生已不在册」的旧群（群未解散）")
+
+        # v4.55：与历史 groups.json 合并，避免「本次接口未返回」把已确认的群清掉
+        def _keep(x):
+            pn = x.get("productName") or ""
+            gn = x.get("groupName") or ""
+            if course not in pn and course not in gn:
+                return False
+            if _roster and common.norm_name(x.get("studentName")) not in _roster:
+                return False      # 已退课学生的旧群不再计入
+            return True
+
+        out = merge_prev_groups(wd, out, _keep)
+
+        # v4.56：**花名册 roomId 兜底**。后台「学生-群」绑定关系不依赖消息统计，
+        #   比群列表接口更硬：凡是 students.json 里有 roomId、而群清单没收录的，
+        #   一律补进来（roomIdSource=roster_roomid）。实测本课 25 人正好对上 25 群，
+        #   但接口侧只要少返回一次就可能把有群的人打成「无群」，这层兜底不能省。
+        _have = {x.get("roomId") for x in out if x.get("roomId")}
+        _sp_stu = f"{wd}/students.json"
+        if os.path.exists(_sp_stu):
+            try:
+                _stu = json.load(open(_sp_stu, encoding="utf-8"))
+            except Exception:
+                _stu = []
+            _add = []
+            for s in _stu:
+                rid = (s.get("roomId") or "").strip()
+                if not rid or rid in _have:
+                    continue
+                _add.append({
+                    "roomId": rid,
+                    "studentName": s.get("stuName"),
+                    "groupName": s.get("groupName")
+                                 or f"{s.get('stuName')} - {course}",
+                    "productName": s.get("productName") or course,
+                    "coTeacherName": s.get("coTeacherName") or "",
+                    "classTeacherName": s.get("classTeacherName") or "",
+                    "ownerName": s.get("coTeacherName") or "",
+                    "subjectName": s.get("subjectName") or "数学",
+                    "roomIdSource": "roster_roomid",
+                })
+                _have.add(rid)
+            if _add:
+                out += _add
+                print(f"   ＋ 花名册 roomId 兜底补 {len(_add)} 个群："
+                      + "、".join(str(g.get("studentName")) for g in _add[:12])
+                      + ("…" if len(_add) > 12 else ""))
+        for x in out:
+            x.setdefault("roomIdSource", "api")
+
         json.dump(out, open(f"{wd}/groups.json", "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)
         how = "⚠️ 按群名兜底匹配（后台课程名未命中）" if by_gn else "按后台课程名匹配"
@@ -217,6 +333,11 @@ def main():
             "ownerName": g.get(owner_field) or "",
             "subjectName": g.get("subjectName") or "",
         })
+    # v4.55：同课程维度 —— 保留历史已确认的群（本次接口按「当天有消息」返回，会漏零消息的群）
+    out = merge_prev_groups(
+        wd, out,
+        lambda x: (common.norm_name(x.get("studentName")) in names
+                   and owner_matches(x.get(owner_field), scope)))
     json.dump(out, open(f"{wd}/groups.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
     print(f"  ⤷ 已按「归本{label}管理」过滤，剔除 {skipped_other_owner} 个属其他{label}的群")

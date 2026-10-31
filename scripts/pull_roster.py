@@ -95,6 +95,11 @@ def _row(x):
         "renewed": (x.get("renewed") or "").strip() or None,
         "subject": x.get("subject"),
         "subjectName": (x.get("subjectName") or "").strip() or None,
+        # v4.53（用户 2026-10-22 要求 + 研发接口新增字段）：
+        #   学生**进入本班**的时间，形如 `2026-10-08T10:12:33+08:00`。
+        #   用途：转班/插班新生的「进班前」课节不该计入他的出勤分母与作业分母 ——
+        #   否则会出现「既无出勤又无作业」的假信号，对联席/教务是纯干扰。
+        "joinTime": (x.get("joinTime") or "").strip() or None,
     }
 
 
@@ -275,6 +280,37 @@ def main():
         groups += extra
 
     # ---------------- 落盘 ----------------
+    # v4.55：与历史 groups.json 合并后再写。
+    #   本步的 groups 只由「roster.roomId + 群名补全」派生，而群名补全依赖群列表接口，
+    #   该接口**不是「群存在就返回」**：月维度只在指定月聚合、`day` 维度实测严重不全
+    #   （本课实测 2026-10-22：9 月月维度 24 个本课程群，10 月逐日每天只回 1~9 个，
+    #    朱鹏羽 / 董芳菲 / 于熙桐 等 9 个群一次都没出现，但他们当月确有消息）。
+    #   于是补全窗口内没被接口返回的群就会丢，一次 pull_roster 把 groups.json
+    #   从 25 个压回 23 个，两人被误判「无群」。
+    #   群一旦建了就存在，重跑不该丢；顺带把 roomId 回填给这些学生。
+    _gpath = f"{wd}/groups.json"
+    if os.path.exists(_gpath):
+        try:
+            _prev = json.load(open(_gpath, encoding="utf-8"))
+            _have = {g.get("roomId") for g in groups if g.get("roomId")}
+            _norms = {common.norm_name(x["stuName"]) for x in rows}
+            _keep = [g for g in _prev
+                     if g.get("roomId") and g["roomId"] not in _have
+                     and common.norm_name(g.get("studentName")) in _norms]
+            if _keep:
+                groups += _keep
+                print(f"   ↺ 保留历史群 {len(_keep)} 个："
+                      + "、".join(str(g.get("studentName")) for g in _keep))
+                for g in _keep:
+                    for x in rows:
+                        if (not x.get("roomId")
+                                and common.norm_name(x["stuName"])
+                                == common.norm_name(g.get("studentName"))):
+                            x["roomId"] = g["roomId"]
+                            x["roomIdSource"] = "fill_groupname"
+        except Exception as e:
+            print(f"   ⚠️ 历史 groups.json 合并跳过：{e}")
+
     json.dump(rows, open(f"{wd}/students.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
     json.dump(groups, open(f"{wd}/groups.json", "w", encoding="utf-8"),

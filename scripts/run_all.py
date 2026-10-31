@@ -24,6 +24,10 @@ v4.8 起新增两步（在 merge 与 report 之间）：
   adapt_*.py       把原始产物折算成「中间契约」快照（snapshot/）
   coverage.py      算覆盖率与四档预警 → coverage.json（报告 Tab① 依赖它）
 
+v4.65 起两头各加一道「成绩防线」（防的是「11/150」这种把日期/时间/题号当分数的反向误判）：
+  开跑前  test_exam.py   25 条回归用例，红了直接中断（--skip-exam-guard 可跳过）
+  出报告后 audit_exam.py 把每条成绩 + 原话列成 exam_audit.txt，供人眼核验
+
 前提：<workdir>/token.txt 已写入后台 x-token（见 SKILL.md 登录步骤）。
 各步骤脚本位于本目录，依赖：Python3（v3.9 起不再产出 Excel，无需 openpyxl）。
 """
@@ -40,6 +44,26 @@ from common import resolve_scope
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# v4.66：本次运行的状态。收尾时写 `run_log.jsonl`（本地记账）并据此决定上报 event。
+#   起因：使用统计原来固定上报 "run"，中途失败也一样 —— 事后无法回答
+#   「到底成功生成了多少份可用报告」。
+_RUN = {"wd": ".", "role": "", "name": "", "window": "", "end": "", "report": "", "ok": False}
+
+
+def _log_run():
+    """把本次运行结果追加到 <workdir>/run_log.jsonl（一行一次，只追加）。"""
+    import json as _json
+    try:
+        rec = {"at": datetime.datetime.now().isoformat(timespec="seconds"),
+               "ok": bool(_RUN["ok"]), "event": "run" if _RUN["ok"] else "run_failed",
+               "role": _RUN["role"], "name": _RUN["name"],
+               "window": _RUN["window"], "end": _RUN["end"],
+               "report": _RUN["report"], "argv": sys.argv[1:]}
+        with open(os.path.join(_RUN["wd"], "run_log.jsonl"), "a", encoding="utf-8") as f:
+            f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 
 def run(py, extra):
     cmd = [sys.executable, os.path.join(HERE, py)] + extra
@@ -47,6 +71,22 @@ def run(py, extra):
     r = subprocess.run(cmd)
     if r.returncode != 0:
         sys.exit(f"{py} 失败（exit {r.returncode}），流程中断。")
+
+
+def run_tee(py, extra, save_to):
+    """跑一步、把输出同时打到屏幕与文件（v4.65：成绩审计清单要留档给人眼过）。"""
+    cmd = [sys.executable, os.path.join(HERE, py)] + extra
+    print("\n>>>", " ".join(cmd))
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    out = (r.stdout or "") + (r.stderr or "")
+    print(out)
+    if save_to:
+        try:
+            with open(save_to, "w", encoding="utf-8") as f:
+                f.write(out)
+        except OSError as e:
+            print(f"[warn] 审计清单写盘失败：{e}")
+    return r.returncode
 
 
 def main():
@@ -70,6 +110,12 @@ def main():
                     help="★ 用研发封装的「在读学生」接口取花名册与 roomId（课程 / 联席维度）")
     ap.add_argument("--fill", action="store_true",
                     help="（配合 --api）为接口未关联到群的学生，用群列表「群名内姓名」补一次 roomId")
+    ap.add_argument("--feishu", action="store_true",
+                    help="★ 先拉飞书表（pull_feishu.py → adapt_feishu.py）再出报告（v4.66）。"
+                         "不加时报告只会沿用工作目录里**上一次**的飞书快照，并会在报告顶部标注采集时间")
+    ap.add_argument("--skip-exam-guard", action="store_true",
+                    help="跳过开跑前的「成绩识别回归测试」闸门（v4.65）。"
+                         "仅在明确知道自己在做什么时使用（如只重渲染报告、离线补数据）")
     args = ap.parse_args()
 
     # 固定工作目录（v4.49）：不显式给 --workdir 时，按视角自动定位到
@@ -88,6 +134,7 @@ def main():
     os.makedirs(os.path.join(wd, "snapshot"), exist_ok=True)
     role, name = resolve_scope(args)
     end = args.end or datetime.date.today().isoformat()
+    _RUN.update(wd=wd, role=role, name=name, window=args.window, end=end)
     base = ["--workdir", wd]
     if role == "course":
         base += ["--course", name]
@@ -97,6 +144,11 @@ def main():
         base += ["--edu", name]
     else:
         base += ["--co", name]
+    # ---------------- 阶段零：成绩识别回归闸门（v4.65 · 第②道防线，自动执行）----------------
+    # 放在最前面：25 条纯字符串用例跑完不到 0.1 秒。一旦规则被改坏，宁可此刻立刻失败，
+    # 也不要拉完 3 万条群聊、出完整份报告，才发现 13 个学生被打成「10/150 = 7%」。
+    if not args.skip_exam_guard:
+        run("test_exam.py", [])
     # 凭证自检：缺文件 / 内容不是有效 token 时，load_token 会给出「怎么取」的可照做提示
     common.load_token(wd)
 
@@ -126,6 +178,18 @@ def main():
         run("pull_boards.py", base + ["--boards", args.boards])
         run("read_boards.py", base + ["--boards", args.boards])
 
+    # ---------------- 飞书表（v4.66：并入主链路，需显式 --feishu）----------------
+    # 为什么以前不并：pull_feishu 依赖 lark-cli 授权，单次要跑几分钟，不适合默认执行。
+    # 但不并的后果是「报告静默沿用旧快照」—— 多人复用目录时旧数据混进新报告且看不出来。
+    # 折中：显式 --feishu 才拉；不拉时 report.py 的「数据体检」会把快照时间写到报告顶部。
+    if args.feishu:
+        _prof = os.path.join(wd, "profile.json")
+        if not os.path.exists(_prof):
+            sys.exit(f"❌ --feishu 需要 {_prof}（飞书表配置）。请先配好 profile.json，"
+                     "或去掉 --feishu（报告将标注飞书数据为历史快照）。")
+        run("pull_feishu.py", ["--workdir", wd])
+        run("adapt_feishu.py", ["--workdir", wd])
+
     # ---------------- 阶段三：折算快照 + 覆盖模型 + 报告 ----------------
     scope_flag = (["--course", name] if role == "course"
                   else (["--edu", name] if role == "edu" else ["--co", name]))
@@ -137,11 +201,30 @@ def main():
 
     from common import course_name as _cn
     out = f"{wd}/{_cn(name) if role == 'course' else name}_学情分析.html"
+    _RUN["report"] = out
     print(f"\n🎉 完成。分析报告：{out}（主交付）")
     print(f"   覆盖率与失联分档：{wd}/coverage.json")
     print(f"   中间契约快照：{wd}/snapshot/（source={'api' if args.api else 'legacy'}）")
     if args.boards:
         print(f"   小黑板：boards_summary.json（读图结论）。若未配置视觉模型，请按 board_analysis_template.json 人工回填。")
+
+    # ---------------- 阶段四：成绩审计清单（v4.65 · 第③道防线）----------------
+    # 前两道（规则排除 / 回归测试）都挡不住「没想到的形态」——v4.64 的 10:00 就是这么漏的，
+    # 当时自写的「自动扫疑似误判」跑了两次都报 0 残留。能信的只有原话本身，所以必须列出来人眼看。
+    audit_path = os.path.join(wd, "exam_audit.txt")
+    if run_tee("audit_exam.py", ["--workdir", wd], audit_path) == 0:
+        print("\n" + "=" * 72)
+        print("🔎 第③道防线（必须人眼过）：成绩审计清单 →", audit_path)
+        print("   逐条对照「原话」确认里面真的有分数：日期 / 题号 / 时间 / 班级平均 都不算。")
+        print("   发现假成绩 → 先往 scripts/test_exam.py 补这条用例，再改 common.py 规则，然后重跑。")
+        print("   （每份报告通常只有个位数学生命中，半分钟能看完）")
+        print("=" * 72)
+    else:
+        print("\n" + "!" * 72)
+        print("⚠️ 第③道防线没跑成 —— 这不等于「没问题」，而是「没检查」。")
+        print(f"   检查 {audit_path} 是否生成、工作目录里有没有 chats.json，然后手工重跑：")
+        print(f"   python3 scripts/audit_exam.py --workdir {wd}")
+        print("!" * 72)
 
 
 if __name__ == "__main__":
@@ -152,11 +235,19 @@ if __name__ == "__main__":
         _ur.claim()
     except Exception:
         _ur = None
+    _ok = False
     try:
         main()
+        _ok = True
+    except SystemExit as e:                 # sys.exit(...) 的中断：code 非 0 即失败
+        _ok = (e.code in (0, None))
+        raise
     finally:
+        _RUN["ok"] = _ok
+        _log_run()
         if _ur is not None:
             try:
-                _ur.report_once(_ur.workdir_from_argv(), force=True)
+                _ur.report_once(_ur.workdir_from_argv(), force=True,
+                                event="run" if _ok else "run_failed")
             except Exception:
                 pass

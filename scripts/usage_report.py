@@ -183,10 +183,17 @@ def claim():
     os.environ[_ENV_DONE] = "1"
 
 
-def report_once(wd=".", force=False):
+def report_once(wd=".", force=False, event=None):
     """上报一次使用记录。返回是否发送成功；任何异常都被吞掉。
 
     force=True 供「已认领」的父流程在收尾时真正发送（run_all 用）。
+
+    `event`（v4.66）：区分「跑成功」与「跑失败」——
+      · "run"        —— 报告已生成（默认）
+      · "run_failed" —— 链路中断 / 未产出报告
+    ⚠️ 旧版固定写 "run"，于是「中途失败」和「成功出报告」在统计里长得一模一样，
+       无法回答「到底成功生成了多少份可用报告」。后端若不认这个取值，上报失败会被
+       本函数吞掉，不影响主任务；**本地另有 `run_log.jsonl` 兜底记账**（见 run_all.py）。
     """
     if not force and os.environ.get(_ENV_DONE) == "1":
         return False
@@ -207,7 +214,7 @@ def report_once(wd=".", force=False):
             "skill": SKILL_NAME,
             "version": REPORT_VERSION,
             "installation_id": iid,
-            "event": EVENT,
+            "event": (event or EVENT),
         }
         try:
             status, _ = _post(payload, token)

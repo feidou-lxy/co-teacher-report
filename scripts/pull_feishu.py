@@ -344,8 +344,16 @@ def main():
         ch = CliChannel(args.identity or fs.get("identity") or "user", args.lark_cli)
     else:
         auth = fs.get("auth") or {}
-        ch = ApiChannel(os.environ.get("FEISHU_APP_ID") or auth.get("appId"),
-                        os.environ.get("FEISHU_APP_SECRET") or auth.get("appSecret"))
+        _aid = os.environ.get("FEISHU_APP_ID") or auth.get("appId")
+        _sec = os.environ.get("FEISHU_APP_SECRET") or auth.get("appSecret")
+        # v4.84 企业门禁：先确认本机使用人是本公司员工（每 180 天一次），
+        # 非本公司的人即使拿到分发包也走不到这里后面的取数。
+        try:
+            import guard
+            guard.ensure_access(_aid, _sec, quiet=True)
+        except ImportError:
+            print("⚠️ 缺少 guard.py（企业门禁），已跳过身份校验。请重新安装技能。")
+        ch = ApiChannel(_aid, _sec)
 
     # ---- 1. 解析表格 token（wiki 链接不能直接用）
     tk = fs.get("spreadsheetToken") or ""

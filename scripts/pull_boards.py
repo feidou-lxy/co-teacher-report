@@ -27,8 +27,23 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common
 
-# 捕获：序号_ [（( W/Z )）]- 姓名 数字 .png
-PAT = re.compile(r"^(\d+)_(?:[（(]?([WZ])[）)]?\s*-)?(.+?)(\d*)\.png$", re.I)
+# 捕获：序号_ [前缀]- 姓名 数字 .png
+# ⚠️ v4.53（2026-10-22 实测 892 张 / 8 种前缀写法）：前缀**不只是** W/Z ——
+#   Y(204) W(168) J(165) Q(104) H(63) J1(26)，另有带下标的 `W₁-` / `Q₁-` / 纯下标 `₁-`。
+#   旧正则只认 `[WZ]` → 「3_H-乐语.png」被解析成姓名「H-乐语」、「12_W₁-陶胤瑞.png」被解析成
+#   「W₁-陶胤瑞」→ 与花名册永远对不上。本课实测：修正后花名册命中 23 人 → 90 人。
+_UP = "0-9\u2080-\u2089"                       # 上标/下标数字：₀₁₂₃₄₅₆₇₈₉
+PAT = re.compile(
+    r"^(\d+)_(?:[（(]?([A-Za-z]*[" + _UP + r"]*)[）)]?\s*-\s*)?(.+?)(\d*)\.png$", re.I)
+
+# ⚠️ v4.53 二次剥离：真正的文件名会出现**两层**前缀 —— `73_Y-₁-徐子月.png`。
+#   第一层 `Y` 被 PAT 吃掉，剩下的 `₁-徐子月` 仍是「前缀-姓名」形态，
+#   不继续剥就会得到一个花名册里永远不存在的「₁-徐子月」（实测 3 人：徐子月 / 武坛旭 / 邵昱彤）。
+_LEAD_TAG = re.compile(r"^[A-Za-z" + _UP + r"]{1,4}\s*-\s*")
+
+# 文件名里的姓名可能带括注（`李和郭（高铁上）` → 花名册是「李和郭」）。
+#   ⚠️ 只剥**尾部**括注，且不碰调色/状态词 —— 这里括注纯粹是人工备注，剥掉才能匹配花名册。
+_PAREN_TAIL = re.compile(r"\s*[（(][^（()）]*[）)]\s*$")
 
 
 def scan(root):
@@ -53,7 +68,14 @@ def scan(root):
             if not m:
                 continue
             _num, flag, name, _suf = m.groups()
-            name = common.norm_name(name)
+            _raw = common.norm_name(name)
+            name = _PAREN_TAIL.sub("", _raw).strip() or _raw
+            # 二次剥离：`Y-₁-徐子月` 去掉第一层后还剩 `₁-` 前缀
+            while True:
+                _n2 = _LEAD_TAG.sub("", name).strip()
+                if not _n2 or _n2 == name:
+                    break
+                name = _n2
             if not name:
                 continue
             n_img += 1
@@ -63,8 +85,8 @@ def scan(root):
                 "lesson_date": lesson_date,
                 "date": date,
                 "path": os.path.join(dirpath, f),
-                "raw_name": name,
-                "flag": flag or "",   # W / Z / 空（空白模板）
+                "raw_name": _raw,     # 文件名里的原姓名（含括注），回溯用
+                "flag": flag or "",   # 分批上传前缀（W/Z/J/J1/H/Q/Y/₁…），无教学含义
             }
             boards.setdefault(name, []).append(rec)
 

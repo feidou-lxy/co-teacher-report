@@ -93,6 +93,11 @@ def split_topics(t):
 def aggregate(analysis_list, boards=None):
     from collections import Counter
     summary = {}
+    # v4.61：课次目录名里通常带日期（`小黑板_2026-10-06 13-43-10`），但 pull_boards 只填了
+    #   `lesson`、`lesson_date` 留空 → 报告「逐次课情况」表的「上课日期」整列是「—」，
+    #   读者看不出是哪节课。这里统一回填：lesson_date 为空时从 lesson / round 名里抽 YYYY-MM-DD。
+    _re_date = re.compile(r"(\d{4})[-_.年]?(\d{1,2})[-_.月]?(\d{1,2})")
+    _re_class = re.compile(r"第[\d一二三四五六七八九十]+节课")
     # 课次映射：round（第 2 层时间戳目录）→ 所属课次（第 1 层目录名）
     lesson_of_round = {}
     if boards:
@@ -108,6 +113,26 @@ def aggregate(analysis_list, boards=None):
             _ls = _rd.split("/")[0]
             _md = re.match(r"^(\d{2})(\d{2})", _ls)
             _ld = f"{_md.group(1)}-{_md.group(2)}" if _md else ""
+        if not _ld:                                # v4.61：从目录名回填上课日期
+            _m = _re_date.search(_ls or _rd or "")
+            if _m:
+                _ld = f"{int(_m.group(1)):04d}-{int(_m.group(2)):02d}-{int(_m.group(3)):02d}"
+        # v4.61：源目录（第 1 层之上的根目录，如「第五节课谢校985」）→ 报告里标出是第几节课
+        _src = ""
+        _p = item.get("path") or ""
+        if _p:
+            _parts = [x for x in _p.split("/") if x]
+            if len(_parts) >= 3:
+                _src = _parts[-3]
+        # ⚠️ 若根目录名本身就是「第 N 节课」，那它才是**课次**，其下的时间戳目录只是**轮次**。
+        #   不这么改会把 1 节课的 9 轮算成「9 次课」（本课实测：乐语标题变成「9 次课 · 9 轮」）。
+        _mc = _re_class.search(_src) if _src else None
+        if _mc:
+            _ls = _mc.group(0)
+            if not _ld:
+                _m = _re_date.search(_src) or _re_date.search(_p.split("/")[-2] if _p else "")
+                if _m:
+                    _ld = f"{int(_m.group(1)):04d}-{int(_m.group(2)):02d}-{int(_m.group(3)):02d}"
         d = {
             "round": _rd,
             "lesson": _ls,
@@ -117,17 +142,27 @@ def aggregate(analysis_list, boards=None):
             "topic_knowledge": (item.get("topic_knowledge") or "").strip(),
             "status": item.get("status", ""),
             "correct": item.get("correct", ""),
+            # v4.66：读图**技术失败**轮次。绝不写成「空白未提交」——
+            #   那会把 API 故障变成「学生没交白板」，直接参与分层扣分（-2 分降档）。
+            "failed": bool(item.get("failed")),
+            "fail_reason": item.get("fail_reason", "") or "",
             "errors": item.get("errors", []) or [],
             "stuck_at": item.get("stuck_at", "") or "",
             "note": item.get("note", ""),
         }
         sm = summary.setdefault(stu, {"rounds": 0, "analyzed": 0, "details": []})
+        if _src and not sm.get("source_dir"):
+            sm["source_dir"] = _src           # v4.61：数据来源根目录（如「第五节课谢校985」）
         sm["analyzed"] += 1
         sm["details"].append(d)
     for stu, sm in summary.items():
         # v3.8：rounds 按「轮次」去重（一个时间戳目录 = 一轮；同轮可能上传多张，不能按图片数计）
         sm["rounds"] = len({d.get("round") for d in sm["details"] if d.get("round")}) or sm["analyzed"]
-        sc = Counter(d["status"] for d in sm["details"] if d["status"])
+        ok_ds = [d for d in sm["details"] if not d.get("failed")]
+        bad_ds = [d for d in sm["details"] if d.get("failed")]
+        sm["failed_rounds"] = len({d.get("round") for d in bad_ds if d.get("round")}) or len(bad_ds)
+        sm["analyzed_ok"] = len(ok_ds)
+        sc = Counter(d["status"] for d in ok_ds if d["status"])
         sm["status_counts"] = dict(sc)
         ec = Counter(e for d in sm["details"] for e in d["errors"])
         sm["error_types"] = [k for k, _ in ec.most_common(5)]
@@ -145,7 +180,7 @@ def aggregate(analysis_list, boards=None):
         sm["kb_topics"] = kb
         sm["error_topics"] = err_kb
         # 趋势：前后半段正确率对比
-        ds = sm["details"]
+        ds = ok_ds
         if len(ds) >= 2:
             half = len(ds) // 2
             early = [d for d in ds[:half] if d["correct"] in ("正确", "有错")]
@@ -168,9 +203,14 @@ def aggregate(analysis_list, boards=None):
         for k in ls_order:
             g = ls_map[k]
             g["rounds"] = len({d.get("round") for d in g["details"] if d.get("round")})
-            g["status_counts"] = dict(Counter(d["status"] for d in g["details"] if d["status"]))
+            g["status_counts"] = dict(Counter(d["status"] for d in g["details"]
+                                              if d["status"] and not d.get("failed")))
         sm["lessons"] = [ls_map[k] for k in ls_order]
         sm["lesson_count"] = len(sm["lessons"])
+        # v4.61：源目录名里若含「第 N 节课」→ 报告标题直接标出是哪节课（如「第五节课」）
+        _m2 = _re_class.search(sm.get("source_dir") or "")
+        if _m2:
+            sm["class_label"] = _m2.group(0)
     return summary
 
 
@@ -192,15 +232,25 @@ def main():
     if cfg:
         # 自动视觉模型
         analysis = []
+        _streak = 0          # 连续读图失败计数（v4.66 熔断用）
         for stu, recs in boards.items():
             for r in recs:
                 if not os.path.exists(r["path"]):
                     continue
                 try:
                     res = call_vision(cfg, r["path"])
+                    _streak = 0
                 except Exception as e:
+                    # ⚠️ v4.66：原来这里写 {"status": "空白未提交"} —— 一次 API 故障
+                    #   就把学生记成「没交白板」，而「空白未提交 ≥40%」在 learning_level 里
+                    #   是 **-2 分**（直接降档）。技术失败必须与原话分开。
+                    _streak += 1
                     print(f"⚠️ 读图失败 {r['path']}: {e}")
-                    res = {"status": "空白未提交", "correct": "待判"}
+                    if _streak >= 5:
+                        sys.exit(f"❌ 连续 {_streak} 张读图失败，疑似视觉模型/凭证故障 → 已中止。\n"
+                                 "   旧 board_analysis.json 未被覆盖；修好后重跑，不要把失败写进学生判定。")
+                    res = {"status": "", "correct": "", "failed": True,
+                           "fail_reason": f"{type(e).__name__}: {e}"}
                 res["student"] = stu
                 res["round"] = r["round"]
                 analysis.append(res)
