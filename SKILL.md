@@ -4111,3 +4111,31 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
 - 实测：有扩科意向 1→0（卡按零值规则自动隐藏）；秦黛雯行 chip 与依据消失；可扩科 81 不变。
 - ⚠️ 教训：kuake 判定依赖 enroll 在读科目，**enroll 数据更新不会使 kuake 缓存失效**——
   科目数据修复/更新后必须 _KUAKE_VER+1 或手动删 snapshot/kuake.json，否则旧误判沿用。
+
+### v5.02 · 定时刷新升级：每小时 × 全部教务 × 带上在读科目/可扩科（2026-11-05）
+
+用户三连拍板：①恢复定时任务改**每小时**；②**所有教务维度**学生报告都自动刷；
+③refresh.py **升级**，不再只刷续报。
+
+- `refresh.py` 改四处：
+  1. 新增 `--all-edu`：自动发现 `~/.workbuddy/reports/edu-*`，逐个刷新（单个失败不影响
+     其他，退出码取最严重）；main 拆成 `refresh_all_edu` + `refresh_one`。
+  2. 新增 2b 步：拉课程记录接口（复用 `pull_enroll._pull_products_from_api`，按 roster
+     白名单限流）→ `merge_products()` 并进 enroll.json 的 `bySeq[].subjects`（并集，
+     单人缺记录保旧值）与 `spring/summer`（**以成功响应为准覆盖**，退费/关班能反映出来；
+     未出现在本次结果里的学生保留旧值）。courses 群列表不动；扩科意向/聊天意向来自聊天
+     判定层（快照数据），本脚本不重算。
+  3. KPI 解析对齐 v5.00/v5.01：`edun-wait`（续报未确认）删除，新增 `kk/aska`。
+  4. 全体课程记录 0 命中 → 在读科目/春暑在读沿用旧快照（绝不拿空结果清科目），续报照常。
+- 定时：launchd `cn.xqmsx.ctr.refresh.edu.plist`，`StartInterval 3600`（每小时），
+  `refresh.py --all-edu --quiet --notify`；日志 `~/.workbuddy/reports/refresh_all.log`。
+  旧 `cn.xqmsx.ctr.refresh.lfy.plist`（罗绂燕专用、每 4 小时）已删除。
+- ⚠️ 环境坑：**WorkBuddy 沙箱内 `launchctl bootstrap` 一律 `Input/output error`**
+  （最小 /usr/bin/true plist 也失败）——装/卸定时任务必须**用户双击**
+  `安装定时刷新.command` / `卸载定时刷新.command`（自己的终端上下文）。
+  10-21 的旧任务也是这样装上的，当时确实跑过一次（refresh.log 实证）。
+- ⚠️ 另一个坑：`--copy-to` 是**单报告**参数，别在 `--all-edu` 模式下传 —— 会把
+  最后一个视角的 HTML 复制到那个路径（实测把张豫报告覆盖了罗绂燕交付文件，已恢复）。
+- 实测（张豫）：续报 262 条无变化；课程记录 263/263 命中；在读科目 +0、春暑变化 0
+  （与 15:10 全量一致，说明幂等）；重渲 KPI：已续报1/未续报262/多科目150/单科113/可扩科81。
+- 罗绂燕 token 已过期（code=7），刷新会跳过并弹桌面通知；重新登录后自动恢复。

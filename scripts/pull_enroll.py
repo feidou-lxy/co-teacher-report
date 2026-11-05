@@ -240,7 +240,7 @@ def _pull_products_from_api(wd, seqs, cur_year=4, cur_term=3):
     """v5.00：按学生逐个拉全部课程记录（cProductStudent），补全「在读科目」。
 
     为什么需要：在读科目原先只来自 wxworkSessionStat（**只回统计日有消息的群**，
-    静默群漏科，实测某生物理课缺席）；getCoTeacherStudents 只覆盖辖内联席名下的课
+    静默群漏科，实测秦黛雯物理课缺席）；getCoTeacherStudents 只覆盖辖内联席名下的课
     （物理课联席在别的教务辖内 → 同样拿不到）。本接口按 studentSeq 返回该生
     **全机构全部课程**（含 cProduct.year/term/productStudentStatus），是权威来源。
 
@@ -356,7 +356,7 @@ def build(rows, source, wd, renew_online=None, products_online=None):
     for rec in list(by_seq.values()) + list(by_name.values()):
         rec["subjects"].sort(key=lambda s: (SUBJECT_ORDER.index(s) if s in SUBJECT_ORDER else 99, s))
     # v5.00：把联席在读接口聚合出的科目**并进在读科目**（两源并集）——
-    #   sessionstat 只回「统计日有消息」的群（静默群漏科，实测某生物理课缺席），
+    #   sessionstat 只回「统计日有消息」的群（静默群漏科，实测秦黛雯物理课缺席），
     #   联席「在读」接口不依赖群消息、是权威来源。不在 bySeq 的学生（无活跃课程群）
     #   也补进来，否则报告按姓名查不到。
     _merged = 0

@@ -1,33 +1,42 @@
-"""refresh.py — 报告轻量刷新（方案 A：只刷续报，不重拉群聊）
+"""refresh.py — 报告轻量刷新（v5.02：续报 + 在读科目 + 可扩科，不重拉群聊）
 
-背景（2026-10-21 用户拍板）：
+背景（2026-10-21 用户拍板方案 A；2026-11-05 用户要求升级为「每小时 + 全部教务 + 带上可扩科」）：
     「学生情况概览」要能小时级更新，但**不能**为此重跑全链路 —— 全链路要拉
     250~400 次群聊请求、耗时 3~8 分钟，而且每次都要 agent 读一遍 126KB 的
-    SKILL.md，token 消耗大。教务真正会变、且需要频繁看的只有「续报状态」。
-    本脚本把刷新压缩成：N 次续报接口（教务 = 下属联席数）+ 本地重渲染。
+    SKILL.md，token 消耗大。教务真正会变、且需要频繁看的是「续报状态」和
+    「在读科目 / 可扩科」（报名、转班、退费都会变）。
+    本脚本把刷新压缩成：N 次续报接口 + N 次课程记录接口 + 本地重渲染。
 
-做三件事：
+做四件事：
     1. 拉 renewed（复用 pull_enroll._pull_renew_from_api，含教务名→联席展开、
        按 roster 白名单过滤、按 studentSeq 去重）
-    2. 就地更新 snapshot/enroll.json 的 renew / renewDetail（**不动 bySeq**，
-       在读科目与扩科意向保持原样，避免引入未经验证的变化）
-    3. 用已有快照重渲染 HTML（复用 report.py；不拉群聊、不跑 extract）
+    2. 拉全机构课程记录（复用 pull_enroll._pull_products_from_api，按 roster 白名单）
+       → 就地更新 snapshot/enroll.json 的 bySeq[].subjects / spring / summer
+       （v5.02：在读科目、多科目/单科、可扩科 KPI 随之更新；courses 群列表不动，
+        扩科意向/聊天意向来自聊天判定层，属快照数据，本脚本不重算）
+    3. 就地更新 snapshot/enroll.json 的 renew / renewDetail
+    4. 用已有快照重渲染 HTML（复用 report.py；不拉群聊、不跑 extract）
 
 设计给「定时任务」用：
     本脚本不需要 AI 参与，crontab / launchd 直接调用即可，模型 token 消耗为 0。
-    例：0 */4 * * * cd <workdir> && <python> <skill>/scripts/refresh.py --workdir . --quiet
+    例：0 * * * * <python> <skill>/scripts/refresh.py --all-edu --quiet --notify
 
 安全铁律：
     - token 失效或取数为空 → **不写盘、不渲染**，退出码 2。
       绝不能把空 renew 覆盖上去（那会把整份续报 KPI 清成 0）。
     - 接口只返回部分学生时，**未出现的保留旧值**（合并而非覆盖），避免因接口
       偶发缺数据而把「已续报」误降级成「未确认」。
+    - 课程记录接口整体 0 命中 → 在读科目/春暑在读**沿用旧快照**（不覆盖），
+      只影响subjects 不影响续报；按学生逐个合并，单人不失败不丢数据。
     - 写盘用临时文件 + os.replace 原子替换，中途失败不产生半截 JSON。
     - 渲染失败不删除旧 HTML。
 
 用法：
     # 教务视角（参数可从 snapshot/meta.json 自动推断）
     python3 scripts/refresh.py --workdir <wd> --edu 罗绂燕
+
+    # 定时任务：刷新全部教务视角报告（edu-* 目录逐个跑，单个失败不影响其他）
+    python3 scripts/refresh.py --all-edu --quiet --notify
 
     # 只看这一小时有没有变化，不写盘不渲染
     python3 scripts/refresh.py --workdir <wd> --dry-run
@@ -184,7 +193,7 @@ def tally(renew):
 
 
 def diff_renew(old, new):
-    """返回 (changed, added, filled)。filled 是新拿到、旧里没有的。"""
+    """返回 (changed, added)。changed 是值有变化的，added 是新拿到、旧里没有的。"""
     changed, added = {}, {}
     for seq, v in new.items():
         if seq in old:
@@ -195,13 +204,68 @@ def diff_renew(old, new):
     return changed, added
 
 
+def roster_seqs(wd):
+    """报告范围（snapshot/roster.json 白名单）的学生 seq 集合。
+
+    课程记录接口按学生逐个拉，必须限定在报告范围内，否则会把
+    别的教务/年级/课程的学生混进这份报告的 enroll.json。
+    """
+    rp = os.path.join(wd, "snapshot", "roster.json")
+    if not os.path.exists(rp):
+        return set()
+    try:
+        rl = json.load(open(rp, encoding="utf-8"))
+        if isinstance(rl, dict):
+            rl = rl.get("rows") or rl.get("list") or []
+        seqs = {str(x.get("stuSeq") or x.get("studentSeq") or "").strip() for x in rl}
+        seqs.discard("")
+        return seqs
+    except Exception:
+        return set()
+
+
+def merge_products(old_enroll, prods):
+    """v5.02：把课程记录接口的结果并进 enroll.json（读内存 dict，不写盘）。
+
+    合并规则（与 pull_enroll.build 的并集语义一致）：
+    · subjects 取并集（新科目追加，旧科目不删 —— 单人接口偶发缺记录时保旧值）；
+    · spring / summer **以本次成功响应为准覆盖**（「报过且没退」是权威口径，
+      退费/关班要能反映出来）；没出现在本次结果里的学生保留旧值；
+    · courses（群课程列表）不动 —— 那是群统计口径，轻量刷新不碰。
+    返回 (补科目数, 更新春暑人数)。
+    """
+    by_seq = old_enroll.get("bySeq") or {}
+    order = getattr(pull_enroll, "SUBJECT_ORDER", [])
+    n_sub, n_ss = 0, 0
+    for seq, det in (prods or {}).items():
+        rec = by_seq.get(seq)
+        if rec is None:
+            if not det.get("name"):
+                continue
+            rec = by_seq.setdefault(seq, {"name": det["name"], "subjects": [], "courses": []})
+        for s in det.get("subjects") or []:
+            if s and s not in rec["subjects"]:
+                rec["subjects"].append(s)
+                n_sub += 1
+        rec["subjects"].sort(key=lambda s: (order.index(s) if s in order else 99, s))
+        old_ss = set(rec.get("spring") or []) | set(rec.get("summer") or [])
+        new_ss = set(det.get("spring") or []) | set(det.get("summer") or [])
+        rec["spring"] = det.get("spring") or []
+        rec["summer"] = det.get("summer") or []
+        if old_ss != new_ss:
+            n_ss += 1
+    return n_sub, n_ss
+
+
 # ------------------------------------------------------- 报告 KPI（与界面同口径）
-_KPI_ORDER = (("yes", "已续报"), ("no", "未续报"), ("wait", "续报未确认"),
-              ("multi", "多科目"), ("single", "单科"), ("kuake", "扩科意向"))
+#   v5.02 对齐 v5.00/v5.01 口径：「续报未确认」卡已删；新增 可扩科(kk)、问过其他科目(aska)
+_KPI_ORDER = (("yes", "已续报"), ("no", "未续报"),
+              ("multi", "多科目"), ("single", "单科"),
+              ("kk", "可扩科"), ("kuake", "扩科意向"), ("aska", "问过其他科目"))
 
 
 def html_kpis(html_path):
-    """从渲染出的 HTML 里读 6 张 KPI 的显示值。
+    """从渲染出的 HTML 里读教务核心数据 KPI 的显示值。
 
     为什么不直接用 renew 字典统计：接口记录口径（237 条，含报告范围外的学生）
     与报告 KPI 口径（只统计进报告的学生，144）不同，直接打印会让人对不上号。
@@ -213,7 +277,7 @@ def html_kpis(html_path):
     except Exception:
         return {}
     out = {}
-    for m in re.finditer(r'id="edun-(yes|no|wait|multi|single|kuake)"[^>]*>([^<]*)<', s):
+    for m in re.finditer(r'id="edun-(yes|no|multi|single|kk|kuake|aska)"[^>]*>([^<]*)<', s):
         out[m.group(1)] = m.group(2).strip()
     return out
 
@@ -290,6 +354,9 @@ def main():
     ap.add_argument("--note", default=None, help="报告顶部横幅（不传则沿用上次）")
     ap.add_argument("--dry-run", action="store_true", help="只拉数据看差异，不写盘不渲染")
     ap.add_argument("--no-render", action="store_true", help="只更新 enroll.json，不重渲染")
+    ap.add_argument("--all-edu", action="store_true",
+                    help="定时任务模式：刷新 ~/.workbuddy/reports/ 下全部 edu-* 教务报告"
+                         "（逐个跑，单个失败不影响其他；退出码取最严重的）")
     ap.add_argument("--copy-to", default=None, help="渲染后把 HTML 复制到该路径（交付目录同步）")
     ap.add_argument("--notify", action="store_true",
                     help="失败时发 macOS 桌面通知（token 失效 / 渲染失败；同类问题每天最多一次）")
@@ -298,6 +365,8 @@ def main():
 
     # 固定工作目录（v4.49）：不显式给 --workdir 时按视角定位，和 run_all.py 同一套规则，
     # 这样「全量一次 → 之后天天刷新」始终落在同一个目录里。
+    if args.all_edu:
+        return refresh_all_edu(args)
     if args.workdir:
         wd = os.path.abspath(os.path.expanduser(args.workdir))
     else:
@@ -306,6 +375,40 @@ def main():
             print("❌ 请给 --edu / --co / --course 之一（用于定位固定报告目录），"
                   "或用 --workdir 显式指定目录")
             return 1
+    return refresh_one(wd, args)
+
+
+def refresh_all_edu(args):
+    """v5.02：定时任务模式 —— 全部 edu-* 教务报告逐个刷新。"""
+    import glob
+    base = os.path.expanduser("~/.workbuddy/reports")
+    dirs = [p for p in sorted(glob.glob(os.path.join(base, "edu-*"))) if os.path.isdir(p)]
+    if not dirs:
+        print("❌ ~/.workbuddy/reports/ 下没有任何 edu-* 教务报告目录")
+        return 1
+    log(f"🔁 批量刷新 · 共 {len(dirs)} 份教务报告："
+        f"{'、'.join(os.path.basename(d).replace('edu-', '') for d in dirs)}", args.quiet)
+    codes = []
+    for wd in dirs:
+        who = os.path.basename(wd).replace("edu-", "")
+        log("", args.quiet)
+        log(f"━━━ {who} ━━━", args.quiet)
+        try:
+            codes.append(refresh_one(wd, args))
+        except Exception as e:
+            print(f"❌ {who} 刷新异常（{type(e).__name__}: {e}）")
+            codes.append(2)
+    bad = [c for c in codes if c != 0]
+    log("", args.quiet)
+    if not bad:
+        log(f"🎉 全部 {len(dirs)} 份教务报告刷新完成。", args.quiet)
+        return 0
+    print(f"⚠️ {len(bad)}/{len(dirs)} 份报告刷新失败（退出码 {bad}）；未失败的报告已正常更新。")
+    return 2 if 2 in bad else 3
+
+
+def refresh_one(wd, args):
+    """刷新单个教务/联席/课程工作目录。返回退出码（0/1/2/3）。"""
     if not os.path.isdir(wd):
         print(f"❌ 工作目录还没建过：{workdir.describe(wd)}")
         print("   说明该对象还没跑过完整流程。先跑一次全量（run_all.py），之后才能用轻量刷新。")
@@ -376,20 +479,44 @@ def main():
     if not changed and not added:
         log("   （无变化）", args.quiet)
 
+    # 2b) 拉在学科目 / 春暑在读（v5.02：可扩科与在读科目随定时刷新一起更新）
+    prods = None
+    if a["edu"]:
+        seqs = roster_seqs(wd)
+        if not seqs:
+            log("ℹ️ 无 roster 白名单，跳过课程记录接口（在读科目/可扩科沿用旧快照）", args.quiet)
+        else:
+            try:
+                prods = pull_enroll._pull_products_from_api(wd, seqs)
+            except Exception as e:
+                print(f"⚠️ 课程记录接口异常（{type(e).__name__}: {e}），"
+                      "在读科目/可扩科沿用旧快照，续报照常更新。")
+                prods = None
+            if prods is not None and not prods:
+                # 全体 0 命中基本等于接口/权限异常，绝不能拿空结果清人家的科目
+                print("⚠️ 课程记录接口 0 命中，在读科目/可扩科沿用旧快照，续报照常更新。")
+                prods = None
+            elif prods:
+                log(f"   课程记录接口命中 {len(prods)} 人（在读科目/春暑在读）", args.quiet)
+
     if args.dry_run:
         log("🧪 dry-run：不写盘、不渲染。", args.quiet)
         return 0
 
-    # 3) 写回 enroll.json（bySeq 不动）
+    # 3) 写回 enroll.json（courses 群列表不动；subjects/spring/summer 按 2b 合并）
     old_enroll["renew"] = merged
     if detail:
         rd = dict(old_enroll.get("renewDetail") or {})
         rd.update(detail)
         old_enroll["renewDetail"] = rd
+    if prods:
+        n_sub, n_ss = merge_products(old_enroll, prods)
+        log(f"   在读科目 +{n_sub} 科次 ｜ 春暑在读变化 {n_ss} 人", args.quiet)
+        old_enroll["productsSource"] = "cProductStudent（refresh.py 轻量刷新）"
     old_enroll["renewSource"] = "getCoTeacherStudents（renewed 字段，refresh.py 轻量刷新）"
     old_enroll["refreshedAt"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     write_json_atomic(enroll_path, old_enroll)
-    log(f"   ✅ 已更新 {os.path.relpath(enroll_path, wd)}（bySeq 未动）", args.quiet)
+    log(f"   ✅ 已更新 {os.path.relpath(enroll_path, wd)}", args.quiet)
 
     # 4) 记住本次参数，供下次定时刷新沿用
     write_json_atomic(os.path.join(wd, ARGS_FILE), {k: a[k] for k in
