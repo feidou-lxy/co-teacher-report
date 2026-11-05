@@ -49,8 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common
 
 # 科目展示顺序（与 common.SUBJECTS 一致，但固定排序便于跨学生对比）
-SUBJECT_ORDER = ("数学", "物理", "化学", "英语", "语文", "生物", "历史", "地理", "政治", "科学")
-# 课程名里的「非在读」标记（已关班 / 已结课 / 退费 / 停课 …）
+SUBJECT_ORDER = ("数学", "物理", "化学", "英语", "语文", "生物", "历史", "地理", "政治", "科学")# 课程名里的「非在读」标记（已关班 / 已结课 / 退费 / 停课 …）
 CLOSED_RE = re.compile(r"【[^】]*(已关|结课|退费|退课|停课|转班|取消)[^】]*】")
 BASE = "https://stadminv2.xqmsx.cn/api"
 
@@ -89,7 +88,9 @@ def _pull_online(wd, months=4):
     tok_path = os.path.join(wd, "token.txt")
     if not os.path.exists(tok_path):
         raise RuntimeError(f"缺少 {tok_path}（需要先取 token）")
-    token = open(tok_path, encoding="utf-8").read().strip()
+    # v5.00：token.txt 可能是登录脚本写的「token=xxx」形态 —— 必须清洗（此前裸读，
+    #   换新登录脚本后 x-token 头会带着 token= 前缀 → code=7 登录凭证无效）
+    token = common.clean_token(open(tok_path, encoding="utf-8").read().strip())
     today = dt.date.today()
     dates = []
     for i in range(months - 1, 0, -1):
@@ -212,21 +213,109 @@ def _pull_renew_from_api(wd, edu_name):
         if not seq or not rv:
             continue
         out[seq] = rv
-        detail[seq] = {"renewed": rv,
-                       "subject": x.get("subject"),
-                       "subjectName": (x.get("subjectName") or "").strip() or None}
+        # v5.00：同一学生多门课 = 多行 —— 科目**聚合**（此前 dict 直接覆盖，多科目只剩最后一行，
+        #   是「在读科目缺科」的来源之一）。联席「在读」接口是权威来源：不依赖企微群有无消息
+        #   （sessionstat 只回统计日有消息的群，静默群会漏科）。
+        _sj = (x.get("subjectName") or "").strip()
+        rec = detail.setdefault(seq, {"renewed": rv, "name": (x.get("studentName") or "").strip(),
+                                      "subjects": []})
+        if (x.get("studentName") or "").strip() and not rec.get("name"):
+            rec["name"] = (x.get("studentName") or "").strip()
+        if _sj and _sj not in rec["subjects"]:
+            rec["subjects"].append(_sj)
     _filt = (f"（联席全量 {raw_n} → 按本教务 {len(roster_seqs)} 名学生白名单过滤后 {len(out)} 条）"
              if roster_seqs and raw_n != len(out) else "")
+    multi_s = sum(1 for v in detail.values() if len(v["subjects"]) > 1)
     print(f"   续报接口（getCoTeacherStudents，联席 {len(used)} 位）：{len(out)} 条 renewed{_filt}"
-          f"（含 subject/subjectName {len(detail)} 条）")
+          f"（含科目 {len(detail)} 人，其中多科目 {multi_s} 人）")
     return out, detail
 
 
-def build(rows, source, wd, renew_online=None):
+# cProduct.subject 数字 → 科目名（与后台知识树 subject 字典一致）
+SUBJECT_DICT = {1: "数学", 2: "物理", 3: "化学", 4: "生物", 5: "语文", 6: "英语",
+                7: "历史", 8: "地理", 9: "政治"}
+
+
+def _pull_products_from_api(wd, seqs, cur_year=4, cur_term=3):
+    """v5.00：按学生逐个拉全部课程记录（cProductStudent），补全「在读科目」。
+
+    为什么需要：在读科目原先只来自 wxworkSessionStat（**只回统计日有消息的群**，
+    静默群漏科，实测某生物理课缺席）；getCoTeacherStudents 只覆盖辖内联席名下的课
+    （物理课联席在别的教务辖内 → 同样拿不到）。本接口按 studentSeq 返回该生
+    **全机构全部课程**（含 cProduct.year/term/productStudentStatus），是权威来源。
+
+    在读口径：
+    · 秋季在读（subjects）：year=cur_year & term=cur_term & productStudentStatus=1
+      & 课程名无【已关班/结课/退费/停课】标记。
+    · 春/暑在读（spring/summer，v5.00 可扩科用）：year=cur_year & term∈{1,2}
+      & 记录存在 & 无已关班标记 & 非「待定班」—— 往期课程的 productStudentStatus
+      可能已随结课变化，不能照搬 status=1，按「报过且没退」算（用户 2026-11-05 确认）。
+      ⚠️ 只排除 2026 春暑秋的待定班；2027 冬（明年寒假）课程全是待定属正常，不参与对比。
+    返回 {seq: {"name", "subjects", "products", "spring", "summer"}}。
+    """
+    tok_path = os.path.join(wd, "token.txt")
+    if not os.path.exists(tok_path):
+        print("   ⚠️ 缺 token.txt，跳过课程记录接口")
+        return {}
+    try:
+        token = common.load_token(wd)
+    except Exception as e:
+        print(f"   ⚠️ token 读取失败（{e}），跳过课程记录接口")
+        return {}
+    out, errs = {}, 0
+    for i, seq in enumerate(sorted(seqs), 1):
+        try:
+            d = common.get(f"/cProductStudent/getCProductStudentList?page=1&pageSize=50&studentSeq={seq}", token)
+            if d.get("code") != 0:
+                errs += 1
+                continue
+        except Exception:
+            errs += 1
+            continue
+        rec_subs, rec_prods = [], []
+        spring, summer = [], []
+        name = ""
+        for x in (d.get("data") or {}).get("list") or []:
+            p = x.get("cProduct") or {}
+            pn = (p.get("name") or "").strip()
+            if not pn or CLOSED_RE.search(pn):
+                continue
+            y, t = p.get("year"), p.get("term")
+            # 待定班：只排除 2026 年（cur_year）春暑秋 —— 2027 冬全是待定属正常，不参与对比
+            is_pending = "待定" in pn and y == cur_year
+            if y == cur_year and t == cur_term:
+                # 秋季在读：状态=1 且非待定
+                if x.get("productStudentStatus") != 1 or is_pending:
+                    continue
+                name = name or ((x.get("cStudent") or {}).get("name") or "")
+                sj = SUBJECT_DICT.get(p.get("subject")) or _subject_of({"productName": pn, "subjectName": ""})
+                if sj and sj not in rec_subs:
+                    rec_subs.append(sj)
+                if pn not in rec_prods:
+                    rec_prods.append(pn)
+            elif y == cur_year and t in (1, 2) and not is_pending:
+                # 春(term=1)/暑(term=2)在读：报过且没退（不查 status，见 docstring）
+                name = name or ((x.get("cStudent") or {}).get("name") or "")
+                sj = SUBJECT_DICT.get(p.get("subject")) or _subject_of({"productName": pn, "subjectName": ""})
+                if sj and sj not in (spring if t == 1 else summer):
+                    (spring if t == 1 else summer).append(sj)
+        if rec_subs or spring or summer:
+            out[seq] = {"name": name, "subjects": rec_subs, "products": rec_prods,
+                        "spring": spring, "summer": summer}
+        if i % 50 == 0:
+            print(f"     …课程记录 {i}/{len(seqs)} 人")
+    print(f"   课程记录接口（cProductStudent，{len(seqs)} 人）：命中在读科目 {len(out)} 人"
+          + (f"，失败 {errs}" if errs else ""))
+    return out
+
+
+def build(rows, source, wd, renew_online=None, products_online=None):
     """聚合「学生 → 在读科目」，写 snapshot/enroll.json。
 
     renew_online：可选，(seq->renewed, seq->detail) 元组，来自 _pull_renew_from_api；
     非空时覆盖/补充 enroll.json["renew"]，并把 subject/subjectName 存到 renewDetail。
+    products_online：可选，seq→{name,subjects,products}，来自 _pull_products_from_api
+    （v5.00：全机构课程记录，在读科目的权威并集源）。
     """
     by_room = {}
     for g in rows:
@@ -266,6 +355,42 @@ def build(rows, source, wd, renew_online=None):
             renew_src = "getCoTeacherStudents（renewed 字段，v4.44）"
     for rec in list(by_seq.values()) + list(by_name.values()):
         rec["subjects"].sort(key=lambda s: (SUBJECT_ORDER.index(s) if s in SUBJECT_ORDER else 99, s))
+    # v5.00：把联席在读接口聚合出的科目**并进在读科目**（两源并集）——
+    #   sessionstat 只回「统计日有消息」的群（静默群漏科，实测某生物理课缺席），
+    #   联席「在读」接口不依赖群消息、是权威来源。不在 bySeq 的学生（无活跃课程群）
+    #   也补进来，否则报告按姓名查不到。
+    _merged = 0
+    for seq, det in (renew_detail or {}).items():
+        rec = by_seq.get(seq)
+        if rec is None:
+            rec = by_seq.setdefault(seq, {"name": det.get("name") or "", "subjects": [], "courses": []})
+            if not rec["name"]:
+                continue
+        for s in det.get("subjects") or []:
+            if s and s not in rec["subjects"]:
+                rec["subjects"].append(s)
+                _merged += 1
+        rec["subjects"].sort(key=lambda s: (SUBJECT_ORDER.index(s) if s in SUBJECT_ORDER else 99, s))
+    if _merged:
+        print(f"   在读科目并入（联席在读接口）：+{_merged} 科次")
+    # v5.00：全机构课程记录（cProductStudent）并集 —— 权威来源，静默群/辖外联席的课都补上。
+    #   同时落 spring/summer（2026 春/暑在读科目）→ 报告「可扩科」对比用。
+    _merged2 = 0
+    for seq, det in (products_online or {}).items():
+        rec = by_seq.get(seq)
+        if rec is None:
+            if not det.get("name"):
+                continue
+            rec = by_seq.setdefault(seq, {"name": det["name"], "subjects": [], "courses": []})
+        for s in det.get("subjects") or []:
+            if s and s not in rec["subjects"]:
+                rec["subjects"].append(s)
+                _merged2 += 1
+        rec["subjects"].sort(key=lambda s: (SUBJECT_ORDER.index(s) if s in SUBJECT_ORDER else 99, s))
+        rec["spring"] = det.get("spring") or []
+        rec["summer"] = det.get("summer") or []
+    if _merged2:
+        print(f"   在读科目并入（课程记录接口）：+{_merged2} 科次")
     out = {
         "generatedAt": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "source": source,
@@ -298,6 +423,7 @@ if __name__ == "__main__":
     ap.add_argument("--from", dest="src", default=None, help="离线：接口原始行 JSON")
     ap.add_argument("--months", type=int, default=4)
     a = ap.parse_args()
+    products_online = None
     if a.src:
         rows = json.load(open(a.src, encoding="utf-8"))
         if isinstance(rows, dict):
@@ -307,4 +433,19 @@ if __name__ == "__main__":
     else:
         rows, src_desc = _pull_online(a.workdir, a.months)
         renew_online = _pull_renew_from_api(a.workdir, a.edu) if a.edu else None
-    build(rows, src_desc, a.workdir, renew_online)
+        # v5.00：课程记录接口（在读科目权威并集）——需要 roster 白名单（学生 seq）
+        if a.edu:
+            roster_path = os.path.join(a.workdir, "snapshot", "roster.json")
+            if os.path.exists(roster_path):
+                try:
+                    rl = json.load(open(roster_path, encoding="utf-8"))
+                    if isinstance(rl, dict):
+                        rl = rl.get("rows") or rl.get("list") or []
+                    seqs = {str(x.get("stuSeq") or x.get("studentSeq") or "").strip()
+                            for x in rl}
+                    seqs.discard("")
+                    if seqs:
+                        products_online = _pull_products_from_api(a.workdir, seqs)
+                except Exception as e:
+                    print(f"   ⚠️ roster 读取失败（{e}），跳过课程记录接口")
+    build(rows, src_desc, a.workdir, renew_online, products_online)

@@ -229,6 +229,19 @@ TOPIC_UNITS = [
     ("计算/粗心", ["粗心", "算错", "符号", "漏解", "增根", "少一种"], "计算/粗心"),
 ]
 
+# v4.94：上面这张表是**数学**专用。课程科目与之不符时（物理/化学…），
+#   `main()` 把它清空并置 False，`fine`（细粒度题型，词表在 common.FINE_TYPES）
+#   也一并不产出 —— 宁可没有知识点维度，也不要给业务看「物理课的薄弱点是立体几何」。
+#   ⚠️ 要支持新科目，正确做法是按该科目后台知识树另建一套词表，不是往这里加物理词。
+SUBJECT_OK = True
+FINE_OK = True              # v4.95：细粒度题型（common.FINE_TYPES）只对数学开；物理 = False
+
+# v4.99：单元级排除词的**运行时合并表** —— 模块级默认 = 数学版；main() 里 augment
+#   返回 info["unit_excl"]（当前科目词表的排除词）后 update 覆盖。
+#   此前 _topic_hit_clean 只读 knowledge_dict.UNIT_EXCL，物理/化学的 UNIT_EXCL
+#   从未生效（静默失效，好在没出过实案）。
+UNIT_EXCL_ACTIVE = {}
+
 # ── v4.47 反误判：把「消息级一刀切」升级为「知识点级语境判定」 ─────────────────
 # 联席反馈（真实场景）：「有时候我只是提一嘴它也会分析进去」「我跟学生说之后学导数的时候
 # 我们也会碰见，就会识别成导数不会」。
@@ -252,13 +265,22 @@ TOPIC_FUTURE = ("还没学", "没有学", "没学到", "未学", "没接触", "�
                 "下次讲", "即将学", "将要学", "马上学", "会学到", "会讲到", "会碰见", "会碰到",
                 "会遇到", "将来", "到时候", "届时", "开学后", "再讲", "才学")
 # 正面 / 明确否定（窗口级）
+# v4.99：「掌握」不裸收 —— 「还没掌握好」会被当成正面评价挡掉（初中冒烟实测漏热学）。
+#   收精确组合，否定形态（没掌握/还没掌握）自然不命中。
 TOPIC_POS = ("不错", "没错", "没算错", "没做错", "没问题", "全对", "都对了", "做对了", "答对了",
-             "完全正确", "掌握", "很好", "很棒")
+             "完全正确", "掌握得很好", "掌握得不错", "已掌握", "已经掌握", "基本掌握",
+             "很好", "很棒")
 TOPIC_CTX_WIN = 16         # 知识点词前后各 16 字作为语境窗口
 # 学生 / 家长侧「问题信号」：表达不会、疑问、做错
+# v4.99：补初中/家长高频说法 9 词（「没听懂」「不太懂」此前竟不在表里 —— 掌握判定
+#   的否定表 STU_MASTER_NEG 反而一直有，属词表漏配）。加词先查误伤：数学（谢胡）
+#   净新增 10 条 / 化学李 2 条 / 物理孙 4 条，人眼逐条审 = 全为真问题信号
+#   （唯一弱信号「找出错因」是描述性表达，受 MIN_TOPIC_SIGNALS=2 门槛兜底）。
 TOPIC_STU_PROB = ("不会", "不懂", "没懂", "没听明白", "听不懂", "做错", "算错", "错了", "有点难",
                   "太难", "跟不上", "不熟", "卡住", "没思路", "怎么做", "请问", "问一下",
-                  "这道题", "这个题")
+                  "这道题", "这个题",
+                  "没听懂", "不太懂", "没太懂", "记不住", "搞混", "弄混", "分不清",
+                  "背不下来", "出错")
 # 老师侧「问题信号」：明确指出错误 / 要求强化
 # ⚠️ v4.47：删「还是有」（「计算量还是有的」×20 的来源）、删「巩固」（「做一下巩固知识」是布置作业）、
 #   裸「错」改词组（「错题感觉如何」「易错点」都会误命中）。
@@ -268,6 +290,28 @@ TOPIC_TEA_PROB = ("做错", "算错", "写错", "答错", "错了", "出错", "�
 MIN_TOPIC_SIGNALS = 2      # 同一知识点至少 2 条问题信号才算「薄弱」（1 条多为偶发）
 MIN_TOPIC_TEA_ONLY = 3     # v4.47：信号全部来自老师单方、且不足此数 → 视为「提一嘴」，不判薄弱
 TOPIC_MSG_MAXLEN = 120     # 超过此长度的消息按「讲课/转写长文本」处理，不参与统计
+# v4.98：老师侧讲题用语 —— 「X 选项错就错在…」说的是**题目选项**错，不是学生出错。
+#   实测（化学六B李）联席讲题原话「C 选项，它错就错在这儿」被判成老师指出学生错误。
+#   只挡「错在」出现在该短语里的情形；「你错在第二问」这类真纠错不受影响。
+TOPIC_TEA_NOISE = ("错就错在",)
+
+
+def _tea_prob_hit(txt):
+    """老师侧问题信号判定（v4.98）：词出现处的 ±8 字窗口全部落在噪声短语里 → 不算。
+
+    不能整条消息一刀切：一条消息里可能既有「C 选项错就错在条件没看清」（讲题）
+    又有「你错在第二问」（真纠错），前者该挡、后者该留。
+    """
+    for k in TOPIC_TEA_PROB:
+        if k not in txt:
+            continue
+        i = txt.find(k)
+        while i >= 0:
+            ctx = txt[max(0, i - 8): i + len(k) + 8]
+            if not any(n in ctx for n in TOPIC_TEA_NOISE):
+                return True
+            i = txt.find(k, i + 1)
+    return False
 
 
 def _strip_quote(txt):
@@ -287,11 +331,13 @@ def _kw_windows(txt, kw, win=TOPIC_CTX_WIN):
 def _topic_hit_clean(txt, kws, unit=None):
     """该知识点在句内是否有「干净」的出现位置（语境窗口里没有预告/正面/事务词）。
 
-    v4.75：加 `unit` —— 单元级排除词（`knowledge_dict.UNIT_EXCL`）。
+    v4.75：加 `unit` —— 单元级排除词（`UNIT_EXCL_ACTIVE`）。
     有些词本身在群里另有日常含义（「集合一下」「集合啦」＝人到齐），只对那个单元生效，
     不进全局 `TOPIC_SKIP_MSG`（那条是**整条消息**跳过，「集合一下，我们讲集合的运算」会被整条丢掉）。
+    v4.99：改读 `UNIT_EXCL_ACTIVE`（数学 + 当前科目词表合并）—— 此前只读
+    knowledge_dict.UNIT_EXCL，物理/化学的排除词从未生效。
     """
-    excl = knowledge_dict.UNIT_EXCL.get(unit) if unit else None
+    excl = UNIT_EXCL_ACTIVE.get(unit) if unit else None
     if excl and any(e in txt for e in excl):
         # 只排除「整条里除了这些搭配没有别的内容」的情况：把搭配本身从判断文本里剔掉后重判
         for e in excl:
@@ -329,7 +375,7 @@ def topic_problem_stats(triples):
             if not any(k in txt for k in TOPIC_STU_PROB):
                 continue
         elif role == 1:
-            if not any(k in txt for k in TOPIC_TEA_PROB):
+            if not _tea_prob_hit(txt):        # v4.98：「错就错在」讲题用语不算学生出错
                 continue
         else:
             continue
@@ -877,8 +923,38 @@ def main():
     #   由报告口径区写出 —— 用户 2026-10-29 定：后台当前即全量，后续会陆续补录。
     global TOPIC_UNITS
     TOPIC_UNITS, _kp = knowledge_dict.augment(TOPIC_UNITS, wd)
+    # v4.99：单元级排除词 = 数学（knowledge_dict.UNIT_EXCL）+ 当前科目词表的合并。
+    #   下发通道是 augment info 的 unit_excl（builtin / 初中物理分支各自带）。
+    global UNIT_EXCL_ACTIVE
+    UNIT_EXCL_ACTIVE = dict(knowledge_dict.UNIT_EXCL)
+    UNIT_EXCL_ACTIVE.update(_kp.get("unit_excl") or {})
+    # v4.94：科目与词表不符（如物理课）→ `fine`（细粒度题型）整块不产出。
+    #   两个词表都是数学的：TOPIC_UNITS 走 knowledge_dict，FINE_TYPES 走 common，
+    #   只关前一个会在卡片「补充信息」里继续冒出「立体几何/空间向量」（实测 4 人）。
+    global SUBJECT_OK
+    SUBJECT_OK = not _kp.get("subject_mismatch")
+    # v4.95：`fine`（细分题型，词表 common.FINE_TYPES）仍是**数学专用** ——
+    #   物理词表只到单元级（physics_dict 无 FINE_TYPES），题型细化不能硬跑，
+    #   否则物理课的「静电场」会被数学题型词表二次加工出垃圾。
+    global FINE_OK
+    FINE_OK = (_kp.get("vocab_subject") or "数学") == "数学"
     _kp["window"] = args.window
-    if _kp.get("degraded"):
+    if _kp.get("subject_mismatch"):
+        print(f"⏸ 本科目不做知识点识别：{_kp['why']}")
+        print("   → 薄弱知识点 / 班级处方 / 按知识点去重 本次不产出；"
+              "出勤、沟通覆盖、分层、预警不受影响。要支持该科目，需按后台知识树另建一套识别词表。")
+    elif str(_kp.get("mode") or "").startswith("builtin_"):
+        # v4.97：物理/化学等走教材自建词表，不能打「以后台为准」的旗号 ——
+        #   各科目后台覆盖情况由 knowledge_used 的 source_note 自述。
+        #   v4.99：来源短语随 mode 走（初中物理是后台词表，不能也打「教材自建」）。
+        _bmode = str(_kp.get("mode") or "")
+        _src = ("后台初中物理知识树词表" if _bmode == "builtin_physics_junior"
+                else "人教版2019教材目录自建词表")
+        print(f"知识点（{_kp.get('vocab_subject')}）：{_src}，"
+              f"识别单元 {len(TOPIC_UNITS)} 个"
+              + (f"；{_kp.get('source_note')}" if _kp.get("source_note") else "")
+              + "；细粒度题型（数学专用）本课不产出")
+    elif _kp.get("degraded"):
         print(f"⚠️ 知识点识别退回内置词表：{_kp['why']}")
         print("   报告仍可出，但知识点不含后台节点；补跑 pull_knowledge.py 后重跑本步。")
     else:
@@ -1279,7 +1355,10 @@ def main():
             # 近 3 天待回应（v3.9）：忘记回复 / 问题未解决，报告与待办共同消费
             "recent3": rt,
             # 细粒度薄弱题型（v4.2）：知识点 → 具体方法/题型（带原文出处）
-            "fine": fine_weaknesses(triples_all),
+            # v4.94：词表只建了数学 —— 科目不符时整块留空。否则物理老师一句
+            #   「这个滑变写错了吧」会被 common.FINE_TYPES 的「写错」关键词认成
+            #   「立体几何/空间向量 · 建系与点坐标书写」（实测 4 人踩中）。
+            "fine": fine_weaknesses(triples_all) if (SUBJECT_OK and FINE_OK) else {},
         }
 
     json.dump(students, open(f"{wd}/analysis.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)

@@ -98,6 +98,13 @@ BACKEND_PENDING = ("导数",)
 #   用它们判「后台没建」会把两类有效信号一起删掉。
 NON_TOPIC_UNITS = ("含参问题", "计算/粗心")
 
+# v4.95：数学词表留在本文件（TOPIC_UNITS 之外的 KP_EXTRA / BACKEND_MISSING 等）；
+#   物理词表在 physics_dict.py（人教版教材目录自建 + 真实语料反查，后台物理树只覆盖
+#   必修一，不能沿用「后台为准做剔除」）。augment() 按课程科目分派两套词表；
+#   其他科目（化学 / 生物…）仍整维度停用。⚠️ 给新科目建词表 = 新建一个 dict 文件
+#   + augment 里加一个分支，不是把 VOCAB_SUBJECT 改成那个科目 —— 那会让数学课全部停用。
+VOCAB_SUBJECT = "数学"
+
 
 def _exists(w, names):
     """该关键词在后台树里「找得到」吗。
@@ -134,18 +141,203 @@ def load(wd="."):
     return d, ""
 
 
+def _course_subject(wd="."):
+    """本次课程的科目（从课程名里取多数票），取不到返回空串。
+
+    ⚠️ 为什么不用 `common.subject_of`：knowledge_dict 是**词表层**，保持零依赖更好调试；
+    且这里只需要「课程名里有没有这个科目词」，不需要 common 的完整解析。
+    """
+    for fn in ("students.json", os.path.join("snapshot", "roster.json")):
+        p = os.path.join(wd, fn) if wd else fn
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, list) or not d:
+            continue
+        cnt = {}
+        for x in d:
+            pn = str((x or {}).get("productName") or "")
+            for w in ("物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "数学"):
+                if w in pn:
+                    cnt[w] = cnt.get(w, 0) + 1
+                    break
+        if cnt:
+            return max(cnt, key=cnt.get)
+    return ""
+
+
+def _dispatch_subject(wd="."):
+    """本次课程的科目。空串 = 取不到（此时不切块，按数学词表 + degraded 走）。"""
+    return _course_subject(wd)
+
+
+# ── 学段分派（v4.99）：物理按学段分流词表 ─────────────────────────────────
+#   初中物理「以后台为准」（后台初中树 324 节点覆盖完整）；
+#   高中物理走人教版教材自建词表（后台高中树仅必修一，照搬「后台为准」会删成空）。
+#   ⚠️ 学段词从课程名取：现有课程名规范必带年级（「2026Q-WL-高二物理…」），
+#   初中课名须含 初一/初二/初三/七年级/八年级/九年级/初中 之一，否则按高中处理 ——
+#   这是**显式可查的降级**（report 口径区会写出所用词表来源，错了能看出来）。
+STAGE_JUNIOR_WORDS = ("初一", "初二", "初三", "七年级", "八年级", "九年级", "初中")
+STAGE_SENIOR_WORDS = ("高一", "高二", "高三", "高中")
+
+
+def _course_stage(wd="."):
+    """本次课程的学段：「初中」/「高中」，取不到返回空串（按高中处理）。"""
+    for fn in ("students.json", os.path.join("snapshot", "roster.json")):
+        p = os.path.join(wd, fn) if wd else fn
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, list) or not d:
+            continue
+        for x in d:
+            pn = str((x or {}).get("productName") or "")
+            if any(w in pn for w in STAGE_JUNIOR_WORDS):
+                return "初中"
+            if any(w in pn for w in STAGE_SENIOR_WORDS):
+                return "高中"
+    return ""
+
+
+# ── 教材自建词表模块注册表（v4.97：物理＋化学；数学走本文件的后台对齐逻辑）──
+#   ⚠️ 给新科目建词表 = ① 新建一个 dict 文件（结构同 physics_dict）
+#   ② 在这里加一行注册 ③ 用真实语料验证关键词。不是把 VOCAB_SUBJECT 改成那个
+#   科目 —— 那会让数学课全部停用。
+BUILTIN_MODULES = {
+    "物理": "physics_dict",
+    "化学": "chemistry_dict",
+}
+# 全部已建词表的科目（subject_mismatch 空态文案用，让读者知道还差什么）
+BUILTIN_SUBJECTS = ("数学",) + tuple(BUILTIN_MODULES)
+
+
+def _builtin_info(mod_name, points):
+    """教材自建词表（物理/化学…）的 knowledge_used 元信息（v4.97）。
+
+    ⚠️ 与数学的差别要写清楚，不能让读者以为该科目也「以后台为准」：
+    教材自建词表不依赖后台树；后台对齐情况由各模块的 SOURCE_NOTE /
+    BACKEND_BACKED 自述（化学目前未核验、物理仅必修一）。
+    backend_nodes 只统计**本科目**的后台节点 —— 否则拿数学树 653 节点冒充
+    「化学后台节点」就是造假。
+    """
+    import importlib
+    mod = importlib.import_module(mod_name)
+    _sub = next(k for k, v in BUILTIN_MODULES.items() if v == mod_name)
+    _ch, _sec, _per = mod.tree_stats()
+    return {
+        "degraded": False,
+        "mode": "builtin_" + mod_name.replace("_dict", ""),   # builtin_physics / builtin_chemistry
+        "vocab_subject": _sub,
+        "source": "人教版2019教材目录自建",
+        "source_note": mod.SOURCE_NOTE,
+        "grade_note": getattr(mod, "GRADE_NOTE", ""),
+        "tree": {"chapters": _ch, "sections": _sec, "per_grade": _per},
+        "unit_grades": dict(mod.UNIT_GRADE),
+        # v4.99：单元级排除词随 info 下发（此前物理/化学的 UNIT_EXCL 根本没接线，
+        #   extract 只读本文件的数学版 —— 「期待与你们相遇」会误判成匀变速薄弱）
+        "unit_excl": dict(getattr(mod, "UNIT_EXCL", {}) or {}),
+        "backend_backed_units": list(getattr(mod, "BACKEND_BACKED", ())),
+        "backend_nodes": sum(1 for p in points if p.get("subjectName") == _sub),
+        "method_nodes": sum(1 for p in points if p.get("category") == 2),
+        "added": 0, "new_units": [], "dropped": [], "pending": [],
+    }
+
+
+def _augment_physics_junior(kd, why, points):
+    """初中物理分支（v4.99）：**以后台为准**，与数学同构。
+
+    · 无树 → 显式降级（返回词表原样 + degraded，绝不静默）
+    · 有树 → 只认「物理 + 初中学段」的节点（backend_nodes 防冒充：数学/高中
+      节点不掺进来）；单元存在性按后台运行时校验，节点消失 → 剔除并显式写出。
+    · 命中词不逐词校验（词表本身就是按后台树建的，见 physics_dict.JUNIOR 部分）。
+    """
+    import physics_dict
+    units = physics_dict.JUNIOR_TOPIC_UNITS
+    if not kd:
+        return list(units), {
+            "degraded": True, "why": why or "未拉到后台知识树",
+            "mode": "builtin_physics_junior", "vocab_subject": "物理",
+            "source_note": physics_dict.JUNIOR_SOURCE_NOTE.format(
+                pulled_at="未拉取", n_nodes=0) + "（本次运行未拉到后台树，口径按词表内置状态呈现）",
+            "grade_note": "", "backend_nodes": 0,
+            "method_nodes": 0, "added": 0,
+            "new_units": [], "dropped": [], "pending": [],
+        }
+    names = {p["name"] for p in points
+             if p.get("subjectName") == "物理" and str(p.get("schoolStages")) == "1"
+             and p.get("level", 0) >= 2}
+    method_n = sum(1 for p in points
+                   if p.get("subjectName") == "物理" and str(p.get("schoolStages")) == "1"
+                   and p.get("category") == 2)
+    out, dropped = [], []
+    for disp, kws, key in units:
+        if disp in NON_TOPIC_UNITS:          # 「计算/粗心」永远保留
+            out.append((disp, list(kws), key))
+            continue
+        if not _exists(disp, names) and not any(_exists(w, names) for w in kws):
+            dropped.append(disp)             # 后台整个单元没了 → 剔除，口径区可见
+            continue
+        out.append((disp, list(kws), key))
+    kdj = kd or {}
+    return out, {
+        "degraded": False,
+        "mode": "builtin_physics_junior",
+        "vocab_subject": "物理",
+        "source_note": physics_dict.JUNIOR_SOURCE_NOTE.format(
+            pulled_at=str(kdj.get("pulled_at") or "")[:10] or "近期", n_nodes=len(names)),
+        "grade_note": "",
+        "backend_nodes": len(names),
+        "method_nodes": method_n,
+        "unit_excl": dict(physics_dict.JUNIOR_UNIT_EXCL),
+        "added": 0, "new_units": [], "dropped": dropped, "pending": [],
+    }
+
+
 def augment(units, wd="."):
     """把后台节点词并进识别单元，并剔除后台没有的模块。返回 (新单元列表, info)。
 
     units 结构不变（(显示名, 命中词, 归属大类) 三元组），下游零改动。
     无字典时**不做剔除**（不知道该剔什么），返回原表并标 degraded。
+    v4.97：按课程科目分派 —— 物理/化学 → 各自教材自建词表（BUILTIN_MODULES），
+    数学 → 本文件的后台对齐逻辑；其余科目 → 整维度停用（subject_mismatch）。
+
+    ⚠️ 分派必须在 load(wd) **之前**：教材自建词表不依赖后台树，
+    没拉知识树也能跑；化学等科目没拉树时若先走 load 分支，会拿数学内置词表
+    照跑（degraded 横幅救不回「化学课识别出函数」这种错内容）。
+
+    v4.99：物理按学段分流 —— 初中 → _augment_physics_junior（以后台为准），
+    高中 → 人教版教材自建词表（BUILTIN_MODULES）；学段取不到按高中处理。
     """
+    _csub = _dispatch_subject(wd)
+    _cstage = _course_stage(wd)
     kd, why = load(wd)
+    points = (kd or {}).get("points") or []
+    if _csub == "物理" and _cstage == "初中":
+        return _augment_physics_junior(kd, why, points)
+    if _csub in BUILTIN_MODULES:
+        return list(__import__(BUILTIN_MODULES[_csub]).TOPIC_UNITS), \
+            _builtin_info(BUILTIN_MODULES[_csub], points)
+    if _csub and _csub != VOCAB_SUBJECT:
+        return [], {
+            "degraded": True, "subject_mismatch": True,
+            "why": (f"识别词表目前建了「{'、'.join(BUILTIN_SUBJECTS)}」，"
+                    f"本次课程是「{_csub}」——"
+                    f"硬套会把已建科目的说法认成{_csub}知识点，"
+                    f"故本版不做知识点识别"),
+            "course_subject": _csub, "vocab_subject": VOCAB_SUBJECT,
+            "vocab_subjects": list(BUILTIN_SUBJECTS),
+            "tree_subject": sorted({p.get("subjectName") for p in points if p.get("subjectName")}),
+            "added": 0, "new_units": [], "dropped": [], "pending": [],
+            "backend_nodes": len(points),
+            "method_nodes": sum(1 for p in points if p.get("category") == 2),
+            "mode": "subject_mismatch",
+        }
     if not kd:
         return list(units), {"degraded": True, "why": why, "added": 0,
                              "new_units": [], "dropped": [], "mode": "builtin"}
 
-    points = kd["points"]
     names = {p["name"] for p in points if p.get("level", 0) >= 2}
     method_n = sum(1 for p in points if p.get("category") == 2)
 

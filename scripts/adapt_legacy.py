@@ -53,22 +53,65 @@ def _load(wd, name, default=None):
 
 
 # ---------------------------------------------------------------- roster
+def _dup_roster(students):
+    """同一课程下重复出现的姓名（仅用于 meta 说明，不参与任何判定）。
+
+    ⚠️ key 与 `build_roster` 的去重 key 必须一致，否则「说有重复」和「实际合并」
+    会对不上（例如一边 strip 一边不 strip）。
+    """
+    seen, dup = set(), []
+    for x in students:
+        nm = common.norm_name(x.get("stuName"))
+        if not nm:
+            continue
+        k = (x.get("productName"), nm)
+        if k in seen and nm not in dup:
+            dup.append(nm)
+        seen.add(k)
+    return dup
+
+
+def _roster_rank(rec):
+    """同一学生多条报名记录时，谁更该被保留（v4.94）。
+
+    后台会给同一学生生成多条 `productStudent` 行（换单 / 续报 / 内部补录），
+    字段完整度差别很大：实测某生两条 —— 一条联席「刘雨晴」+ 直播 + 学校齐全，
+    另一条联席「-」+ 购课类型「未标注」+ 学校空。若留下后者，报告里这个人就等于
+    「没联席、购课类型不明」，还会把他算进「未知归属」。
+    ⚠️ 只按**字段完整度**排序，不看成绩/出勤（那些在其它文件里，不该参与身份判定）。
+    """
+    sc = 0
+    if (rec.get("coTeacherName") or "-").strip() not in ("", "-"):
+        sc += 4
+    if rec.get("buyType") not in ("未标注", "", None):
+        sc += 2
+    if (rec.get("schoolName") or "").strip():
+        sc += 1
+    if rec.get("roomId"):
+        sc += 1
+    return sc
+
+
 def build_roster(students, groups):
-    """在册名单。roomId 由「群名内学生姓名」反查 —— 这是**降级路径**（后台未给映射）。"""
+    """在册名单。roomId 由「群名内学生姓名」反查 —— 这是**降级路径**（后台未给映射）。
+
+    v4.94：按 `(productName, 归一姓名)` **去重**。后台确有同一学生两条报名记录的情况，
+    不去重会让 `coverage.py` 的守恒断言（`len(cov) == len(roster)`）直接失败 ——
+    实测物理六B孙 50 条里「某生」重复一次，coverage 去重后 49 条 → 断言炸、整条链路中断。
+    ⚠️ 去重后 `no_room` 必须**重新统计**，否则「多少人没群」会比实际多报。
+    """
     room_by_norm = {}
     for g in groups:
         n = common.norm_name(g.get("studentName"))
         if n and n not in room_by_norm:
             room_by_norm[n] = g.get("roomId")
 
-    out, no_room = [], 0
+    out, _seen = [], {}
     for x in students:
         nm = x.get("stuName")
         norm = common.norm_name(nm)
         room = room_by_norm.get(norm)
-        if not room:
-            no_room += 1
-        out.append({
+        rec = {
             "stuName": nm,
             "stuNameNorm": norm,
             "stuSeq": x.get("stuSeq"),
@@ -83,7 +126,16 @@ def build_roster(students, groups):
             "schoolName": x.get("schoolName"),
             "roomId": room,
             "enrollStatus": None,
-        })
+        }
+        key = (rec["productName"], norm)
+        if key in _seen:
+            i = _seen[key]
+            if _roster_rank(rec) > _roster_rank(out[i]):
+                out[i] = rec
+            continue
+        _seen[key] = len(out)
+        out.append(rec)
+    no_room = sum(1 for r in out if not r.get("roomId"))
     return out, no_room
 
 
@@ -269,6 +321,16 @@ def main():
             "field": "chats{}",
             "reason": f"{len(orphan)} 个 roomId 不在 groups 表中",
             "impact": "该群学生未进在册名单，消息不参与分析",
+        })
+    # v4.94：同一学生多条报名记录 → 已合并，必须在报告里说清，否则「在册 N 人」与实际人头对不上
+    _dup = _dup_roster(students)
+    if _dup:
+        degraded.append({
+            "field": "roster[]",
+            "reason": f"{len(_dup)} 人后台有多条报名记录（换单 / 续报 / 补录），已按姓名合并、"
+                      f"保留信息最全的一条：" + "、".join(_dup[:5]) + ("…" if len(_dup) > 5 else ""),
+            "impact": "在册人数按**人头**计（不是报名记录数）；合并不会丢人，但被合并那条的"
+                      "订单信息（其余订单的购课类型等）不参与本次分析",
         })
 
     meta = {

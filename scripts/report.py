@@ -27,6 +27,7 @@ from datetime import datetime
 sys.path.insert(0, sys.path[0])
 import common
 import problems as _pb        # v4.68 问题标签 → 措施（清单与报告同源）
+import prescribe              # v4.86 处方层（证据 → 下一步做什么；不动判定层）
 try:  # 聊天高频知识点的权威词表，用于小黑板「关联知识点」口径对齐
     from extract import TOPICS as CHAT_TOPIC_KEYS
 except Exception:
@@ -684,7 +685,10 @@ def board_block(sm):
     # v4.0：删除「涉及知识点」「实证薄弱」两行 —— 与 ① 的「薄弱知识点」chips 同源重复
     # （实证薄弱点已由 ① 以 🖍 标出）；全量知识点在下方折叠的逐轮明细里逐条列出。
     ec = Counter(e for d in ds for e in (d.get("errors") or []))
-    errs = "、".join(f"{k}×{v}" for k, v in ec.most_common(3)) or "—"
+    # ⚠️ v4.86：读图原文里的数学写法（`-1<x≤-1/2`）未转义时会被浏览器当成 `<x…>` 标签，
+    #   吞掉后面到下一个 `>` 的全部内容（实测本课 2 处，v4.83 起就存在）。
+    #   凡是「读图/模型产出的自由文本」进 HTML 前一律转义。
+    errs = _html.escape("、".join(f"{k}×{v}" for k, v in ec.most_common(3)) or "—")
     trend = sm.get("trend", "—")
     lrows = ""
     for g in lessons:
@@ -720,9 +724,11 @@ def board_block(sm):
         # v4.61：读图结果常只填 topic 不填 problem → 「题目」列整列空白。
         #   退回 topic（题目所属模块）至少能看出这一轮考的是什么，别留一片空。
         _pb = d.get("problem") or d.get("topic") or ""
-        rows += (f'<tr><td>{ld}</td><td>{_pb}</td>'
-                 f'<td class="bs {cls}">{d.get("status","")}</td><td>{d.get("correct","")}</td>'
-                 f'<td>{tk}</td><td>{err}</td><td>{stuck}</td></tr>')
+        rows += (f'<tr><td>{_html.escape(ld)}</td><td>{_html.escape(_pb)}</td>'
+                 f'<td class="bs {cls}">{_html.escape(d.get("status",""))}</td>'
+                 f'<td>{_html.escape(d.get("correct",""))}</td>'
+                 f'<td>{_html.escape(tk)}</td><td>{_html.escape(err)}</td>'
+                 f'<td>{_html.escape(stuck)}</td></tr>')
     # v4.0：正文只留「一句话作答概况 + 典型错误」，**每次课的情况与逐轮明细一律折叠**
     #（用户反馈：课次表铺在卡里太占版面，需要时再点开看）。
     # v4.61：若读图来源目录名带「第 N 节课」，标题直接标出来 —— 否则一张卡上只有 9 个
@@ -965,7 +971,20 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v4.85"
+SKILL_VER = "v5.01"
+
+# ============ v4.86 处方层运行时状态 ============
+# 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
+# 而这两处分别由 card_html() 与 teaching_advice() 渲染，调用链深、参数已经很多。
+# 只在一次 run 内有效，report() 开头重置。
+_RX = {
+    "on": True,       # 教务视角不出处方（处方是联席/主讲的动作）
+    "log": {},        # 任务表回读（业务自己在飞书填，本模块只读）
+    "log_src": "",    # 回读来源，写进 Tab② 的说明里（读不到必须显式说）
+    "tasks": [],      # 本次全部处方，供导出任务表
+    "n_stu": 0,       # 出了处方的学生数（配额后）
+    "n_task": 0,
+}
 
 EXAM_LV_CN = {"高": "较好", "中": "中等", "偏低": "偏低"}
 EXAM_LV_CLS = {"高": "ok", "中": "warn", "偏低": "bad"}
@@ -1390,8 +1409,8 @@ _SEQ_DATE = {}                 # {(wd, classSeq): "YYYY-MM-DD"} 节次→上课�
 def _join_map(wd):
     """入班信息（v4.73）：返回 ({归一化姓名: {"joinTime","firstSeq"}}, 全班最大节数, 全集节次)。
 
-    ⚠️ key 必须**去掉尾部数字**：`join_time.json` 用后台原名（「王一涵6688」「王子乔2097」），
-    `attendance_clean.json` 已被剥成「王一涵」「王子乔」；不归一会整批查不到，
+    ⚠️ key 必须**去掉尾部数字**：`join_time.json` 用后台原名（「某生A6688」「某生B2097」），
+    `attendance_clean.json` 已被剥成「某生A」「某生B」；不归一会整批查不到，
     表现就是「这个人明明后入班，报告里分母还是满的」。
     最大节数取 `attendance_clean.json` 里所有学生的 `lessonCount` 最大值 ——
     它天然是**窗口内**的节数（已按 `--window/--end` 裁过），比用课程总节数 18 准。
@@ -1581,6 +1600,104 @@ def _att_view_core(r):
             _iss_t, 2 if absent >= 2 else 1)
 
 
+def _seqs_txt(seqs):
+    """节次列表 → 「第 3、4 节」／「第 1—3、6 节」（连续段合并成区间，v4.92）。
+
+    ⚠️ 只用于**小注**，不参与任何判定。节次可能是字符串，统一 int 后去重排序。
+    """
+    ss = []
+    for x in seqs:
+        try:
+            ss.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    ss = sorted(set(ss))
+    if not ss:
+        return ""
+    segs, st, pv = [], ss[0], ss[0]
+    for x in ss[1:]:
+        if x == pv + 1:
+            pv = x
+            continue
+        segs.append((st, pv))
+        st = pv = x
+    segs.append((st, pv))
+    # 段长 ≥3 才合并成区间（「第 1—3 节」省字）；正好 2 节仍写「第 3、4 节」——
+    #   两节用区间读起来像「3 到 4 之间」，反而要想一下是几节。
+    parts = [f"{a}—{b}" if b - a >= 2 else "、".join(str(x) for x in range(a, b + 1))
+             for a, b in segs]
+    return f"第 {'、'.join(parts)} 节"
+
+
+def replay_note(r):
+    """出勤格小注：**哪几节是看回放补的**（v4.92）。
+
+    用户 2026-11-03 原话：「如果学生的购课类型是直播，后台是 8/8 全勤（含 2 节看回放），
+    在这里用小字备注，x 和 x 节是回放」。原来只有 hover 里写「直播 6 节 ＋ 回放 2 节」，
+    知道有几节回放、不知道是哪几节，教务要回后台一节节对。
+
+    ⚠️ 只算「**仅靠回放补齐**」的节次（`isAttend != 1 且 isPlayback == 1`）。
+    「到了课、也看了回放」的节次不能算回放 —— 否则到课的学生会因为课后复习
+    被写成一堆回放，反而看不出真实到课情况。
+    ⚠️ 购「回放」课不加：格值本来就是「回放 5/5」，再说哪几节是回放没有信息量。
+    """
+    s = r["s"]
+    a = r.get("att") or {}
+    if (s.get("buy_type") or "").strip() == "回放":
+        return ""
+    cls = a.get("classes") or []
+    if not cls:
+        return ""                            # 无逐节明细 → 宁可不写，也不猜
+    pbo = [c.get("classSeq") for c in cls
+           if c.get("isAttend") != 1 and c.get("isPlayback") == 1]
+    seg = _seqs_txt(pbo)
+    if not seg:
+        return ""
+    # ⚠️ 一节直播都没到（含「全看回放」）时，格值仍是「到课 2/8」——
+    #   此时若只写「第 1、2 节是回放」，读者会追问「那到课几节？」。先把前提说清楚。
+    att = sum(1 for c in cls if c.get("isAttend") == 1)
+    if att == 0:
+        return f"（直播一节没到，{seg}看回放）"
+    return f"（{seg}是回放）"
+
+
+def miss_short_note(r):
+    """出勤格小注：**哪几节是既没到课、也没看回放**（v4.93）。
+
+    用户 2026-11-03（截图「回放 2/8」）：这种有缺勤的，需要小字提示哪 x 节缺勤。
+    原来只有 hover 与诊断句里有，四格上只看得到「2/8」，还要去别处找是哪几节。
+
+    ⚠️ 排除 `noRecord` 占位行：后台没记录 ≠ 确认没来，那种由 `att_late_note` 单独说明，
+    这里再写一遍会变成「第 4 节缺课」的冤案。
+    ⚠️ 措辞按购课类型：购回放说「没看」（他买的就是回放），购直播说「缺课」
+       （全报告口径 缺课 = 既没到课也没看回放）。
+    """
+    s = r["s"]
+    a = r.get("att") or {}
+    cls = a.get("classes") or []
+    if not cls:
+        return ""                            # 无逐节明细 → 不猜
+    gone = [c.get("classSeq") for c in cls
+            if c.get("isAttend") != 1 and c.get("isPlayback") != 1
+            and not c.get("noRecord")]
+    seg = _seqs_txt(gone)
+    if not seg:
+        return ""
+    _buy = (s.get("buy_type") or "").strip()
+    return f"（{seg}没看）" if _buy == "回放" else f"（{seg}缺课）"
+
+
+def _join_notes(*notes):
+    """把若干「（…）」小注合成**一个**括号，用「；」分隔（v4.92）。
+
+    ⚠️ 为什么合并：「（9-25 入班，前 3 节不在班）（第 2、3 节是回放）」两个括号连着，
+    读者会当成两条互不相干的事；合成「（9-25 入班，前 3 节不在班；第 2、3 节是回放）」
+    才看得出都在解释同一格「到课 7/7」。不认括号形态的串原样保留，不做字符串手术。
+    """
+    inner = [n[1:-1] for n in notes if n and n.startswith("（") and n.endswith("）")]
+    return f"（{'；'.join(inner)}）" if inner else ""
+
+
 def att_view(r):
     """对外入口（v4.73）：core 结果 + 后入班说明。
 
@@ -1708,7 +1825,10 @@ def metrics_grid(r, fst):
     else:
         out.append(("作业提交", "无记录", "mute", "飞书表无该生记录"))
     _v, _c, _t, _iss, _sev = att_view(r)
-    out.append(("出勤", _v, _c, _t, att_late_note(r)[0]))
+    # v4.92/4.93：小注可叠加 —— 后入班（分母为什么小）＋ 哪几节是回放补的 ＋ 哪几节真缺。
+    #   三者都只在**取不到事实时宁可不写**（各自返回空串），合成一个括号再上屏。
+    _an = _join_notes(att_late_note(r)[0], replay_note(r), miss_short_note(r))
+    out.append(("出勤", _v, _c, _t, _an))
     out.append(("学习发言", f"{n_study} 条",
                 "ok" if n_study >= 8 else ("mute" if n_study >= 3
                                            else ("bad" if n_study <= 0 else "warn")),
@@ -1725,8 +1845,13 @@ def metrics_grid(r, fst):
                     "最后一次与学习相关的发言距今天数"))
     def _cell(it):
         k, v, c, t = it[0], it[1], it[2], it[3]
-        note = it[4] if len(it) > 4 else ""      # 第二行小注（v4.73 后入班说明）
-        _nt = f'<span class="mgn">{_html.escape(note)}</span>' if note else ""
+        note = it[4] if len(it) > 4 else ""      # 第二行小注（v4.73 后入班 / v4.92 回放 / v4.93 缺勤）
+        # v4.93：小注按「；」分段，每段 `nowrap` 整体换行 —— 中文默认在任意字间断行，
+        #   原来「…；第 6—8 节缺课）」会断成「第 6—8 节」＋「缺课）」，读着像两句残缺的话。
+        #   ⚠️ 分隔符必须留在 span **外面**：它就是唯一的合法断行点。
+        _nt = "；".join(f'<span class="nb">{_html.escape(p)}</span>'
+                        for p in note.split("；")) if note else ""
+        _nt = f'<span class="mgn">{_nt}</span>' if _nt else ""
         return (f'<div class="mg"><span class="mgk">{k}</span>'
                 f'<span class="mgv {c}" title="{_html.escape(t or "")}">{v}</span>{_nt}</div>')
     return "".join(_cell(x) for x in out)
@@ -1772,6 +1897,23 @@ def act_brief(todo):
 _WD = ""                      # 主流程设置：当前 workdir
 _ENROLL_CACHE = {}            # {wd: (by_name, renew_by_name)}
 _KUAKE_CACHE = {}             # {wd: kuake}
+_KNOW_CACHE = {}              # {wd: knowledge_used.json}
+
+
+def _knowledge_info():
+    """读 `knowledge_used.json`（v4.94）—— 用来区分「没证据」和「本版不支持这个科目」。
+
+    ⚠️ 只读不写：这份文件由 `extract.py` 落盘，report 只是消费它的结论。
+    """
+    if _WD in _KNOW_CACHE:
+        return _KNOW_CACHE[_WD]
+    d = {}
+    try:
+        d = json.load(open(os.path.join(_WD, "knowledge_used.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    _KNOW_CACHE[_WD] = d
+    return d
 
 _KUAKE_SUBJ = ["物理", "化学", "英语", "语文", "生物", "历史", "地理", "政治"]
 #   ⚠️ 不收「科学」：实测它把「各**科学**习方法」「不科学」切成科目词，是纯噪声源；
@@ -1801,8 +1943,11 @@ _KUAKE_NOISE = ("老师", "作业", "试卷", "考试", "课代表", "竞赛", "
 _KUAKE_INTENT = ("想报", "要报", "报名", "报班", "报课", "能报", "可以报", "还能报",
                  "试听", "约课", "扩科", "加一科", "再加一科",
                  "多少钱", "学费", "价格", "怎么收费", "班型",
-                 "开课", "什么时候开", "有没有班", "有班吗", "还有班吗", "有没有名额",
+                 "什么时候开", "有没有班", "有班吗", "还有班吗", "有没有名额",
                  "名额", "有空位", "还有位置", "还有位")
+#   v5.01 删裸「开课」（原在此处）—— 真实语料 22 条命中 0 真阳性：全是教务通知
+#   （「秋季班开课在即」×10）、「我昨天物理课开课」式自我陈述、问自己班的课期。
+#   询问场景已有「什么时候开 / 有没有班 / 有班吗」等覆盖，删词零损失。
 # 科目词与意图词的最大距离：超过即认为不是同一件事（「报名以后可以回放吗」离「物理」十几字，不算）
 _KUAKE_NEAR = 8
 # ── 第二档：问过其他科目 ────────────────────────────────────────────────────
@@ -1844,7 +1989,10 @@ _KUAKE_TIME_ASK = ("在上", "在学", "正在上", "上着", "补课", "恶补"
 #     裸「名额」会让它变成 0（构造样本实测踩过）。
 _KUAKE_MKT = ("热报名", "报名中", "早鸟", "名额有限", "优惠", "🔥", "抢报", "招生", "暑秋")
 _KUAKE_SPLIT = re.compile(r"[。！？；\n]")   # 分句：科目与意图必须同句
-_KUAKE_VER = 5          # 判定规则版本：改了规则必须 +1，否则 snapshot/kuake.json 旧结果会被沿用
+_KUAKE_VER = 6          # 判定规则版本：改了规则必须 +1，否则 snapshot/kuake.json 旧结果会被沿用
+#   v5.00→v5.01：删裸「开课」（22 条命中 0 真阳性）+ 在读科目数据修复后 _mine 豁免
+#   真正生效（某生「我昨天物理课开课」——物理本就是在读科目，此前科目数据缺失没拦住）。
+#   ⚠️ 在读科目数据（enroll）更新后 kuake 缓存不会自动失效，改规则须 _KUAKE_VER+1 重算。
 #   v4.82→v4.83：① 同句多科目不再只记第一个（「我要一下物理化学」原来漏化学）；
 #                ② 已在读科目不算扩科（张睿琦在读数学·化学，化学不该进扩科信号）
 _RENEW_YES = ("已续报", "是", "y", "Y", "1", "续报", "续费", "已续费")
@@ -2059,7 +2207,8 @@ def _cjw_line(r, edu):
       · 续报为「未确认」    → 整组隐藏（未设置 / 接口未返回 / 空串都算未确认）
       · 扩科意向无命中      → 整组隐藏
       三组都无内容时整行返回空串，卡头不留空壳。
-      注：续报「未确认」并非信息丢失——Tab② 顶部 KPI 仍统计「续报未确认」，明细表也保留该列。
+      注（v5.00）：KPI 已两档（已续报/未续报，「未确认」按未续报计入）；
+      卡片身份行维持「未确认不渲染」—— 没有实质内容不占位。
     """
     if not edu:
         return ""
@@ -2122,7 +2271,8 @@ def edu_overview_block(rows, course_order=None):
         if ck not in courses:
             courses.append(ck)
 
-    multi = single = renew_yes = renew_no = renew_wait = kuake_n = aska_n = 0
+    multi = single = renew_yes = renew_no = kuake_n = aska_n = 0
+    kkstu_n = kk_s_n = kk_u_n = 0      # v5.01：可扩科（学生数） / 春缺 / 暑缺
     # 续报接口未接入（renew 全空）时，已续报/未续报显示「—」而非 0，避免被读成「一个都没续报」
     renew_na = not renew_by_name
     detail = []
@@ -2136,14 +2286,10 @@ def edu_overview_block(rows, course_order=None):
         elif len(subs) == 1:
             single += 1
         rv = renew_by_name.get(nm)
-        if rv is None:
-            renew_wait += 1
-            rst = "wait"
-        elif str(rv) == "未设置":
-            # v4.44：接口已返回但学生未选 → 计入「续报未确认」
-            renew_wait += 1
-            rst = "wait"
-        elif str(rv) in _RENEW_YES:
+        # v5.00（用户 2026-11-05）：续报只留两档 —— 已续报=后台「是」；
+        #   未续报=后台「否」+「未设置」（学生在后台还没选）+ 不在接口返回中。
+        #   原「续报未确认」档删除（v4.44 曾单列，用户拍板并入未续报）。
+        if rv is not None and str(rv) in _RENEW_YES:
             renew_yes += 1
             rst = "yes"
         else:
@@ -2157,15 +2303,40 @@ def edu_overview_block(rows, course_order=None):
         if _ka:
             aska_n += 1
         subj = "·".join(subs) or "—"
-        if rv is None:
-            rvh = ('<span class="jwv wait" title="该生未出现在续报接口的返回中（可能已结课，或课程不在「进行中」）；'
-                   '不代表未续报">未确认</span>')
+        # v5.01：可扩科 —— 2026 春(term=1)/暑(term=2)在读、但秋季不在读的科目
+        #   （数据源 pull_enroll 课程记录接口，enr["spring"]/["summer"]）。
+        #   KPI 口径（用户确认）＝「有可扩科目的学生数」，一人多科算 1。
+        _spr = [s for s in (enr.get("spring") or []) if s and s not in subs]
+        _sumr = [s for s in (enr.get("summer") or []) if s and s not in subs]
+        if _spr or _sumr:
+            kkstu_n += 1
+        if _spr:
+            kk_s_n += 1
+        if _sumr:
+            kk_u_n += 1
+        _kk_chips, _kk_notes = [], []
+        for _s in _spr:
+            _kk_chips.append(f'<span class="kk-chip">{_html.escape(_s)}</span>')
+            _kk_notes.append(f"春季{_s}在读，秋不在读")
+        for _s in _sumr:
+            _kk_chips.append(f'<span class="kk-chip">{_html.escape(_s)}</span>')
+            _kk_notes.append(f"暑期{_s}在读，秋不在读")
+        _kk_flag = (("s" if _spr else "") + ("u" if _sumr else ""))
+        kkh = ("".join(_kk_chips)
+               + (f'<span class="kk-note">{_html.escape("；".join(_kk_notes))}</span>' if _kk_notes else "")
+               or '<span class="jwv none">—</span>')
+        # v5.00：明细行续报列也两档 —— 「未确认」（不在返回中/未设置）统一显示「未续报」，
+        #   title 保留解释（点开能看到为什么按未续报算），但不再单列一档。
+        if rv is not None and str(rv) in _RENEW_YES:
+            rvh = '<span class="jwv ok">已续报</span>'
+        elif rv is None:
+            rvh = ('<span class="jwv no" title="该生未出现在续报接口的返回中（可能已结课，或课程不在「进行中」）；'
+                   '按「未续报」口径计入">未续报</span>')
         elif str(rv) == "未设置":
-            rvh = ('<span class="jwv wait" title="研发接口已返回该生续报字段，状态为「未设置」：'
-                   '学生尚未在后台选择是否续报（真实状态，非接口缺失）">未确认</span>')
+            rvh = ('<span class="jwv no" title="研发接口已返回该生续报字段，状态为「未设置」：'
+                   '学生尚未在后台选择是否续报；按「未续报」口径计入">未续报</span>')
         else:
-            _yes = str(rv) in _RENEW_YES
-            rvh = f'<span class="jwv {"ok" if _yes else "no"}">{"已续报" if _yes else "未续报"}</span>'
+            rvh = '<span class="jwv no">未续报</span>'
         # v4.42：扩科意向 chip ＋ 可见依据（命中词 ±25 字原文截片）
         # v4.82：两档同列不同色——紫=明确意向，蓝灰=问过其他科目（不能当报班意向用）
         kh = ("".join(
@@ -2176,16 +2347,32 @@ def edu_overview_block(rows, course_order=None):
             for k in kk) or '<span class="jwv none">—</span>')
         # data-* 供前端筛选：kc=课程 key r=续报态 m=科目数(1多科/0单科/u未知)
         #   k 用字符串：i=有明确意向 a=问过其他科目（ia 两者都有）—— 空串才表示都没有
+        #   kk=可扩科（v5.01）：s=春在读秋不在读 u=暑在读秋不在读 su=两者
         _m = "1" if len(subs) > 1 else ("0" if len(subs) == 1 else "u")
         _kf = ("i" if _ki else "") + ("a" if _ka else "")
         detail.append(f'<tr data-kc="{_html.escape(ck)}" data-r="{rst}" data-m="{_m}"'
-                      f' data-k="{_kf}"><td>{_html.escape(nm)}</td><td>{subj}</td>'
-                      f'<td>{rvh}</td><td>{kh}</td></tr>')
+                      f' data-k="{_kf}" data-kk="{_kk_flag}"><td>{_html.escape(nm)}</td><td>{subj}</td>'
+                      f'<td>{rvh}</td><td>{kkh}</td><td>{kh}</td></tr>')
     tbody = "".join(detail)
 
-    det = (f'<details class="slimdet"><summary>学生级明细（<span id="eduCnt">{total}</span> 人，点击展开）'
-           f'</summary><table><thead><tr><th>学生</th><th>在读科目</th><th>续报</th>'
-           f'<th>扩科意向 / 他科问题</th></tr></thead><tbody id="eduDetailBody">{tbody}</tbody></table></details>')
+    # v4.90（用户 2026-11-03）：教务维度默认展开 —— 教务来这一页就是逐生看续报状态，
+    #   先收起来等于每次都要多点一下。**只改这一处**（本函数仅教务分支调用）；
+    #   学生卡里的 slimdet 保持默认收起，否则每张卡都铺开会拖垮阅读。
+    #   展开后 200+ 行会把下方「共性薄弱面」推走 → 明细单独限高内部滚动 + 表头吸附。
+    # v5.01：summary 右侧加二级切换（全部 / 春在读·秋不在读 / 暑在读·秋不在读）——
+    #   与 KPI 卡点击（K）、顶部课程筛选（EDUC）三者叠加过滤；按钮 preventDefault 防 details 收起。
+    _det = (f'<details class="slimdet" open><summary>学生级明细（<span id="eduCnt">{total}</span> 人，点击收起）'
+            f'<span class="sectabs">'
+            f'<button class="sectab on" data-kk="" onclick="event.preventDefault();kkTab(\'\')">全部</button>'
+            f'<button class="sectab" data-kk="s" onclick="event.preventDefault();kkTab(\'s\')">'
+            f'春在读 · 秋不在读<span class="cnt" id="kkc-s">0</span></button>'
+            f'<button class="sectab" data-kk="u" onclick="event.preventDefault();kkTab(\'u\')">'
+            f'暑在读 · 秋不在读<span class="cnt" id="kkc-u">0</span></button>'
+            f'</span>'
+            f'</summary><div class="edu-detbox"><table><thead><tr><th>学生</th><th>在读科目（秋）</th>'
+            f'<th>续报</th><th>可扩科目</th><th>扩科意向 / 他科问题</th></tr></thead>'
+            f'<tbody id="eduDetailBody">{tbody}</tbody></table></div></details>')
+    det = _det
 
     _na = "1" if renew_na else "0"
     _yes_txt = "—" if renew_na else str(renew_yes)
@@ -2198,7 +2385,7 @@ def edu_overview_block(rows, course_order=None):
     js = """
 <script>
 (function(){
-  var K='';
+  var K='', KK='';      // KK（v5.01）：'' 全部 / 's' 春在读秋不在读 / 'u' 暑在读秋不在读
   function trs(){return document.querySelectorAll('#eduDetailBody tr');}
   window.eduKpi=function(k){
     K=(K===k)?'':k;
@@ -2208,50 +2395,83 @@ def edu_overview_block(rows, course_order=None):
     }
     eduApply();
   };
+  // v5.01：明细二级切换（全部 / 春在读·秋不在读 / 暑在读·秋不在读）
+  window.kkTab=function(k){
+    KK=k;
+    var tabs=document.querySelectorAll('.sectabs .sectab');
+    for(var i=0;i<tabs.length;i++){
+      tabs[i].classList.toggle('on', tabs[i].getAttribute('data-kk')===KK);
+    }
+    eduApply();
+  };
   // v4.41：课程 = 页面顶部标签（全局状态 window.EDUC，'' = 全部课程）
   window.eduApply=function(){
     var ck=window.EDUC||'';
-    var c={yes:0,no:0,wait:0,multi:0,single:0,kuake:0,aska:0}, shown=0;
+    var c={yes:0,no:0,multi:0,single:0,kk:0,kuake:0,aska:0,kks:0,kku:0}, shown=0;
     var rs=trs();
     for(var i=0;i<rs.length;i++){
-      var d=rs[i].dataset, inC=(!ck||d.kc===ck), ok=inC, _k=d.k||'';
-      if(ok&&K){ ok=(K==='multi')?(d.m==='1'):((K==='single')?(d.m==='0'):((K==='kuake')?(_k.indexOf('i')>=0):((K==='aska')?(_k.indexOf('a')>=0):(d.r===K)))); }
+      var d=rs[i].dataset, inC=(!ck||d.kc===ck), ok=inC, _k=d.k||'', _kk=d.kk||'';
+      if(ok&&K){ ok=(K==='multi')?(d.m==='1'):((K==='single')?(d.m==='0'):((K==='kk')?(_kk!==''):((K==='kuake')?(_k.indexOf('i')>=0):((K==='aska')?(_k.indexOf('a')>=0):(d.r===K))))); }
+      if(ok&&KK){ ok=(_kk.indexOf(KK)>=0); }
       rs[i].style.display=ok?'':'none';
       if(inC){
         if(c[d.r]!==undefined)c[d.r]++;
         if(d.m==='1')c.multi++;
         if(d.m==='0')c.single++;
+        if(_kk!=='')c.kk++;
+        if(_kk.indexOf('s')>=0)c.kks++;
+        if(_kk.indexOf('u')>=0)c.kku++;
         if(_k.indexOf('i')>=0)c.kuake++;
         if(_k.indexOf('a')>=0)c.aska++;
       }
       if(ok)shown++;
     }
-    var ks=['yes','no','wait','multi','single','kuake','aska'];
+    // v5.01：二级 tab 计数跟随课程过滤（与行显示无关，按当前课程口径）
+    var cs=document.getElementById('kkc-s'), cu=document.getElementById('kkc-u');
+    if(cs)cs.textContent=c.kks;
+    if(cu)cu.textContent=c.kku;
+    var ks=['yes','no','multi','single','kk','kuake','aska'];
     for(var j=0;j<ks.length;j++){
       var el=document.getElementById('edun-'+ks[j]);
-      if(el&&el.getAttribute('data-na')!=='1')el.textContent=c[ks[j]];
+      if(el&&el.getAttribute('data-na')!=='1'){
+        el.textContent=c[ks[j]];
+        // v5.00：multi/single/kk/kuake/aska 零值整卡隐藏（与初始渲染一致）；
+        //   yes/no 不隐藏——「已续报 0」是有效业务结论，不是没数据。
+        if(ks[j]!=='yes'&&ks[j]!=='no'){
+          var kc=el.closest('.kpi');
+          if(kc)kc.style.display=(c[ks[j]]>0)?'':'none';
+        }
+      }
     }
     var cnt=document.getElementById('eduCnt');
     if(cnt)cnt.textContent=shown;
     var det=document.querySelector('.edu-ov details');
-    if(det&&(K||ck))det.open=true;
+    if(det&&(K||ck||KK))det.open=true;
   };
   eduApply();
 })();
 </script>"""
 
+    # v5.01（用户确认口径）：「可扩科」= 春或暑在读、但秋季不在读的学生数（一人多科算 1）；
+    #   原聊天识别的「有扩科意向」卡保留（现样式）—— 两卡并列，口径不同：
+    #   可扩科 = 历史在读对比（结构信号）；有扩科意向 = 群聊识别（主动信号）。
+    _h_kk = "" if kkstu_n else ' style="display:none"'
+    _h_multi = "" if multi else ' style="display:none"'
+    _h_single = "" if single else ' style="display:none"'
+    _h_kuake = "" if kuake_n else ' style="display:none"'
+    _h_aska = "" if aska_n else ' style="display:none"'
     return f'''<div class="section edu-ov">
   <div class="edu-hd">
-    <h2 title="续报 · 在读科目 · 扩科意向 ｜ 课程筛选在页面顶部（全局生效）｜ {_html.escape(_hint)}">📋 教务核心数据</h2>
+    <h2 title="续报 · 在读科目 · 可扩科 ｜ 课程筛选在页面顶部（全局生效）｜ {_html.escape(_hint)}">📋 教务核心数据</h2>
   </div>
   <div class="kpis" style="margin-bottom:6px">
     <div class="kpi kbl" data-k="yes" onclick="eduKpi('yes')"><div class="n" id="edun-yes" data-na="{_na}">{_yes_txt}</div><div class="l">已续报</div></div>
-    <div class="kpi kbl" data-k="no" onclick="eduKpi('no')"><div class="n" id="edun-no" data-na="{_na}">{_no_txt}</div><div class="l">未续报/其他</div></div>
-    <div class="kpi kbl orange" data-k="wait" onclick="eduKpi('wait')" title="续报状态来自后台「是否续报」字段；当前显示「未确认」有两种可能：学生尚未在后台选择（值为「未设置」），或该生未在接口返回中。属真实业务状态，非接口缺失"><div class="n" id="edun-wait">{renew_wait}</div><div class="l">续报未确认</div></div>
-    <div class="kpi kbl" data-k="multi" onclick="eduKpi('multi')" title="在读 2 个及以上科目（后台「在读」状态）"><div class="n" id="edun-multi">{multi}</div><div class="l">多科目在读</div></div>
-    <div class="kpi kbl" data-k="single" onclick="eduKpi('single')" title="当前仅在读 1 个科目（后台「在读」状态；无在读记录的不计）"><div class="n" id="edun-single">{single}</div><div class="l">单科在读</div></div>
-    <div class="kpi kbl green" data-k="kuake" onclick="eduKpi('kuake')" title="聊天里本人提到其他科目，且带付费/预约含义（想报 / 多少钱 / 有没有班 / 试听 / 约课…）；与科目词须同句、紧邻、无否定。依据见明细表与卡片"><div class="n" id="edun-kuake">{kuake_n}</div><div class="l">有扩科意向</div></div>
-    <div class="kpi kbl blue" data-k="aska" onclick="eduKpi('aska')" title="聊天里本人问过其他科目的题，或索要其他科目的试卷 / 资料 / 讲义 / 课（「您有英语的期中卷子」「物理课能发我看看不」）。这不是报班意向，但说明家长已在别处铺了这门课，是推科最早的口子"><div class="n" id="edun-aska">{aska_n}</div><div class="l">问过其他科目</div></div>
+    <div class="kpi kbl" data-k="no" onclick="eduKpi('no')" title="后台「是否续报」为「否」，或学生尚未在后台选择（未设置）、或未在接口返回中 —— 均按未续报计入"><div class="n" id="edun-no" data-na="{_na}">{_no_txt}</div><div class="l">未续报</div></div>
+    <div class="kpi kbl" data-k="multi" onclick="eduKpi('multi')" title="在读 2 个及以上科目（后台「在读」状态）"{_h_multi}><div class="n" id="edun-multi">{multi}</div><div class="l">多科目在读</div></div>
+    <div class="kpi kbl" data-k="single" onclick="eduKpi('single')" title="当前仅在读 1 个科目（后台「在读」状态；无在读记录的不计）"{_h_single}><div class="n" id="edun-single">{single}</div><div class="l">单科在读</div></div>
+    <div class="kpi kbl green" data-k="kk" onclick="eduKpi('kk')" title="2026 春季或暑期在本机构读过、但秋季没有再读的科目 —— 即「可扩科」的口子；一人多科算 1。明细表可用二级切换分别看春/暑"{_h_kk}><div class="n" id="edun-kk">{kkstu_n}</div><div class="l">可扩科</div></div>
+    <div class="kpi kbl green" data-k="kuake" onclick="eduKpi('kuake')" title="聊天里本人提到其他科目，且带付费/预约含义（想报 / 多少钱 / 有没有班 / 试听 / 约课…）；与科目词须同句、紧邻、无否定。依据见明细表与卡片"{_h_kuake}><div class="n" id="edun-kuake">{kuake_n}</div><div class="l">有扩科意向</div></div>
+    <div class="kpi kbl blue" data-k="aska" onclick="eduKpi('aska')" title="聊天里本人问过其他科目的题，或索要其他科目的试卷 / 资料 / 讲义 / 课（「您有英语的期中卷子」「物理课能发我看看不」）。这不是报班意向，但说明家长已在别处铺了这门课，是推科最早的口子"{_h_aska}><div class="n" id="edun-aska">{aska_n}</div><div class="l">问过其他科目</div></div>
   </div>
   {det}
 </div>''' + js
@@ -2405,6 +2625,22 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     # 前者与学习分层语义混淆（用户反馈「两个分层不知道什么意思」），后者在 ② 信号条、③ To-Do 里已有，
     # 属重复。故头部只留学习分层；近 3 天待回应是硬提醒，作为唯一附加红徽标保留。
     lv_key, lv_cn, lv_ev = common.learning_level(s, board, fst)
+    # v4.86：处方（知识点维度）—— 只在联席 / 课程视角出，教务视角不出（那是联席的动作）。
+    #   配额按分层：需重点关注 2 条 / 需关注 1 条 / 正常·良好 0 条（见 prescribe.QUOTA）。
+    _rx = ""
+    if _RX["on"]:
+        try:
+            _rx_tasks = prescribe.build_student(
+                r["stu"], s, board, _std_topic,
+                common.merge_fine, common.fine_from_board, lv_key)
+        except Exception as _e:      # 处方层任何异常都不能带走整张卡
+            print(f"   ⚠️ {r['stu']} 处方生成失败（已跳过）：{_e}")
+            _rx_tasks = []
+        if _rx_tasks:
+            _RX["tasks"].extend(_rx_tasks)
+            _RX["n_stu"] += 1
+            _RX["n_task"] += len(_rx_tasks)
+            _rx = prescribe.card_html(_rx_tasks, _RX["log"], _html.escape)
     # v4.4：依据块逐条给出「加减分」，并汇总总分 —— 让口径可当场核对（用户要求「规则要能看懂」）
     _lv_sum = sum(d for _, _, d in lv_ev)
     _lv_tail = ""
@@ -2453,6 +2689,25 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     #   但 todos 里原来只有「维持常规跟进」这类兜底 → 诊断句说有问题、动作却让他常规跟进，自相矛盾。
     #   故：出勤异常且首条是兜底动作时，插一条针对出勤的动作到最前。
     _av0, _ac0, _at0, _iss0, _sev0 = att_view(r)
+    # v4.91（用户 2026-11-03）：出勤类 To-Do 以**后台出勤**为准，不以群里提到「请假/回放」为准。
+    #   实测张豫·任星宇：群里提到请假 → extract 生成「与家长确认并同步补课/回放安排」，
+    #   但后台到课 8/8 全勤（含看回放）→ 全勤的人不需要补课。这条占着「最该做」，
+    #   会让教务去问一个不存在的问题，还会让家长觉得老师没看数据。
+    #   ⚠️ 只在 att_view 判定「出勤无问题」（_iss0 为空）时移除；后台无出勤记录
+    #     （_av0 == "无记录"）时保留原样 —— 没数据就删等于把「不知道」当成「没问题」。
+    #   ⚠️ 必须放在下面「出勤异常插入动作」之前：_iss0 非空时不满足删除条件，两者不会互踩。
+    _att_drop = ""
+    if _iss0 == "" and _av0 and _av0 != "无记录":
+        _kept = []
+        for _t in todos_list:
+            if "补课/回放安排" in (_t[1] or ""):
+                _att_drop = _t[1]
+            else:
+                _kept.append(_t)
+        if _att_drop:
+            # 删完可能一条不剩（该生只有这一个信号）→ 退回常规沟通，不能让「最该做」变空
+            todos_list = _kept or [("低", "常规家长沟通：同步学习近况、维护关系、铺垫续报",
+                                    f"群内提到请假/回放，后台{_av0}已满勤，无需补课安排")]
     if _iss0 and (not todos_list or "常规跟进" in todos_list[0][1]
                   or "常规家长沟通" in todos_list[0][1]):
         _buy0 = (s.get("buy_type") or "").strip()
@@ -2521,6 +2776,11 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     _rhint = s.get("resp_hint") or ""
     _hint_html = (f'<div class="acthint"><span class="acthk">后续注意</span>'
                   f'{_html.escape(_rhint)}</div>') if _rhint else ""
+    # v4.91：被移除的出勤类动作必须显式交代（降级必须显式）——
+    #   否则读者只看到「群里提过请假」却没有任何动作，会以为老师漏跟了。
+    _att_html = (f'<div class="acthint"><span class="acthk">已按出勤校准</span>'
+                 f'群内提到请假 / 回放，但后台「{_html.escape(_av0)}」已全部到位'
+                 f'（含看回放），不再安排补课 / 回放。</div>') if _att_drop else ""
 
     def _kv(k, v):
         return f'<div class="kv"><span class="k">{k}</span><span class="v">{v}</span></div>'
@@ -2690,6 +2950,8 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         {_a2_html}
       </div>
       {_hint_html}
+      {_att_html}
+      {_rx}
       {recent3_block(s)}
       {_det_html}
       {_more_html}
@@ -3105,6 +3367,15 @@ th{color:#8a9099;font-weight:600}
 .kuake-chip{display:inline-block;font-size:11px;font-weight:600;color:#8a5cc7;background:#f3edfc;border:1px solid #e3d6fb;border-radius:6px;padding:1px 7px;cursor:help}
 /* v4.82：第二档「问过其他科目」——蓝灰，刻意比紫弱一档，避免被读成报班意向 */
 .kuake-chip.ask{color:#2f6fd0;background:#eef4fd;border-color:#d3e2f8}
+/* v5.01：可扩科 chip（绿，与续报绿同族但独立样式）+ 备注（学期对比结论） */
+.kk-chip{display:inline-block;font-size:11.5px;font-weight:600;color:#0f7a44;background:#e8f6ee;border:1px solid #bfe6d0;border-radius:6px;padding:1px 8px;margin:1px 4px 1px 0}
+.kk-note{display:block;font-size:11.5px;color:#8a929c;margin-top:3px;line-height:1.55}
+/* v5.01：明细二级切换（全部 / 春在读·秋不在读 / 暑在读·秋不在读） */
+.sectabs{display:inline-flex;gap:6px;margin-left:14px;vertical-align:middle}
+.sectab{border:1px solid #dfe3ea;background:#fff;border-radius:999px;padding:3px 12px;font-size:12px;color:#5a626c;cursor:pointer;font-family:inherit}
+.sectab:hover{border-color:#3a5bdb;color:#2b62b5}
+.sectab.on{background:#eef4ff;border-color:#3a5bdb;color:#2b62b5;font-weight:600}
+.sectab .cnt{font-weight:700;margin-left:2px}
 /* v4.42：扩科意向依据直接可见（不只靠悬停） */
 .kuevi{display:inline-block;font-size:11px;color:#8a9099;max-width:240px;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;vertical-align:middle;cursor:help;margin-right:6px}
@@ -3426,9 +3697,16 @@ details.meth[open]>summary:before{content:"▾ "}
 .covhead{margin:0 0 12px}
 .covhead>summary{background:#f7f9fc;border:1px solid #e6eaf2}
 .covhead .covbar{border:none;background:transparent;padding:0;margin:0}
-.covtab{width:100%;border-collapse:collapse;font-size:13px}
+.covtab{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
 .covtab th,.covtab td{border-bottom:1px solid #eef0f3;padding:7px 9px;text-align:left;vertical-align:top}
 .covtab th{background:#fafbfc;color:#6b7280;font-weight:600;font-size:12px}
+/* v4.87：「说明」与「建议动作」拆成两列，避免一句话里混着原因和动作 */
+.covtab col.cw1{width:112px}
+.covtab col.cw2{width:52px}
+.covtab col.cw3{width:58px}
+.covtab col.cw4{width:30%}
+.covtab td.covwhy{color:#4b5563;line-height:1.65}
+.covtab td.covact{color:#1f2937;line-height:1.65}
 .covtab tr:last-child td{border-bottom:none}
 /* v4.10.3：档位表「人数」可点击 —— 就在本行下方展开该档名单 */
 .covn{cursor:pointer;color:#3a5bdb;font-weight:700;padding:1px 4px;border-radius:5px}
@@ -3575,6 +3853,7 @@ details.meth[open]>summary:before{content:"▾ "}
 .mgv{display:block;font-size:15px;font-weight:700;letter-spacing:-.2px}
 .mgv.ok{color:#1a7f45}.mgv.warn{color:#d46b08}.mgv.bad{color:#cf1322}.mgv.mute{color:#8a9099}
 .mgn{display:block;font-size:10.5px;color:#8a9099;line-height:1.35;margin-top:2px;font-weight:500}
+.mgn .nb{white-space:nowrap}
 /* v4.35 薄弱知识点（可见区）：名 + 条数常显，点某一枚才展开该知识点的题型明细 */
 .trow{display:flex;align-items:flex-start;gap:9px;margin:-3px 0 10px}
 .trowk{flex:0 0 42px;font-size:11.5px;color:#8a9099;font-weight:600;padding-top:3px;white-space:nowrap}
@@ -3636,10 +3915,77 @@ details.slimdet>summary::-webkit-details-marker{display:none}
 details.slimdet>summary::before{content:"▸ ";color:#a0a6ae}
 details.slimdet[open]>summary::before{content:"▾ "}
 details.slimdet>summary:hover{color:#3a5bdb}
+/* v4.90：教务「学生级明细」默认展开（仅教务视角）。200+ 行全铺开会把下方「共性薄弱面」
+   顶到很后面 → 明细区限高到视口 2/3、内部滚动，表头吸附在顶部，往下翻仍知道哪列是什么。
+   注：只作用于 .edu-detbox（本块独有），学生卡的 slimdet 不受影响。 */
+.edu-detbox{max-height:66vh;overflow:auto;margin-top:8px;border:1px solid #f0f2f5;border-radius:8px}
+.edu-detbox>table{width:100%;border-collapse:collapse}
+.edu-detbox thead th{position:sticky;top:0;z-index:2;background:#fafbfc;box-shadow:inset 0 -1px 0 #eceef1}
 /* 折叠区里的 kv 标签 64px 装不下「薄弱知识点」5 字，会折成两行 */
 .card.slim .kv .k{flex:0 0 78px;white-space:nowrap}
 .card.slim .fsrisk{margin-top:8px}
 .card.slim .sub-blk{margin-top:8px}
+/* ══ v4.86 处方层（诊断 → 处方） ══
+   设计意图：处方和「最该做」必须一眼能分开 —— 最该做是「今天找谁说」，处方是
+   「这个知识点怎么讲到会」。故用左侧竖线 + 白底细边，不抢 actbox 的高亮。 */
+.rxbox{margin-top:12px;border:1px solid #e3e9f5;border-left:3px solid #3a5bdb;
+  border-radius:0 9px 9px 0;background:#fbfcff;padding:10px 13px 11px}
+.rxbox-h{font-size:13px;font-weight:700;color:#2b4bb5;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.rxbox-sub{font-size:11px;font-weight:400;color:#98a2b3}
+.rxlist{margin:8px 0 0;padding:0;list-style:none;counter-reset:rx}
+.rxlist>li{counter-increment:rx;padding:8px 0 9px;border-top:1px dashed #eaeef7}
+.rxlist>li:first-child{border-top:0;padding-top:2px}
+.rx-h1{display:flex;align-items:center;gap:7px;font-size:13px;margin-bottom:4px;flex-wrap:wrap}
+.rx-h1::before{content:counter(rx);flex:0 0 auto;width:16px;height:16px;border-radius:50%;
+  background:#3a5bdb;color:#fff;font-size:10.5px;font-weight:700;text-align:center;line-height:16px}
+.rx-leg{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;
+  background:#fff1f0;color:#cf1322;border:1px solid #ffc9c6}
+.rx-cur{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;
+  background:#eef3fd;color:#2f6fd0;border:1px solid #d6e3fb}
+.rx-st{margin-left:auto;font-size:10.5px;padding:1px 7px;border-radius:9px;white-space:nowrap}
+.rx-st.todo{background:#f2f3f5;color:#8a9099}
+.rx-st.doing{background:#fff7e6;color:#ad6800}
+.rx-st.done{background:#e8f7f0;color:#2ba471}
+.rx-st.bad{background:#fdecec;color:#cf1322}
+.rx-l{display:flex;gap:7px;font-size:12.5px;line-height:1.65;color:#3d4654;margin:2px 0}
+.rxk{flex:0 0 18px;height:17px;line-height:17px;text-align:center;font-size:10.5px;
+  font-weight:700;border-radius:4px;background:#eaeef8;color:#41598e}
+.rx-m{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-top:4px;
+  font-size:11.5px;color:#5c6470}
+.rxw{font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;background:#e6e9ee;color:#7b838f}
+.rx-why{font-size:10.5px;color:#a8560a;background:#fff7e6;border:1px solid #ffe1b8;
+  border-radius:4px;padding:1px 6px}
+.rx-evi{margin-left:auto;font-size:10.5px;color:#a3aab4;max-width:70%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Tab② 班级处方（主讲） —— v4.88 起整块搬到 Tab④，样式沿用 */
+.rxcls{background:#fff;border:1px solid #e6e8eb;border-radius:12px;padding:16px 18px;margin-bottom:16px}
+/* Tab④「下节课讲这个（主讲）」页首说明 + 多课程时的分节标题 */
+.rxlead{background:#f6f9ff;border:1px solid #dfe8fa;border-radius:10px;
+  padding:11px 14px;margin:0 0 14px;font-size:12.5px;line-height:1.75;color:#43506a}
+.rxlead b{color:#1f2329}
+.rxcourse{font-size:13.5px;font-weight:700;color:#1f2329;margin:20px 0 9px;
+  padding-left:9px;border-left:3px solid #3a5bdb}
+.rxcls-h{font-size:15px;font-weight:700;color:#1f2329;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.rxcls-h2{margin-top:16px;padding-top:14px;border-top:1px dashed #e9ecf1}
+.rxcls-sub{font-size:11.5px;font-weight:400;color:#98a2b3}
+.rxcls-c{margin-top:11px;padding:11px 13px;background:#f8fafd;border:1px solid #e8eef9;border-radius:9px}
+.rxcls-t{display:flex;align-items:baseline;gap:9px;font-size:14px;flex-wrap:wrap}
+.rxcls-n{font-size:12px;font-weight:700;color:#2f6fd0;background:#eaf1fd;
+  border:1px solid #d6e3fb;border-radius:9px;padding:0 8px}
+.rxcls-l{display:flex;gap:8px;font-size:12.5px;line-height:1.7;color:#3d4654;margin-top:3px}
+.rxcls-legn{font-size:11.5px;color:#cf1322;background:#fff1f0;border:1px solid #ffc9c6;
+  border-radius:9px;padding:0 7px}
+.rxcls-nm{margin-top:5px;font-size:11.5px;color:#5c6470}
+.rxcls-ev{margin-top:3px;font-size:10.5px;color:#a3aab4;line-height:1.6}
+.rxcls-p{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.rxcls-pi{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12.5px;
+  padding:7px 11px;background:#fffafa;border:1px solid #ffe2df;border-radius:8px}
+.rxcls-pn{font-size:11.5px;color:#7b838d}
+.rxcls-f{margin-top:10px;font-size:11.5px;color:#8a9099;line-height:1.65}
+.rxfoot{margin:-6px 0 16px;font-size:11.5px;color:#2ba471;background:#f2fbf6;
+  border:1px solid #d4f0e2;border-radius:8px;padding:7px 11px;line-height:1.6}
+.rxfoot.muted{color:#8a9099;background:#f7f8fa;border-color:#eceef1}
+.rxfoot code{background:rgba(0,0,0,.05);border-radius:3px;padding:0 4px;font-size:11px}
 """
 
 
@@ -3702,24 +4048,41 @@ def recent3_banner(rows, edu=False):
 # ============================================================================
 TIER_CLS = {"失联": "t1", "出勤但无沟通": "t2", "仅缺沟通通道": "t5",
             "单向沟通": "t3", "低互动": "t4", "正常": "t5"}
+# v4.87（用户 2026-11-03）：原「说明与建议动作」挤在一列，一句话里既讲原因又讲动作，
+#   读的人要自己从箭头后找该干什么 → 拆成两列：TIER_DESC = 为什么被判成这一档（依据），
+#   TIER_ACT = 接下来做什么（动作）。两列都短，扫一眼就知道「这档是什么情况、我要干哪件事」。
 TIER_DESC = {
-    # v4.78：六条按联席给的措施改写。共同原则 —— **先查已有数据，再动嘴**：
-    #   电话 / 私信只用来拿系统里查不到的信息，不拿能查到的事去问学生和家长。
-    "失联": "先在后台核在册与退费，再打电话<b>只问系统里查不到的</b>（有没有开课、是否已在别处报班）"
-            "→ 按结论定退课 / 换班 / 在班",
-    # v4.79（用户 2026-10-29）：购课类型（直播 / 仅回放）在卡片上已经列出来了，
-    #   再让老师「跟家长确认是哪种」等于把能查的事外包出去 → 直接读卡片，不问家长。
-    "出勤但无沟通": "人在上课，但沟通通道未打通 → <b>购课类型卡片上已标出（直播 / 仅回放）</b>，"
-            "直接据此分清<b>纯回放 / 到课不发言</b>，<b>不用再问家长买的是哪种</b>；再补群并主动触达家长",
+    # 说明列：只写判定依据（沟通轴 + 学习轴），不写动作。
+    "失联": "近 14 天群内无消息，出勤接口与小黑板都查不到有效记录（含看回放），两侧全空",
+    "出勤但无沟通": "有出勤记录（含仅看回放），但企微群未采集到、或群内近 14 天零消息",
     # v4.53（用户 2026-10-22）：有飞书作业 / 小黑板实证、只是没有企微群的学生，
     #   在 Tab③ 已经出**完整学生卡**，不能再在 Tab① 被算成「失联/出勤但无沟通」——
     #   否则同一份报告里「预警 106 人」与「学生卡 129 张」自相矛盾。
-    "仅缺沟通通道": "飞书或小黑板有实证、<b>只差一个企微群</b> → 先查是不是系统没抓到"
-                    "（群ID为空就回填花名册，别去催学生），确实没群再当天建",
-    "单向沟通": "只有老师单向输出 → <b>停掉通知式发言</b>，改成点名问一个只有他能答的问题"
-                "（给二选一入口）；同时找家长办一件具体的小事",
-    "低互动": "实质发言 1~2 条 → 私信家长了解近况，说明小群的价值，加大回访频次",
-    "正常": "沟通与出勤均正常",
+    "仅缺沟通通道": "飞书作业或小黑板有实证、人确实在学，<b>只差一个企微群</b>",
+    "单向沟通": "群里有消息，但近 14 天学生 / 家长实质发言 <b>0 条</b>，只有老师单向输出",
+    "低互动": "近 14 天学生 / 家长实质发言 <b>1~2 条</b>，能回但从不主动",
+    "正常": "近 14 天实质发言 ≥3 条，出勤与沟通均正常",
+}
+# 「群到底有没有」的两步排查（v4.87）。顺序不能反 —— 群主不是企微，群根本进不了会话存档的列表，
+# 这时去查群名毫无意义；确认群主是企微后，群名不带学生姓名/课程才会导致**回填花名册时对不上**。
+_GROUP_FIX = ("先分清是没建群还是没抓到：① <b>群主是不是企微账号</b>（个人微信建群，系统抓不到）；"
+              "② <b>群名是否规范</b>（要带学生姓名＋课程，否则回填花名册对不上）→ "
+              "<b>确定群正常可联系技术老师</b>；确实没群当天建，"
+              "群在但零消息则直接触达家长")
+TIER_ACT = {
+    # 动作列（v4.78 / v4.79 联席口径）。共同原则 —— **先查已有数据，再动嘴**：
+    #   电话 / 私信只用来拿系统里查不到的信息，不拿能查到的事去问学生和家长。
+    "失联": "先在后台核在册与退费，再打电话<b>只问系统里查不到的</b>（有没有开课、是否已在别处报班）"
+            "→ 按结论定退课 / 换班 / 在班",
+    # v4.87（用户 2026-11-03）：用户指出「出勤但无沟通」与「仅缺沟通通道」这两档**动作是同一件事** ——
+    #   都是「群没抓到」，只是前者因为出勤记录被留在这里、后者因为有飞书/小黑板证据被单列。
+    #   两档共用同一个常量，避免日后只改一处造成「同因不同药」。
+    "出勤但无沟通": _GROUP_FIX,
+    "仅缺沟通通道": _GROUP_FIX,
+    "单向沟通": "<b>停掉通知式发言</b>，改成点名问一个只有他能答的问题（给二选一入口）；"
+                "同时找家长办一件具体的小事",
+    "低互动": "私信家长了解近况，说明小群的价值，加大回访频次",
+    "正常": "保持现有节奏，无需额外动作",
 }
 CAUSE_CN = {
     "group_missing": "企微群未采集到",
@@ -3820,11 +4183,20 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None, fs_no
         return "".join(out)
 
     trows = []
+    _zero = []
     for t in COV_TIER_ORDER:
         n = tiers.get(t, 0)
         pct = f"{n / roster_n * 100:.1f}%" if roster_n else "—"
         hits = sorted(by_tier.get(t, []),
                       key=lambda v: (v.get("productName") or "", v.get("stuName") or ""))
+        # v4.87（用户 2026-11-03）：**人数为 0 的档位整行不渲染**。
+        #   空行占版面且会让人以为「这一档有问题只是没抓到人」。
+        #   安全性：本表是**全域并集**，某档并为 0 则它在任一课程下也必为 0，
+        #   故教务视角按课程过滤时（covApply 只改 id 为 covn-/covpct- 的元素，
+        #   且都有 if(e) 保护）不会出现「行被藏了但过滤后 >0」的空缺。
+        if not n:
+            _zero.append(t)
+            continue
         if hits:
             # 人数 = 开关；「失联」默认展开（最紧急），其余默认收起
             dflt = (t == "失联")
@@ -3838,16 +4210,23 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None, fs_no
         trows.append(
             f'<tr class="covrow"><td><span class="tierk {TIER_CLS.get(t, "t0")}">{t}</span></td>'
             f'<td>{ncell}</td><td><span id="covpct-{t}">{pct}</span></td>'
-            f'<td>{TIER_DESC.get(t, "")}</td></tr>')
+            f'<td class="covwhy">{TIER_DESC.get(t, "")}</td>'
+            f'<td class="covact">{TIER_ACT.get(t, "")}</td></tr>')
         if hits:
             trows.append(
                 f'<tr class="covdet" id="covdet-{t}" '
                 f'style="display:{"table-row" if dflt else "none"}">'
-                f'<td colspan="4"><div class="covdetin">'
+                f'<td colspan="5"><div class="covdetin">'
                 '<table class="covsub"><tr><th>学生</th><th>课程</th><th>判定依据</th></tr>'
                 + _cov_rows(hits) + '</table></div></td></tr>')
-    tab = ('<table class="covtab"><tr><th>档位</th><th>人数</th><th>占比</th><th>说明与建议动作</th></tr>'
+    tab = ('<table class="covtab"><colgroup><col class="cw1"><col class="cw2"><col class="cw3">'
+           '<col class="cw4"><col class="cw5"></colgroup>'
+           '<tr><th>档位</th><th>人数</th><th>占比</th><th>说明</th><th>建议动作</th></tr>'
            + "".join(trows) + '</table>')
+    # 省略说明：不能让读者以为「这一档压根没有」→ 明写省了哪几档、都是 0 人。
+    if _zero:
+        tab += (f'<div class="covdeg">已省略 0 人档位：{"、".join(_zero)}'
+                f'（本表只列需要有人跟进的档位，合计仍为在册 {roster_n} 人）</div>')
 
     # ---- 多课程时给课程 × 档位 ----
     ctab = ""
@@ -3856,16 +4235,21 @@ def coverage_block(cov, roster_n, analyzed_n, chat_days=14, degraded=None, fs_no
         for v in cov.values():
             byc.setdefault(v.get("productName") or "未知", Counter())[v.get("tier")] += 1
         cr = []
+        # ⚠️ v4.89 修：原来这里写死 4 档（失联 / 出勤但无沟通 / 单向沟通 / 低互动），
+        #   v4.53 新增的「仅缺沟通通道」和「正常」没有同步 → 子表每行人数加起来对不上总人数
+        #   （实测张豫「清北层进化班日D谢胡」72 人只显示 1+13+12=26）。改成按 COV_TIER_ORDER 动态出列。
+        #   与主表口径一致：全部课程都为 0 的档位不出列（失联常为 0，占一列全是 0 反而干扰）。
+        _tshow = [t for t in COV_TIER_ORDER if any(cc.get(t, 0) for cc in byc.values())]
         for c, cc in sorted(byc.items(), key=lambda kv: -sum(kv[1].values())):
             tot = sum(cc.values())
-            cr.append(f'<tr><td>{c}</td><td>{tot}</td>'
-                      f'<td><b style="color:#cf1322">{cc.get("失联", 0)}</b></td>'
-                      f'<td>{cc.get("出勤但无沟通", 0)}</td>'
-                      f'<td>{cc.get("单向沟通", 0)}</td><td>{cc.get("低互动", 0)}</td></tr>')
+            tds = "".join(
+                f'<td><b style="color:#cf1322">{cc.get(t, 0)}</b></td>' if t == "失联"
+                else f'<td>{cc.get(t, 0)}</td>' for t in _tshow)
+            cr.append(f'<tr><td>{c}</td><td>{tot}</td>{tds}</tr>')
         ctab = ('<details class="covlist" open><summary>按课程拆分（每个课程的总人数与各档人数）</summary>'
-                '<div class="in"><table><tr><th>课程</th><th>总人数</th><th>失联</th>'
-                '<th>出勤但无沟通</th><th>单向沟通</th><th>低互动</th></tr>'
-                + "".join(cr) + '</table></div></details>')
+                '<div class="in"><table><tr><th>课程</th><th>总人数</th>'
+                + "".join(f'<th>{t}</th>' for t in _tshow)
+                + '</tr>' + "".join(cr) + '</table></div></details>')
 
     # v4.10.3：原「分档名单」三组折叠块（失联 / 出勤但无沟通 / 单向+低互动）已删除 ——
     # 名单改为在档位表内**点人数直接展开**（见上 trows 的 covrow + covdet）。
@@ -3999,10 +4383,21 @@ BK_FUZZY = (
 
 
 def _bk_name(t):
-    """知识点名 → 后台 L1 模块名；映射不上的原样返回（如「计算/粗心」）。"""
+    """知识点名 → 后台 L1 模块名；映射不上的原样返回（如「计算/粗心」）。
+
+    v4.95：BK_UNIT_NAME / BK_FUZZY 是**数学**的后台模块映射。物理等非数学词表
+    跑课时必须原样返回 —— 物理单元名（「静电场」「机械能」）不在数学后台树里，
+    硬走模糊兜底有被数学关键词串改的风险（如含「二次」的物理名会被吞进不等式）。
+    """
     t = (t or "").strip()
     if not t:
         return t
+    try:
+        _ku = _knowledge_info()
+        if _ku and (_ku.get("vocab_subject") or "数学") != "数学":
+            return t
+    except Exception:
+        pass
     if t in BK_UNIT_NAME:
         return BK_UNIT_NAME[t]
     for name, kws in BK_FUZZY:
@@ -4429,11 +4824,15 @@ def _board_part_html(boards_map=None):
     )
 
 
-def teaching_advice(crows, boards_map, n_any=None, more_n=0):
+def teaching_advice(crows, boards_map, n_any=None, more_n=0, one_course=True, rx_sink=None):
     """渲染「📊 学生情况概览 · 共性薄弱面」区块。无任何证据时返回空串（不渲染空壳）。
 
     v4.30：原为「🎓 主讲备课建议 · 下节课重点讲什么」。Tab② 改由联席 / 教务阅读，
     标题与摘要句改为「这批学生的共性薄弱面」，**判据、排序、证据链一字未改**。
+
+    v4.88（用户 2026-11-03）：班级处方（下节课讲这个 / 遗留补丁包）**整块搬去 Tab④**
+    —— 它只服务主讲，联席与教务不关注。`rx_sink` 不为 None 时把处方 HTML 交出去
+    （调用方决定挂到哪个 Tab），本函数的返回值就只剩「共性薄弱面」。
     """
     n_any = n_any if n_any is not None else len(crows)
     if not n_any:
@@ -4577,8 +4976,25 @@ def teaching_advice(crows, boards_map, n_any=None, more_n=0):
         + ' 个知识点 · 可回群 / 回图逐条核对）</summary><div class="in">' + ev_html
         + '</div></details>' if ev_html else ''
     )
+    # v4.86：「下节课讲这个（主讲）」+「遗留补丁包」。与下面的「共性薄弱面」表是
+    #   **同一批证据的两种用法**：表回答「卡在哪」，这里回答「所以这节课怎么办」。
+    #   拆当期 / 遗留两个通道见 prescribe.build_class。
+    # v4.88：这一块整体搬去 Tab④（只给主讲看），不再混进联席 / 教务的概览页。
+    _rx_cls = ""
+    if _RX["on"] and one_course:
+        try:
+            _cls = prescribe.build_class(crows, boards_map, _std_topic,
+                                         common.merge_fine, common.fine_from_board,
+                                         common.norm_name, agg=agg)
+            _rx_cls = prescribe.class_html(_cls, _html.escape)
+        except Exception as _e:
+            print(f"   ⚠️ 班级处方生成失败（已跳过）：{_e}")
+    if rx_sink is not None:
+        rx_sink.append(_rx_cls)
+        _rx_cls = ""      # 交给调用方挂到 Tab④，本函数的返回值里不再带它
     return (
-        '<div class="tadv">'
+        _rx_cls
+        + '<div class="tadv">'
         + '<div class="tadv-h">📊 学生情况概览 · 共性薄弱面</div>'
         + '<div class="tadv-sum">' + line + '</div>'
         + '<table class="tadv-tab"><tr><th>优先</th><th>薄弱知识点</th><th>覆盖学生</th>'
@@ -4596,6 +5012,22 @@ def teaching_advice(crows, boards_map, n_any=None, more_n=0):
 # 注（v4.10.1）：原 `_topic_table_html()` 已删除 —— 它渲染的「高频知识点 · 数据明细」表
 # 与「学生情况概览」主表的列（覆盖学生 / 群聊提及 / 小黑板实证）完全重合，属同源重复。
 # 高频知识点信息由备课建议表直接承载（且已改为显示全部知识点，长尾不丢）。
+
+
+def _rxfoot_html():
+    """Tab④ 底部「任务表回读状态」一行（v4.88 从 teaching_advice 里提出来）。
+
+    提出来是因为 Tab④ 会把多个课程的处方**叠在一页**里，若按每块各挂一行，
+    同一句话会重复 N 遍。降级必须显式：没回读到任务表就说清楚，
+    别让读者以为「一条都没人做」。
+    """
+    if _RX["log"]:
+        return (f'<div class="rxfoot">✅ 任务表已回读（{_html.escape(_RX["log_src"])}，'
+                f'{len(_RX["log"])} 条记录）：卡片上的「已讲 / 已布置 / 已会」'
+                f'来自业务在飞书里的填写，本技能只读不写。</div>')
+    return (f'<div class="rxfoot muted">ℹ️ 本次未回读任务表'
+            f'（<code>{_html.escape(str(_RX.get("log_name") or prescribe.TASKLOG_NAME))}</code> 未找到）：'
+            f'所有处方按「待处理」显示 —— 这是「没读到」，不是「没人做」。</div>')
 
 
 def _cofilter_html(sec_id, n_all, show_filter, co_opts):
@@ -4618,7 +5050,7 @@ def _cofilter_html(sec_id, n_all, show_filter, co_opts):
             f'<span class="cnt">该课程在册 {n_all} 人 · 共 {n_co_txt}</span></div>')
 
 
-def build_topic_block(sec_id, crows, title, is_all, boards_map=None, more_n=0):
+def build_topic_block(sec_id, crows, title, is_all, boards_map=None, more_n=0, rx_sink=None):
     """Tab2 的一个分组：**学生情况概览**（这批学生的共性薄弱面 ＋ 需要重点关注的人）。
 
     v4.30：Tab② 由「主讲备课建议」改名为「学生情况概览」—— 内容模块不变（仍是
@@ -4629,15 +5061,39 @@ def build_topic_block(sec_id, crows, title, is_all, boards_map=None, more_n=0):
     （知识点 / 群聊提及 / 小黑板实证 / 合计涉及 / 占比）与建议表的
     「薄弱知识点 / 覆盖学生 / 群聊提及 / 小黑板实证」**完全重合**（用户指出「这两部分重复」），
     故整表删除，只保留一张表；表本身已改为**显示全部知识点**，长尾（数列、解三角形等）不丢。
+
+    v4.88：`rx_sink` 非 None 时，把本组的**班级处方**（下节课讲这个 / 遗留补丁包）
+    append 成 `{sec,title,is_all,html}` 交给调用方，由它统一挂到 Tab④（主讲页）。
     """
     if not crows:
         return ""
     disp = 'style="display:block"' if is_all else 'style="display:none"'
-    adv = teaching_advice(crows, boards_map, more_n=more_n)
+    # v4.86：班级处方（主讲）只在**单一课程**内聚合 —— 跨课程的「共性点」没有意义，
+    #   主讲一节课只讲一门课。联席视角的「全部课程」页签因此不出这块。
+    _one = len({r.get("course") for r in crows}) <= 1
+    _box = []
+    adv = teaching_advice(crows, boards_map, more_n=more_n, one_course=_one,
+                          rx_sink=_box if rx_sink is not None else None)
+    if rx_sink is not None and _box and _box[0]:
+        rx_sink.append({"sec": sec_id, "title": title, "is_all": is_all, "html": _box[0]})
     if not adv:
-        adv = ('<div class="tadv"><div class="tadv-h">📊 学生情况概览 · 共性薄弱面</div>'
-               f'<div class="tadv-sum">本组（{title}）暂无可用于概览的证据 —— '
-               '聊天与小黑板均未捕捉到明确知识点（多为暂无群聊记录或未提供小黑板读图素材）。</div></div>')
+        # v4.94：知识点为空有两种完全不同的原因，**必须分开写** ——
+        #   ① 词表不适用本科目（如物理课）→ 是「本版不支持」，不是「学生没问题」；
+        #   ② 真有聊天/小黑板但没捕捉到知识点 → 才是「暂无证据」。
+        _ku = _knowledge_info()
+        if _ku.get("subject_mismatch"):
+            _sub = _html.escape(str(_ku.get("course_subject") or "本科目"))
+            _known = "、".join(_ku.get("vocab_subjects") or ("数学", "物理", "化学"))
+            adv = ('<div class="tadv"><div class="tadv-h">📊 学生情况概览 · 共性薄弱面</div>'
+                   f'<div class="tadv-sum">⏸ <b>本版不对{_sub}做知识点识别</b> —— '
+                   f'识别词表目前建了{_known}，硬套会把已建科目的说法认成{_sub}薄弱点'
+                   f'（实测物理课曾把老师的「这个滑变写错了吧」认成「立体几何·建系写错」）。'
+                   f'<br>要让这块可用，需为{_sub}按教材目录另建一套词表并用真实语料验证；'
+                   f'<b>出勤、沟通覆盖、分层与预警不受影响</b>，可正常使用。</div></div>')
+        else:
+            adv = ('<div class="tadv"><div class="tadv-h">📊 学生情况概览 · 共性薄弱面</div>'
+                   f'<div class="tadv-sum">本组（{title}）暂无可用于概览的证据 —— '
+                   '聊天与小黑板均未捕捉到明确知识点（多为暂无群聊记录或未提供小黑板读图素材）。</div></div>')
     return f'''
 <div class="grp" id="t-{sec_id}" {disp}>
   {adv}
@@ -4715,8 +5171,12 @@ def build_card_block(sec_id, crows, title, show_filter, co_opts, is_all,
 
     # v4.3：KPI 小卡 = 可点击筛选入口（点一下只留这一类学生，再点恢复全部）。
     # 「可分析消息」已按用户要求下线（它对跟进动作没有指导意义，且与卡片内的「可分析 N 条」重复）。
+    # v5.00：数值为 0 的卡**不展示**（与顶部 KPI 同规则，用户 2026-11-05）——
+    #   「学生数」(__all__) 例外：它是「恢复全部」的复位入口，永远显示；
+    #   0 值卡的点击筛选本无意义（筛不出人），隐藏无副作用。
     def ktile(n, label, key, cls="", hint=""):
-        return (f'<div class="kpi kbl {cls}" data-k="{key}" title="{hint}" '
+        _h = ' style="display:none"' if (n == 0 and key != "__all__") else ""
+        return (f'<div class="kpi kbl {cls}" data-k="{key}"{_h} title="{hint}" '
                 f'onclick="kpiFilter(this,\'{sec_id}\',\'{key}\')">'
                 f'<div class="n">{n}</div><div class="l">{label}</div></div>')
 
@@ -4812,6 +5272,21 @@ def main():
     blk4_cn = "教务" if is_edu else "联席"
     scope_label = "该课程" if is_course else ("下属" if is_edu else "负责")
     wd = common.workdir(args)
+    # v4.86 处方层：重置运行时状态 + 回读任务表。
+    #   ⚠️ 只读，不写飞书（用户 2026-10-31 定：业务自己在飞书里记，技能只负责读回来）。
+    #   读不到就按「待处理」显示，并在 Tab② 显式说明 —— 不能让人以为「一条都没人做」。
+    _RX.update({"tasks": [], "n_stu": 0, "n_task": 0, "log": {}, "log_src": ""})
+    _RX["on"] = not is_edu
+    # 任务表按维度命名：同一工作目录下可能有多个联席 / 课程的处方，混成一张会串人
+    _logname = prescribe.TASKLOG_TPL.format(name)
+    _RX["log_name"] = _logname
+    _logp = os.path.join(wd, _logname)
+    _RX["log"] = prescribe.load_log(_logp)
+    if _RX["log"]:
+        _RX["log_src"] = _logname
+        print(f"   ✅ 处方任务表已回读：{len(_RX['log'])} 条记录（{_logname}）")
+    else:
+        print(f"   ℹ️ 未回读处方任务表（{_logname} 不存在）→ 处方按「待处理」显示")
     A = json.load(open(f"{wd}/analysis_merged.json", encoding="utf-8"))
 
     # v4.75 知识点来源（可选）：extract 侧落盘的 knowledge_used.json
@@ -4829,26 +5304,47 @@ def main():
         _newu = "、".join(kp_used.get("new_units") or [])
         _pend = "、".join(kp_used.get("pending") or [])
         _mn = kp_used.get("method_nodes", 0)
-        kp_note = (
-            f'• <b>知识点口径（v4.81）</b>：知识点<b>以后台知识树为准</b>'
-            f'（{str(kp_used.get("pulled_at") or "")[:10]} 拉取，高中数学 {kp_used.get("backend_nodes", 0)} 个节点）'
-            f'—— 后台树上没有的一律不出现' + ('（唯一例外见下）' if _pend else '') +
-            f'，因此本课程的知识点清单与后台<b>逐条对得上</b>。'
-            f'命中仍用群里的自然说法（学生只会说「韦达定理」，不会说节点全名），'
-            f'范围以后台为准、措辞不强制对齐。'
-            + (f'本版依后台新增识别项：<b>{_newu}</b>；' if _newu else '')
-            + (f'后台<b>尚未建</b> {_drop} 的节点，这几项本版<b>不再识别</b>'
-               f'（不是本课没学、也不是没人卡，而是后台无节点）；' if _drop else '')
-            # v4.81：导数是唯一例外 —— 后台没节点，但教学上单独成章，故保留并单列。
-            + (f'<b>{_pend}</b> 后台<b>同样暂无节点</b>，但{_pend}与函数在本课是'
-               f'<b>分开讲的两章</b>，按教学口径<b>保留并单列</b>，不并入函数；' if _pend else '')
-            + ('' if _mn else '后台高中数学<b>方法类节点为 0</b>，方法维度暂无可依据来源，本报告不呈现。')
-            + '「计算/粗心」属错误类型而非知识树节点，仍单列、不与后台模块混排；'
-            '小黑板逐题表的「关联知识点」列同样按后台模块名显示：读图原标是「函数＋导数」的合并模块名，'
-            '本课白板题全是函数内容，故显示为「函数」，读图若明确标成导数则显示「导数」。'
-            + '展示颗粒度仍为模块级（后台最细节点只用于命中，不直接上卡）；'
-            '知识点不参与分层（分层只看小黑板 / 作业 / 老师反馈 / 成绩 / 飞书提交）。<br>'
-        )
+        if str(kp_used.get("mode") or "").startswith("builtin_"):
+            # v4.97：物理/化学等走教材自建词表，口径必须与数学的「以后台为准」明确区分。
+            #   文案全部取自 knowledge_used（单一事实源 = 各科 dict 模块的 SOURCE_NOTE），
+            #   报告侧不写死科目数字 —— 新科目接入时这里零改动。
+            #   v4.99：初中物理也走本分支（mode=builtin_physics_junior，以后台为准）——
+            #   它可能真的剔除单元（后台节点消失），故补 dropped 展示；高中物理/化学
+            #   的 dropped 恒为空，不受影响。版本戳改随 SKILL_VER（不再写死 v4.97）。
+            _sub = str(kp_used.get("vocab_subject") or "该科目")
+            _note = str(kp_used.get("source_note") or "").rstrip("。")
+            _gnote = str(kp_used.get("grade_note") or "").rstrip("。")
+            _dropb = "、".join(kp_used.get("dropped") or [])
+            kp_note = (
+                f'• <b>知识点口径（{SKILL_VER}·{_sub}）</b>：{_note}。'
+                + (_gnote + '。' if _gnote else '')
+                + (f'后台树上暂无 <b>{_dropb}</b> 的节点，这几项本版<b>不再识别</b>；'
+                   if _dropb else '')
+                + f'本版不产<b>细粒度题型</b>（题型词表为数学专用），知识点识别到模块级；'
+                f'「计算/粗心」属错误类型而非知识点，仍单列；'
+                f'知识点不参与分层（分层只看小黑板 / 作业 / 老师反馈 / 成绩 / 飞书提交）。<br>'
+            )
+        else:
+            kp_note = (
+                f'• <b>知识点口径（v4.81）</b>：知识点<b>以后台知识树为准</b>'
+                f'（{str(kp_used.get("pulled_at") or "")[:10]} 拉取，高中数学 {kp_used.get("backend_nodes", 0)} 个节点）'
+                f'—— 后台树上没有的一律不出现' + ('（唯一例外见下）' if _pend else '') +
+                f'，因此本课程的知识点清单与后台<b>逐条对得上</b>。'
+                f'命中仍用群里的自然说法（学生只会说「韦达定理」，不会说节点全名），'
+                f'范围以后台为准、措辞不强制对齐。'
+                + (f'本版依后台新增识别项：<b>{_newu}</b>；' if _newu else '')
+                + (f'后台<b>尚未建</b> {_drop} 的节点，这几项本版<b>不再识别</b>'
+                   f'（不是本课没学、也不是没人卡，而是后台无节点）；' if _drop else '')
+                # v4.81：导数是唯一例外 —— 后台没节点，但教学上单独成章，故保留并单列。
+                + (f'<b>{_pend}</b> 后台<b>同样暂无节点</b>，但{_pend}与函数在本课是'
+                   f'<b>分开讲的两章</b>，按教学口径<b>保留并单列</b>，不并入函数；' if _pend else '')
+                + ('' if _mn else '后台高中数学<b>方法类节点为 0</b>，方法维度暂无可依据来源，本报告不呈现。')
+                + '「计算/粗心」属错误类型而非知识树节点，仍单列、不与后台模块混排；'
+                '小黑板逐题表的「关联知识点」列同样按后台模块名显示：读图原标是「函数＋导数」的合并模块名，'
+                '本课白板题全是函数内容，故显示为「函数」，读图若明确标成导数则显示「导数」。'
+                + '展示颗粒度仍为模块级（后台最细节点只用于命中，不直接上卡）；'
+                '知识点不参与分层（分层只看小黑板 / 作业 / 老师反馈 / 成绩 / 飞书提交）。<br>'
+            )
     else:
         kp_note = (
             '• <b>知识点口径</b>：本报告<b>未接入</b>后台知识点树（<code>snapshot/knowledge_points.json</code> 缺失），'
@@ -5032,6 +5528,10 @@ def main():
 
     # v4.41：教务视角的「课程」全局筛选标签条（其余视角为空，不渲染）
     edu_chips, _covf = "", None
+    # v4.88：主讲处方（下节课讲这个）收集器 —— 三个视角各个分组都往这里塞，最后统一渲染 Tab④。
+    #   ⚠️ 只收「单一课程」内聚合出来的那一份（build_topic_block 里的 one_course 判定），
+    #   跨课程的「全部」页签不产出处方，所以这里的 title 都是具体课程名。
+    rx_groups = []
 
     if is_edu:
         # ===== 教务双维度 =====
@@ -5052,28 +5552,28 @@ def main():
         # v4.10：Tab2（数据明细）与 Tab3（学生卡）**各生成一套分组** —— 两个 Tab 各有独立的
         # 分组 Tab 与外层维度切换，互不干扰（id 前缀：Tab2 = t-c / t-co，Tab3 = c / co）。
         t2_c = [build_topic_block("c-all", rows, "全部课程", True, boards_map=boards_map,
-                          more_n=len(warn_all))]
+                          more_n=len(warn_all), rx_sink=rx_groups)]
         t3_c = [build_card_block("c-all", rows, "全部课程", True, co_all, True, True,
                                  boards_map=boards_map, warn_items=warn_all,
                                  chat_days=args.chat_days)]
         for ci, ck in enumerate(course_order):
             cr = by_course[ck]
             t2_c.append(build_topic_block(f"c-{ci}", cr, ck, False, boards_map=boards_map,
-                                   more_n=len(warn_by_course.get(ck, []))))
+                                   more_n=len(warn_by_course.get(ck, [])), rx_sink=rx_groups))
             t3_c.append(build_card_block(f"c-{ci}", cr, ck, True,
                                          Counter(r["co"] for r in cr), False, True,
                                          boards_map=boards_map,
                                          warn_items=warn_by_course.get(ck, []),
                                          chat_days=args.chat_days))
         t2_co = [build_topic_block("co-all", rows, "全部联席", True, boards_map=boards_map,
-                          more_n=len(warn_all))]
+                          more_n=len(warn_all), rx_sink=rx_groups)]
         t3_co = [build_card_block("co-all", rows, "全部联席", False, None, True, True,
                                   boards_map=boards_map, warn_items=warn_all,
                                   chat_days=args.chat_days)]
         for ci, ck in enumerate(co_order):
             cr = by_co.get(ck, [])
             t2_co.append(build_topic_block(f"co-{ci}", cr, ck, False, boards_map=boards_map,
-                                   more_n=len(warn_by_co.get(ck, []))))
+                                   more_n=len(warn_by_co.get(ck, [])), rx_sink=rx_groups))
             t3_co.append(build_card_block(f"co-{ci}", cr, ck, False, None, False, True,
                                           boards_map=boards_map,
                                           warn_items=warn_by_co.get(ck, []),
@@ -5181,7 +5681,11 @@ def main():
                 "var ck=b?(b.getAttribute('data-k')||''):'';"
                 "window.EDUC=(i<0)?'':ck;"
                 "var d=(i<0)?window.EDUALL:window.EDUK[ck];"
-                "function sn(id,v){var e=document.getElementById(id);if(e&&v!==undefined)e.textContent=v;}"
+                "function sn(id,v){var e=document.getElementById(id);if(e&&v!==undefined){e.textContent=v;"
+                # v5.00：这五张「问题类」KPI 卡数值为 0 时整卡隐藏（与初始渲染口径一致）；
+                #   topn-roster（总人数）与 topn-rti（项数 span，归属 rt 卡）不参与显隐。
+                "var SH=['topn-lost','topn-anc','topn-slow','topn-unres','topn-rt'];"
+                "var si=SH.indexOf(id);if(si>=0){var c=e.closest('.kpi');if(c)c.style.display=(v>0)?'':'none';}}}"
                 "if(d){sn('topn-roster',d.n);sn('topn-lost',d.lost);sn('topn-anc',d.anc);"
                 "sn('topn-slow',d.slow);sn('topn-unres',d.unres);sn('topn-rt',d.rt);sn('topn-rti',d.rti);"
                 "var kl=document.getElementById('topk-lost'),ka=document.getElementById('topk-anc'),"
@@ -5213,7 +5717,14 @@ def main():
                      + _cjs)
         _covf = {"key_by_pn": key_by_pn, "kpi": covk, "all": covk.get("")}
 
-        edu_ov = edu_overview_block(rows, course_order)   # v4.39：教务核心数据（续报/科目/扩科）
+        # v5.00（用户 2026-11-05）：教务核心数据明细表覆盖**全量在册** ——
+        #   顶部「下属学生（总人数）」= rows + warn_all（222 有聊天 + 41 无群/零聊天 = 263），
+        #   明细表此前只渲染 rows（222），两个数对不上；且那 41 人的续报/在读科目
+        #   恰恰只能靠这里看（他们没有卡片）。warn 行是轻量 dict（stu/course），
+        #   续报/科目/扩科全按姓名查 enroll/kuake，与常规行同源。
+        _wrows = [{"stu": (_v.get("stuName") or ""), "course": (_v.get("_course") or "未知课程")}
+                  for _v in warn_all if (_v.get("stuName") or "").strip()]
+        edu_ov = edu_overview_block(rows + _wrows, course_order)
         # v4.42：维度切换条与「按课程」子标签整体删除（用户拍板）—— 课程一律走顶部全局标签条；
         #   Tab2/Tab3 常态只保留「按联席」分组；选中具体课程时切到隐藏的课程面板（无标签栏）。
         topic_panels = f'''{edu_ov}
@@ -5238,7 +5749,7 @@ def main():
         co_all = Counter(r["co"] for r in rows)
         topic_panels = f'''<div class="dim-panel" id="t2-course">
   {build_topic_block("c-all", rows, name, True, boards_map=boards_map,
-                                   more_n=len(warn_all))}
+                                   more_n=len(warn_all), rx_sink=rx_groups)}
 </div>'''
         card_panels = f'''<div class="dim-panel" id="t3-course">
   {build_card_block("c-all", rows, name, True, co_all, True, False, show_co_tag=True,
@@ -5249,7 +5760,7 @@ def main():
         # ===== 联席视角（仅按课程） =====
         course_order = [k for k, _ in Counter(r["course"] for r in rows).most_common()]
         t2 = [build_topic_block("c-all", rows, "全部课程", True, boards_map=boards_map,
-                          more_n=len(warn_all))]
+                          more_n=len(warn_all), rx_sink=rx_groups)]
         t3 = [build_card_block("c-all", rows, "全部课程", False, None, True, False,
                                boards_map=boards_map, warn_items=warn_all,
                                chat_days=args.chat_days)]
@@ -5257,7 +5768,7 @@ def main():
         for ci, ck in enumerate(course_order):
             cr = [r for r in rows if r["course"] == ck]
             t2.append(build_topic_block(f"c-{ci}", cr, ck, False, boards_map=boards_map,
-                                   more_n=len(warn_by_course.get(ck, []))))
+                                   more_n=len(warn_by_course.get(ck, [])), rx_sink=rx_groups))
             t3.append(build_card_block(f"c-{ci}", cr, ck, False, None, False, False,
                                        boards_map=boards_map,
                                        warn_items=warn_by_course.get(ck, []),
@@ -5272,6 +5783,32 @@ def main():
   {''.join(t3)}
 </div>'''
         # 联席视角单维度，无需维度说明。
+
+    # ════════════════════════════════════════════════════════════════════════
+    # v4.88：Tab④「下节课讲这个（主讲）」—— 从 Tab② 里独立出来
+    #   为什么独立：这块是**按课程进度讲什么**，只服务主讲；联席看的是「谁的哪个知识点不会」，
+    #   教务看的是「谁该被打电话」。混在同一个 Tab 里，三方都得跳过不属于自己的那半屏。
+    #   去重口径：跨课程的「全部课程 / 全部联席」页签本就不产出处方（one_course 判定），
+    #   但**单课程联席**的「全部课程」与「该课程」两个页签会各产一份 → 只取具体课程那份。
+    # ════════════════════════════════════════════════════════════════════════
+    _AGG_TITLES = {"全部课程", "全部联席"}
+    _rx_sel = [g for g in rx_groups if g["title"] not in _AGG_TITLES]
+    if not _rx_sel:
+        _rx_sel = rx_groups
+    rx_html = ""
+    if _rx_sel:
+        _multi = len(_rx_sel) > 1
+        _body = "".join(
+            (f'<div class="rxcourse">{_html.escape(str(g["title"] or ""))}</div>'
+             if _multi else "")
+            + g["html"] for g in _rx_sel)
+        rx_html = ('<div class="mainpanel" id="mp-t4" style="display:none">'
+                   '<div class="rxlead">本页只给 <b>主讲</b> —— 联席与教务可以跳过：'
+                   '你们的动作在「📋 学生学情 &amp; To-Do」的学生卡里。</div>'
+                   + _body + _rxfoot_html() + '</div>')
+    # 没有处方就不出这个 Tab（空 Tab 比没有更糟：点进去是白屏）
+    _rx_tab = ('<button class="mtab" data-t="t4" onclick="showMain(\'t4\')">'
+               '🎯 下节课讲这个<span class="mcnt">主讲</span></button>') if rx_html else ""
 
     # v4.8：在册全覆盖块（分母用 coverage 的在册人数，不再用「有聊天记录的人数」冒充全量）
     roster_n = len(cov) or len(rows)
@@ -5314,11 +5851,15 @@ def main():
     if cov:
         # v4.10：顶部 KPI 卡全部可点击 —— 失联 / 出勤但无沟通 → 切到「失联预警」Tab 并展开对应档位
         # v4.41：加 id，供顶部课程标签切换时重算这些数字
-        kpi_cov = (f'<div class="kpi {"red" if lost_n else "green"} clickable" id="topk-lost" '
+        # v5.00：数值为 0 的卡**不展示**（用户 2026-11-05）——初始渲染即隐藏；
+        #   切课程后由 JS sn() 按新值动态显隐（不然某课程下有值却看不见）。
+        _h_lost = "" if lost_n else ' style="display:none"'
+        _h_anc = "" if anc_n else ' style="display:none"'
+        kpi_cov = (f'<div class="kpi {"red" if lost_n else "green"} clickable" id="topk-lost"{_h_lost} '
                    f'onclick="topKpi(\'lost\')" '
                    f'title="点击查看失联名单"><div class="n" id="topn-lost">{lost_n}</div>'
                    f'<div class="l">失联（无出勤·无沟通）</div></div>'
-                   f'<div class="kpi orange clickable" id="topk-anc" onclick="topKpi(\'anc\')" '
+                   f'<div class="kpi orange clickable" id="topk-anc"{_h_anc} onclick="topKpi(\'anc\')" '
                    f'title="点击查看「出勤但无沟通」名单"><div class="n" id="topn-anc">{anc_n}</div>'
                    f'<div class="l">出勤但无沟通</div></div>')
         _warn_n = lost_n + anc_n
@@ -5340,6 +5881,32 @@ def main():
     if _health:
         print(f"   ⚠️ 数据体检发现 {len(_health)} 条需注意 → 已写入报告顶部横幅")
 
+    # v4.86：处方任务表落盘（业务导入飞书多维表格后自己勾「已讲 / 已布置 / 已会」）。
+    #   ⚠️ 只生成表，不写入飞书。下次生成时按 `处方任务表.csv` 回读状态（见文件头）。
+    if _RX["on"] and _RX["tasks"]:
+        # 去重：同一张卡会在「全部课程」和各课程分组里各渲染一次（联席视角的 Tab 结构），
+        # 不去重会把同一名学生同一条处方写两遍。任务身份 = 学生 + 知识点（prescribe 定义）。
+        _seen, _uniq = set(), []
+        for _t in _RX["tasks"]:
+            if _t["key"] in _seen:
+                continue
+            _seen.add(_t["key"])
+            _uniq.append(_t)
+        _tp = os.path.join(wd, prescribe.TASKLOG_TPL.format(name))
+        # 「负责人」= 该生所属联席（课程维度下报告对象名是一串课程编号，不能当负责人）
+        _own = {}
+        for _k, _v in A.items():
+            _c = ((_v.get("group") or {}).get("coTeacherName") or "").strip()
+            if _c:
+                _own[_k] = _c
+        try:
+            _n_all, _n_new = prescribe.export_csv(_tp, _uniq, name, owners=_own)
+            print(f"   📋 处方任务表已更新：{_tp}"
+                  f"（本次 {len(_uniq)} 条 / 新增 {_n_new} 条 / 表内共 {_n_all} 条；"
+                  f"状态列保留业务已填内容）")
+        except Exception as _e:
+            print(f"   ⚠️ 处方任务表写出失败：{_e}")
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -5354,14 +5921,15 @@ def main():
 <div class="kpis">
   <div class="kpi clickable" onclick="topKpi('info')" title="点击查看全部学生"><div class="n" id="topn-roster">{roster_n}</div><div class="l">{scope_label}学生（{'总人数' if cov else '全量'}）</div></div>
   {kpi_cov}
-  <div class="kpi {'red' if slow_n else 'green'} clickable" onclick="topKpi('slow')" title="点击筛选「响应迟缓 · 待处理」的学生；仅计至今仍需处理的（另有 {slow_hist_n} 人为历史延迟，已恢复沟通、家长无不满，只在卡片内作「后续注意」提示）"><div class="n" id="topn-slow">{slow_n}</div><div class="l">响应迟缓群（待处理）</div></div>
-  <div class="kpi orange clickable" onclick="topKpi('unres')" title="点击筛选「待回复」的学生"><div class="n" id="topn-unres">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
-  <div class="kpi {'red' if rt_n_stu else 'green'} clickable" id="topk-rt" onclick="topKpi('recent3')" title="点击筛选「近 3 天待回应」的学生"><div class="n" id="topn-rt">{rt_n_stu}</div><div class="l">近3天待回应（<span id="topn-rti">{rt_n_items}</span> 项）</div></div>
+  <div class="kpi {'red' if slow_n else 'green'} clickable"{' style="display:none"' if not slow_n else ''} onclick="topKpi('slow')" title="点击筛选「响应迟缓 · 待处理」的学生；仅计至今仍需处理的（另有 {slow_hist_n} 人为历史延迟，已恢复沟通、家长无不满，只在卡片内作「后续注意」提示）"><div class="n" id="topn-slow">{slow_n}</div><div class="l">响应迟缓群（待处理）</div></div>
+  <div class="kpi orange clickable"{' style="display:none"' if not unres_n else ''} onclick="topKpi('unres')" title="点击筛选「待回复」的学生"><div class="n" id="topn-unres">{unres_n}</div><div class="l">待回复群（聊天分析）</div></div>
+  <div class="kpi {'red' if rt_n_stu else 'green'} clickable" id="topk-rt"{' style="display:none"' if not rt_n_stu else ''} onclick="topKpi('recent3')" title="点击筛选「近 3 天待回应」的学生"><div class="n" id="topn-rt">{rt_n_stu}</div><div class="l">近3天待回应（<span id="topn-rti">{rt_n_items}</span> 项）</div></div>
 </div>
 <div class="maintabs">
   <button class="mtab active" data-t="t1" onclick="showMain('t1')">🚨 失联预警{_cov_badge}</button>
   <button class="mtab" data-t="t2" onclick="showMain('t2')">📊 学生情况概览</button>
   <button class="mtab" data-t="t3" onclick="showMain('t3')">📋 学生学情 &amp; To-Do<span class="mcnt ok">{len(rows) + len(warn_all)}</span></button>
+  { _rx_tab }
 </div>
 <div class="mainpanel" id="mp-t1">{cov_block or '<div class="covsec"><h2>🚨 失联预警</h2><div class="covbar">本报告未接入「总人数名单」数据（<code>coverage.json</code> 缺失），暂无法做总人数覆盖与失联预警。<br>请先运行 <code>adapt_legacy.py</code> 与 <code>coverage.py</code> 生成覆盖率快照后重新出报告。</div></div>'}</div>
 <div class="mainpanel" id="mp-t2" style="display:none">{topic_panels}</div>
@@ -5372,9 +5940,10 @@ def main():
   <button class="searchclear" onclick="document.getElementById('stuSearch').value='';doSearch('')">清空</button>
 </div>
 {card_panels}</div>
+{rx_html}
 <details class="meth"><summary>📖 方法论与口径说明（点击展开）</summary>
 <p class="note">
-• <b>报告结构（v4.10 起为三大 Tab）</b>：① <b>🚨 失联预警</b> —— 总人数覆盖统计与分档名单；② <b>📊 学生情况概览</b> —— 该维度下学生的整体情况：多少人、普遍卡在哪、谁最该先跟进（含覆盖人数、双源证据、典型题型与原文出处）；③ <b>📋 学生学情 &amp; To-Do</b> —— 逐生卡片与筛选。顶部 KPI 卡<b>全部可点击</b>：失联 / 出勤但无沟通 → 切到 Tab① 并展开对应档位名单；响应迟缓 / 待回复 / 近 3 天待回应 → 切到 Tab③ 并筛出对应学生。<br>
+• <b>报告结构（v4.10 起为三大 Tab，v4.88 增第四个）</b>：① <b>🚨 失联预警</b> —— 总人数覆盖统计与分档名单；② <b>📊 学生情况概览</b> —— 该维度下学生的整体情况：多少人、普遍卡在哪、谁最该先跟进（含覆盖人数、双源证据、典型题型与原文出处）；③ <b>📋 学生学情 &amp; To-Do</b> —— 逐生卡片与筛选；④ <b>🎯 下节课讲这个</b> —— <b>只给主讲</b>：这节按课程进度讲什么、课上练什么、怎么验证这批人真的会了（联席与教务可跳过）。顶部 KPI 卡<b>全部可点击</b>：失联 / 出勤但无沟通 → 切到 Tab① 并展开对应档位名单；响应迟缓 / 待回复 / 近 3 天待回应 → 切到 Tab③ 并筛出对应学生。<br>
 • 取数（群聊）：后台 <code>wxworkSessionStat/getList</code> 月维度与日维度并集得到该{role_cn}的全部学生群；<code>wxworkChat/getChatList</code> 分页取每群<b>全量</b>消息（倒序；单群 500 条上限已取消，按 <code>total</code> 逐页拉满），文本与语音转写均纳入。<br>
 • 分析窗口：仅分析 <b>{win_txt}</b>的聊天内容。<br>
 • 出勤（后台权威）：来自学生管理后台「我的学生 → 跟进学情 → 课节考勤」接口 <code>cClassAttend/getCClassAttendList</code>，逐节课记录 出勤✓ / 缺勤✗ / 是否看回放 + 回放有效时长 + 上课日期。<br>
@@ -5394,17 +5963,17 @@ def main():
 • 响应时效：同样弃用后台「超时」标记（实测与聊天事实不符，如 6 分钟即回复的群被标「超时 19 小时」），改由聊天记录自行推算 —— 以「学生/家长的一条实质提问」到「其后第一条老师消息（含图片/讲义等任意动作）」的间隔为一次等待，同一轮多条连续提问只按首条起算；≥24 小时判「响应迟缓」并计入定档红，≥12 小时在卡片提示「最长响应等待」（不计定档），窗口末尾老师仍未回复的提问归入「需回复」。<br>
 • <b>响应迟缓的时效衰减（v4.60）</b>：延迟是<b>事实</b>，但要不要当作<b>今天最该做的事</b>要另判。三条同时满足时不再进 To-Do，只保留一条灰底「后续注意」提示 —— ① 延迟发生距<b>报告生成日</b> ≥ 7 天（<b>按报告日算，不按群内最后一条消息算</b>：某群 10-04 就没人说话了，若按 10-04 算只有 1 天，但读者 10-22 看报告时这已经是半个多月前的事）；② 老师回复之后学生/家长<b>仍有发言</b>（沟通没断）；③ 窗口内<b>无任何负面情绪 / 不满表达</b>。缺任一条仍按原「高」优先级进 To-Do。<b>「响应迟缓群」KPI 同步改为只计「待处理」</b>，历史延迟在 tooltip 里单列人数 —— 避免出现「点开 KPI 却看不到对应 To-Do」的自相矛盾。<br>
 • <b>近 3 天待回应（v3.9 新增 · v4.0 改为顶部折叠入口）</b>：以窗口内最新一条消息为基准往前 3 天，逐条扫学生/家长的实质提问 —— ① <b>忘记回复</b>：提问之后（截至窗口末尾）群里再无任何老师消息；② <b>问题未解决</b>：老师确有回复，但回复命中延宕词（稍后 / 晚点 / 明天 / 回头…＝应允未答），或老师回复后 24 小时内学生就同类疑问再次追问（没讲透）。全量结果<b>汇总在报告顶部的「🚨 近 3 天待回应 N 项」入口条</b>（给管理者 / 教务的统一视图，<b>默认收起，点击展开</b>明细表：学生 / 日期 / 类型 / 提问原文 / 依据 / 建议动作），并在对应学生卡头部加红徽标、<b>② 配合度内置置顶清单</b>；同时生成最高优先级 To-Do（联席＝当天必须回应并跟进到学生确认「懂了」；教务＝提醒联席闭环并向家长同步进展）。全量无此类情况时入口条显示绿色「检查通过」。<br>
-{kp_note}• <b>学生情况概览（v4.9 新增「主讲备课建议」· v4.30 改名并改为联席 / 教务视角 · v4.10.1 收敛为单表）</b>：回答「<b>这批学生普遍卡在哪、谁最该先跟进</b>」，而不是「主讲这节课该讲什么」。两组信息：① <b>共性薄弱面</b> —— 按<b>覆盖学生数降序</b>排列（普遍性优先），同覆盖时<b>有小黑板实证错误的优先</b>（小黑板是学生真实作答，比「群里提过」硬），每条给出「典型题型／卡点」，点开可看原文出处；② <b>需要重点关注的学生</b> —— 互动不足 ＋ 课堂练习没落实的人，先互动后练习排序，附「可以做的事」与原文依据。目的是<b>三分钟内看完这一批人的整体状态</b>，要逐个下钻再进 Tab③。<b>本表即为双源呈现</b> —— 此前「高频知识点」表只统计聊天命中（<code>extract.top_topics</code>），小黑板的实证错误完全没进；现并列展示「群聊提及」（聊天中命中该知识点的学生数）与「小黑板实证」（读图判定该知识点<b>有错误／卡点</b>的学生数），「覆盖学生」为两源并集。⚠️ <b>v4.10.1 删除了原先并列的「高频知识点 · 数据明细」表</b> —— 它的列（知识点／群聊提及／小黑板实证／合计涉及／占比）与主表完全重合（用户指出「这两部分重复了，保留上面的即可」），故主表改为<b>显示全部知识点</b>，长尾（数列、解三角形等）不再截断。③ ⚠️ <b>题型证据分硬／软</b>：标「实证错误 N」= 读图判「有错」或存在<b>非「没写完」</b>类实质错误（真的不会）；标「仅未完成／卡点」= 只是没写完（课堂节奏／书写速度，非能力）—— 与 v4.4 学习分层口径一致，不混为一谈。<b>读图模型对同一件事有「未完成收尾」与「收尾未完成」两种词序，后者才是真实语料主流写法（实测 176 条错误标注中占 94 条），故判定统一用包含式匹配（<code>common.is_finish_err</code>），精确匹配会静默漏掉最常见的写法。</b>④ 反编造：题型名只能来自 <code>FINE_TYPES</code> 词表命中或字段原文（形如「课堂作答卡点：…」），无证据时如实说明、留空，<b>绝不硬凑题型名</b>；不预测考情、不生成内容。<br>
+{kp_note}• <b>学生情况概览（v4.9 新增「主讲备课建议」· v4.30 改名并改为联席 / 教务视角 · v4.10.1 收敛为单表）</b>：回答「<b>这批学生普遍卡在哪、谁最该先跟进</b>」，而不是「主讲这节课该讲什么」。两组信息：① <b>共性薄弱面</b> —— 按<b>覆盖学生数降序</b>排列（普遍性优先），同覆盖时<b>有小黑板实证错误的优先</b>（小黑板是学生真实作答，比「群里提过」硬），每条给出「典型题型／卡点」，点开可看原文出处；② <b>需要重点关注的学生</b> —— 互动不足 ＋ 课堂练习没落实的人，先互动后练习排序，附「可以做的事」与原文依据。目的是<b>三分钟内看完这一批人的整体状态</b>，要逐个下钻再进 Tab③。<b>本表即为双源呈现</b> —— 此前「高频知识点」表只统计聊天命中（<code>extract.top_topics</code>），小黑板的实证错误完全没进；现并列展示「群聊提及」（聊天中命中该知识点的学生数）与「小黑板实证」（读图判定该知识点<b>有错误／卡点</b>的学生数），「覆盖学生」为两源并集。⚠️ <b>v4.10.1 删除了原先并列的「高频知识点 · 数据明细」表</b> —— 它的列（知识点／群聊提及／小黑板实证／合计涉及／占比）与主表完全重合（用户指出「这两部分重复了，保留上面的即可」），故主表改为<b>显示全部知识点</b>，长尾不再截断。③ ⚠️ <b>题型证据分硬／软</b>：标「实证错误 N」= 读图判「有错」或存在<b>非「没写完」</b>类实质错误（真的不会）；标「仅未完成／卡点」= 只是没写完（课堂节奏／书写速度，非能力）—— 与 v4.4 学习分层口径一致，不混为一谈。<b>读图模型对同一件事有「未完成收尾」与「收尾未完成」两种词序，后者才是真实语料主流写法（实测 176 条错误标注中占 94 条），故判定统一用包含式匹配（<code>common.is_finish_err</code>），精确匹配会静默漏掉最常见的写法。</b>④ 反编造：题型名只能来自 <code>FINE_TYPES</code> 词表命中或字段原文（形如「课堂作答卡点：…」），无证据时如实说明、留空，<b>绝不硬凑题型名</b>；不预测考情、不生成内容。<br>
 • <b>总人数覆盖与失联预警（v4.8 新增 · 报告顶部独立区块）</b>：报告主体的学生卡<b>只覆盖「有聊天记录」的学生</b>，而总人数名单往往明显更大 —— 差额恰恰是最需要预警的一批人，本区块专门收口。判定用<b>两轴</b>：① 沟通轴（聊天，取近 {args.chat_days} 天）② 学习轴（出勤，取报告窗口全窗口）。分档：<b>失联</b>＝无聊天记录且无出勤记录；<b>出勤但无沟通</b>＝无聊天记录但有出勤记录（学生在正常上课，缺的是企业微信沟通通道）；<b>单向沟通</b>＝有聊天记录但学生·家长实质发言为 0（仅老师输出）；<b>低互动</b>＝学生·家长实质发言 1~2 条。⚠️ <b>判定「失联」一律以出勤为准，不以群是否存在为准</b> —— 群列表接口 <code>wxworkSessionStat/getList</code> 只收录有响应时效记录的群，实测有损（教务视角名单 243 人、群仅 144，缺口分散在全部 7 门课，其中 93 人仍在正常出勤），若拿群判失联会一次性误报约四成学生。群「采到与否」仅作根因标签展示（<b>群清单的取数口径</b>＝月维度从窗口起始月逐月拉＋当前月日维度补充，再用 <code>students.json</code> 的 roomId 兜底；日维度实测每天只回 1~9 个本课程群，<b>不能</b>据此判「学生无群」）。两轴窗口必须分开：出勤本稀疏，若也只看近两周，会把已结课学生全部误判为「无出勤」→ 误报失联。<br>
 • <b>预警卡（v4.12 落地 · Tab③ 学生学情）</b>：常规学生卡来自「有聊天记录」的学生，<b>在册、却一条聊天记录都没有的学生在 Tab③ 原本完全缺席</b>。v4.12 把这批人（失联 / 出勤但无沟通）从覆盖率快照 <code>coverage.json</code> 里捞出来，以<b>左侧红边预警卡</b>呈现：把<b>沟通轴</b>（群在不在、有没有人说话）与<b>学习轴</b>（出勤 ＋ 小黑板作答）两句话摊开写清，给出<b>结论</b>与<b>可直接执行的动作</b>，并逐项标注<b>数据来源</b>（在册花名册 / 群列表 / 聊天 / 小黑板 各自 ✓ 或 ✗），便于回后台、回文件夹逐字核对。🔒 <b>防伪铁律</b>：学习轴一旦有证据（有出勤，或有小黑板作答）→ 结论只写「<b>企业微信沟通通道失效</b>」，<b>绝不写「学生流失」</b>（实测本课「出勤但无沟通」学生全部正常上课，如某生出勤 5/5、小黑板作答 21/29 张）；只有「既无沟通、也无出勤与小黑板」才写「无学习痕迹 · 需人工核实就读状态」。⚠️ <b>v4.14 起预警卡默认收起、并置于本组常规学生卡的下方</b> —— 常规学生卡才是主要信息，一进 Tab③ 不应被红卡占满首屏。展开入口有两处：本组底部的「⚠️ 另有 N 名在册学生未进入学情分析」入口条（点击就地展开 / 收起），以及上方 KPI 卡「<b>未触达预警</b>」（点击隐藏常规卡、只留预警卡）；点「学生数」或再点一次即恢复。搜索命中预警卡时该区自动展开。<br>
 </p></details>
 </div>
 <script>
-// ===== v4.10：三大 Tab（① 失联预警 ② 学生情况概览 ③ 学生学情 & To-Do）=====
+// ===== v4.10：主 Tab（① 失联预警 ② 学生情况概览 ③ 学生学情 & To-Do ④ 下节课讲这个）=====
+// v4.88：不再写死 ['t1','t2','t3'] —— 改为按 .mainpanel 遍历，Tab④ 有没有、叫什么由后端决定。
 function showMain(t){{
-  ['t1','t2','t3'].forEach(function(k){{
-    var p=document.getElementById('mp-'+k);
-    if(p) p.style.display=(k===t?'block':'none');
+  document.querySelectorAll('.mainpanel').forEach(function(p){{
+    p.style.display = (p.id === 'mp-'+t) ? 'block' : 'none';
   }});
   document.querySelectorAll('.mtab').forEach(function(b){{
     b.classList.toggle('active', b.getAttribute('data-t')===t);

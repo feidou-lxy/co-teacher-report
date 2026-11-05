@@ -89,6 +89,7 @@ async function main() {
     //    Chrome for Testing 是临时/ad-hoc 签名，读钥匙串始终授权不持久，而我们反复 kill 重开 → 反复弹。
     //    mock keychain = 密钥只放内存，password-store=basic = 密码库不加密，两者都不碰系统钥匙串。
     '--use-mock-keychain', '--password-store=basic',
+    '--no-proxy-server',          // v5.00：绕开系统代理（Clash 劫持会导致登录页 SPA 资源加载失败）
     '--disable-features=PasswordManagerOnboarding,AutofillServerCommunication',
     '--disable-gpu', '--hide-scrollbars', '--window-size=1440,940',
     'about:blank',
@@ -181,8 +182,18 @@ async function main() {
   log('填账号:', r1, '| 填密码:', r2);
 
   // 截验证码（元素级，含内边距放大一点，避免边框裁掉字符）
-  const box = await ev(`(()=>{const el=document.querySelector("img[alt='请输入验证码']")
-      || document.querySelector("img");
+  // ⚠️ 找不到 alt=请输入验证码 时**不要退回第一个 img** —— 登录页第一个 img 是吉祥物，
+  //    截出来是一张卡通图，看着像验证码但不是，白等一轮（2026-11-03 实测踩中）。
+  //    此时改为截整页，人工一眼就能看出验证码在哪、是不是改成了滑块。
+  // 验证码图可能是填完表单后才异步加载的 → 先等它出现（最多 5 秒）
+  for (let i = 0; i < 10; i++) {
+    if (await ev(`!!document.querySelector("img[alt='请输入验证码']")`).catch(() => false)) break;
+    await sleep(500);
+  }
+  const imgs = await ev(`JSON.stringify([...document.querySelectorAll('img')]
+    .map(e=>({alt:e.alt,src:(e.src||'').slice(-40),w:Math.round(e.getBoundingClientRect().width)})))`);
+  log('页面 img 列表:', imgs);
+  const box = await ev(`(()=>{const el=document.querySelector("img[alt='请输入验证码']");
     if(!el) return null;
     const r=el.getBoundingClientRect();
     return {x:r.x,y:r.y,width:r.width,height:r.height};})()`);
