@@ -33,3 +33,7 @@ Thumbs.db
 
 # 本机读图缓存（含学生姓名，绝不入库 / 不分发）
 .cache/
+
+# v5.07：运行时状态与内部凭据，不进仓库
+_not_deliverable/
+scripts/knowledge_used.json

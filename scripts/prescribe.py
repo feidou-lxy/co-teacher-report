@@ -427,9 +427,11 @@ def card_html(tasks, log, esc):
             f'<div class="rx-m"><span class="rxw">什么时候</span>{esc(t["when"])}'
             + (f'<span class="rx-evi">{esc(t["evi"])}</span>' if t["evi"] else "")
             + '</div></li>')
-    return ('<div class="rxbox"><div class="rxbox-h">🎯 下一步（知识点处方）'
-            '<span class="rxbox-sub">只给需重点关注 / 需关注，正常学生不出处方</span></div>'
-            f'<ol class="rxlist">{"".join(lis)}</ol></div>')
+    # v5.07：整块默认折叠（用户 2026-11-06「折叠」）—— 处方是展开后的证据，
+    #   可见区只留一行标题，点开再看讲/练/验。
+    return ('<details class="rxbox rx-fold"><summary class="rxbox-h">🎯 下一步（知识点处方）'
+            '<span class="rxbox-sub">只给需重点关注 / 需关注，正常学生不出处方</span></summary>'
+            f'<ol class="rxlist">{"".join(lis)}</ol></details>')
 
 
 def _md(txt, esc):

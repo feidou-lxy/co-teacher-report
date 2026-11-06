@@ -4146,6 +4146,17 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
 - 保留不动的兼容层：`adapt_*` 仍读 `board_analysis.json`（恒为空 → snapshot/boards.json 恒 []，
   meta counts["boards"]=0），仅为兼容不报错；报告学习证据实际消费 `boards_summary.json`（接口产物）。
 
+### v5.07 · 知识点处方默认折叠（2026-11-06 用户圈选「折叠」）
+
+学生卡可见区再收敛一步：`prescribe.card_html()` 的整个 `.rxbox` 从 `<div>` 改为
+`<details class="rxbox rx-fold">`，`<summary>` 即原表头（🎯 下一步（知识点处方）+ 灰色副标题），
+默认收起、点开看讲/练/验。CSS 在 `.rxbox-h` 后新增 `.rx-fold` 组（▸/▾ 箭头 + hover 变色）。
+
+- 改动只在 `prescribe.py` card_html 尾部 + report.py CSS 两处；`test_prescribe.py` 35 用例
+  只断言内容子串，全部通过。
+- 实测谢胡课重渲：64 处 rx-fold、旧式 `<div class="rxbox">` 0、`**` 0、占位符 0；
+  playwright 截图目检折叠态（只剩一行标题）与展开态（内容完整）均正常。
+
 ### v5.06 · 老师手记上提 + 折叠区分组（2026-11-06 用户迭代反馈）
 
 v5.05 用户实测两点反馈：①「老师手记也是重要信息，要在明显的地方」②「展开折叠区后依然很乱」：

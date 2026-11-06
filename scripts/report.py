@@ -990,7 +990,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.06"
+SKILL_VER = "v5.07"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -4046,6 +4046,13 @@ details.slimdet>summary:hover{color:#3a5bdb}
   border-radius:0 9px 9px 0;background:#fbfcff;padding:10px 13px 11px}
 .rxbox-h{font-size:13px;font-weight:700;color:#2b4bb5;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .rxbox-sub{font-size:11px;font-weight:400;color:#98a2b3}
+/* v5.07 处方默认折叠：summary 即原表头，箭头随开合变化 */
+.rx-fold>summary{cursor:pointer;list-style:none;outline:none}
+.rx-fold>summary::-webkit-details-marker{display:none}
+.rx-fold>summary:before{content:"▸";font-size:10px;color:#7b8ec9;flex:0 0 auto}
+.rx-fold[open]>summary:before{content:"▾"}
+.rx-fold>summary:hover{color:#3a5bdb}
+.rx-fold[open]{padding-bottom:4px}
 .rxlist{margin:8px 0 0;padding:0;list-style:none;counter-reset:rx}
 .rxlist>li{counter-increment:rx;padding:8px 0 9px;border-top:1px dashed #eaeef7}
 .rxlist>li:first-child{border-top:0;padding-top:2px}
