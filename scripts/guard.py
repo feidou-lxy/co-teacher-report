@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-企业门禁 + 团队配置布署（v4.84）
+团队配置布署 + （旧共享身份的）企业门禁（v4.84；v5.04 起个人授权为主路径）
 
-目的：技能分发给公司内部同事后，装完即用；但**非本公司员工**即使拿到分发包也拉不到数据。
+v5.04（2026-11-06 用户拍板）：飞书取数改为 **lark-cli 个人授权**（feishu_auth.py）。
+  · 新安装不带 --secret：团队配置默认 `via=cli`、**不含任何 appSecret**；
+  · 个人授权路径**不做**手机号查通讯录 / 180 天本地验证（那是旧共享应用的门禁）；
+  · 旧工作目录迁移：`--migrate-feishu <workdir>` 把 profile.json 里的
+    via=api + appSecret 移除（备份到 _not_deliverable/），换成 via=cli；
+    团队映射（source / spreadsheetToken / sheets / items）与报告快照**原样保留**。
+  · --verify / --status / --reset 为旧共享身份的存量能力，保留不动。
 
-原理（务必理解，不然会误以为它是保险箱）：
+原理（旧共享身份，务必理解，不然会误以为它是保险箱）：
   1. 取数走**应用身份**（appId + appSecret → tenant_access_token），零配置、永不过期；
-  2. 应用凭证本身分不清"谁在用" —— 谁拿到 secret 都一样能读。所以这里加一道**入职校验**：
-     要求使用者填一次**公司手机号或公司邮箱**，用它去查本公司通讯录；
-     查到 = 本公司员工（放行并把结果缓存 180 天），查不到 = 拒绝。
-  3. 缓存写在**用户主目录**（不随包分发），所以别人无法靠复制技能包绕过这一步。
-
+  2. 应用凭证分不清"谁在用"——所以加一道入职校验（公司手机号/邮箱查通讯录，
+     缓存 180 天）。
 ⚠️ 这是"门锁"不是"保险箱"：拿到 secret 的人可以绕过本脚本直接调飞书接口。
-   真正的防线是「分发包不外流」+「人员变动时重置 secret」。
+   个人授权路径没有这个问题——读的是「谁授权、谁的权限」。
 
 用法：
-  # 作为库
-  import guard; guard.ensure_access(app_id, app_secret)
-
-  # 命令行（布署一个团队到工作目录）
+  # 布署一个团队到工作目录（v5.04：不再要求手机号验证）
   python3 guard.py --workdir ~/.workbuddy/reports/edu-张三 --team 娜娜组
-  python3 guard.py --status        # 看本机是否已验证
-  python3 guard.py --reset         # 清除本机验证记录（换人/换设备时用）
+  # 旧配置迁移到个人授权
+  python3 guard.py --migrate-feishu ~/.workbuddy/reports/edu-张豫
+  # 旧共享身份的门禁（存量用）
+  python3 guard.py --status / --reset / --verify
 """
 import argparse
 import datetime
@@ -248,6 +250,49 @@ def load_local_credentials():
     return None, None
 
 
+def migrate_feishu(workdir):
+    """v5.04：把工作目录的 profile.json 从「共享应用身份」迁移到「个人授权」。
+
+    · 备份原 profile 到 _not_deliverable/profile_api_<时间戳>.json（可回溯）；
+    · feishu.via → "cli"；删除 feishu.auth（appId/appSecret 一并移除，本机不再存共享密钥）；
+    · 团队映射（team / source / spreadsheetToken / sheets / items 等）**原样保留**；
+    · 报告快照（snapshot/、feishu_raw.json、HTML）一律不动。
+    返回 (migrated, 原因)。
+    """
+    import datetime as _dt
+    p = os.path.join(workdir, "profile.json")
+    if not os.path.exists(p):
+        return False, f"{p} 不存在"
+    with open(p, encoding="utf-8") as f:
+        prof = json.load(f)
+    fs = prof.get("feishu") or {}
+    if not fs:
+        return False, "该 profile 没有 feishu 段（本就是「无飞书」配置），无需迁移"
+    auth = fs.get("auth") or {}
+    if fs.get("via") != "api" and not auth.get("appSecret"):
+        return False, "该 profile 已经是个人授权（via=cli 且无 appSecret），无需迁移"
+    bdir = os.path.join(workdir, "_not_deliverable")
+    os.makedirs(bdir, exist_ok=True)
+    bak = os.path.join(bdir, "profile_api_" + _dt.datetime.now().strftime("%Y%m%d_%H%M") + ".json")
+    with open(bak, "w", encoding="utf-8") as f:
+        json.dump(prof, f, ensure_ascii=False, indent=1)
+    os.chmod(bak, 0o600)
+    fs["via"] = "cli"
+    fs["_via_note"] = ("cli = 走本机 lark-cli 个人授权（v5.04 默认）；"
+                       "旧共享应用身份已迁移移除（备份见 _not_deliverable/）")
+    fs.pop("auth", None)
+    prof["feishu"] = fs
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(prof, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, p)
+    print(f"✅ 已迁移到个人授权：{p}")
+    print(f"   旧配置（含共享密钥）备份：{bak}（确认无需回退后可删除）")
+    print("   团队映射与报告快照未动。下次取数若提示未授权，")
+    print("   运行：python3 <skill>/scripts/feishu_auth.py login（浏览器点一下即可）")
+    return True, ""
+
+
 def deploy_team(workdir, team):
     """把内置模板复制成 <workdir>/profile.json（已存在则不覆盖）。
 
@@ -295,8 +340,17 @@ def main():
     ap.add_argument("--status", action="store_true", help="查看本机验证状态")
     ap.add_argument("--reset", action="store_true", help="清除本机验证记录")
     ap.add_argument("--account", help="公司手机号或邮箱（不给则交互式询问；也可用环境变量 CTR_EMPLOYEE_ACCOUNT）")
-    ap.add_argument("--verify", action="store_true", help="只做公司身份验证，不部署任何配置")
+    ap.add_argument("--verify", action="store_true", help="只做公司身份验证，不部署任何配置（旧共享身份用）")
+    ap.add_argument("--migrate-feishu", dest="migrate_feishu", metavar="WORKDIR",
+                    help="v5.04：把该工作目录 profile.json 从共享应用身份迁移到 lark-cli 个人授权"
+                         "（移除 appSecret 并备份，团队映射与快照不动）")
     args = ap.parse_args()
+
+    if getattr(args, "migrate_feishu", None):
+        migrated, why = migrate_feishu(os.path.expanduser(args.migrate_feishu))
+        if not migrated:
+            print(f"ℹ️ {why}")
+            return
 
     if args.verify:
         aid, sec = load_local_credentials()
@@ -328,17 +382,31 @@ def main():
 
     if args.workdir and args.team:
         dst = deploy_team(os.path.expanduser(args.workdir), args.team)
-        # 凭证从刚布署的 profile.json 里取（本模块不存明文 secret）
+        # v5.04：个人授权（via=cli，无 appSecret）是默认路径 —— 不做手机号验证，
+        # 只提示授权状态；旧共享身份（有 appSecret）才走 ensure_access。
         try:
             with open(dst, encoding="utf-8") as f:
-                auth = ((json.load(f).get("feishu") or {}).get("auth") or {})
+                fs = (json.load(f).get("feishu") or {})
         except Exception as e:
             raise SystemExit(f"❌ 读取 {dst} 失败：{e}")
-        if not auth.get("appSecret"):
-            # v4.85：无飞书表的团队也要过门禁 —— 用技能内置的凭证（它只用来查通讯录）
-            _aid, _sec = load_local_credentials()
-            auth = {"appId": _aid, "appSecret": _sec}
-        ensure_access(auth.get("appId"), auth.get("appSecret"), account=args.account)
+        if fs.get("auth", {}).get("appSecret"):
+            ensure_access(fs["auth"].get("appId"), fs["auth"]["appSecret"], account=args.account)
+            return
+        if not fs:
+            print("ℹ️ 本团队未接飞书表（feishu=null）→ 无需飞书授权。")
+            return
+        print("ℹ️ 本配置走 lark-cli 个人授权（不含任何共享密钥）。")
+        try:
+            import feishu_auth
+            ok, _ = feishu_auth.check_status(verbose=False)
+        except ImportError:
+            print("   （缺 feishu_auth.py，跳过授权检查——请重新安装技能）")
+            return
+        if ok:
+            print("✅ 飞书个人授权已就绪，取数将复用本机登录态。")
+        else:
+            print("   尚未授权：首次取数时会给出引导，或直接运行：")
+            print("     python3 <skill>/scripts/feishu_auth.py login")
         return
 
     ap.print_help()

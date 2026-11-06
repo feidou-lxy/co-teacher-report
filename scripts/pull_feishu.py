@@ -1,23 +1,29 @@
-"""飞书电子表格取数（v4.19）：把团队自维护的飞书表拉成原始 JSON。
+"""飞书电子表格取数（v4.19；v5.04 起默认走 lark-cli 个人授权）。
 
 为什么需要它：8 个团队共用同一套分析内核，但各自的飞书表结构不同。
 本脚本只负责「把表原样取回来」，**不做任何解析**——解析与映射在 adapt_feishu.py。
 
 两个通道（同一份 profile.json，只换凭证）：
-    --via cli   走本机 lark-cli（用户身份；本机调试 / 摸表结构用）
-    --via api   直连飞书开放平台（tenant_access_token；**生产 8 团队走这条**）
+    --via cli   走本机 lark-cli **个人授权**（v5.04 起的默认与推荐路径）：
+                同事用自己的飞书账号授权一次，日常复用本机登录态；
+                显式 `--as user` 调 wiki 解析 / 列表 / 读格。
+    --via api   直连飞书开放平台（tenant_access_token；**旧共享应用身份，已非默认**，
+                仅存量配置兼容——新安装不再下发 appSecret）。
 
-输入：<workdir>/profile.json 的 feishu 段
-输出：<workdir>/feishu_raw.json
+⚠️ 个人授权三条铁律（2026-11-06 用户拍板）：
+  1. 未授权时**引导授权**（feishu_auth.py 设备码流程，用户浏览器点一下，不发任何凭据），
+     授权失败**绝不自动切回共享应用身份**；
+  2. 错误分两类：缺读表授权 → 引导补授权；本人无权访问该表 → 联系表格管理员开只读；
+  3. 个人路径**不做**手机号查通讯录 / 180 天企业门禁（那是旧共享应用的门禁）。
 
 ⚠️ 飞书三个实测坑（已处理）：
   1. **wiki 链接不能直接用**：/wiki/{node_token} 里的 token 是节点 ID，必须先换 obj_token；
   2. **range 必须用 sheetId**（不能用中文 sheet 名，改名/特殊字符会挂）；
-  3. **日期默认是 1899-12-30 起的浮点数** → api 通道显式带 dateTimeRenderOption=FormattedString；
+  3. 日期：api 通道显式带 dateTimeRenderOption=FormattedString；
      cli 通道用 FormattedValue（lark-cli 无该参数，日期列可能仍是数字，不影响学情字段）。
 
 ⚠️ 第四个坑（最坑，本脚本显式拦）：**「调用成功但返回数据为空」**。
-  应用未被加为表格协作者时，接口不报错、静默返回空数组 → 会被误读成「这个团队没数据」。
+  身份无权访问该表时，接口不报错、静默返回空数组 → 会被误读成「这个团队没数据」。
   故 `list_sheets` / `read` 拿到空结果一律**显式报错**，绝不静默兜底。
 """
 import argparse
@@ -50,6 +56,45 @@ def colname(n):
 
 class FeishuError(RuntimeError):
     pass
+
+
+# ── 错误分类（v5.04）：auth=缺授权/登录态失效；perm=本人无权访问该表；other=其余 ──
+_AUTH_HINTS = ("20064", "invalid access token", "access token", "please log in",
+               "请重新登录", "未授权", "unauthorized", "401", "app ticket",
+               "token has been", "login required", "auth")
+_PERM_HINTS = ("99991672", "permission", "forbidden", "403", "无权", "没有权限",
+               "denied", "permission denied", "restriction")
+
+
+def classify_feishu_error(msg):
+    s = str(msg).lower()
+    if any(h in s for h in _AUTH_HINTS):
+        return "auth"
+    if any(h in s for h in _PERM_HINTS):
+        return "perm"
+    return "other"
+
+
+def _exit_guidance(kind, detail):
+    """按错误类别给可执行的引导（个人授权路径的统一出口，绝不回退共享身份）。"""
+    if kind == "auth":
+        print("❌ 飞书个人授权缺失或已过期。")
+        print(f"   原因：{detail[:200]}")
+        print()
+        print("   ── 怎么修（约 30 秒，不用发密码/验证码/token）──")
+        print("   运行：python3 <skill>/scripts/feishu_auth.py login")
+        print("   会给你一个浏览器链接，打开点「同意授权」即可；")
+        print("   之后的取数自动复用本机登录态，不会重复弹授权。")
+        raise SystemExit(3)
+    if kind == "perm":
+        print("❌ 你的飞书账号无权访问这张表格（接口拒绝）。")
+        print(f"   原因：{detail[:200]}")
+        print()
+        print("   ── 怎么修 ──")
+        print("   联系**表格管理员**，请他把这张表对你开通「可阅读」权限（只读即可）。")
+        print("   授权好之后，重跑取数即可，不需要重新做个人授权。")
+        raise SystemExit(4)
+    raise FeishuError(detail)
 
 
 def _trim(rows):
@@ -146,15 +191,20 @@ def read_wide(ch, tk, sheet_id, ncol, nrow, col_chunk=20, row_chunk=60,
 
 # ================================================================ 通道
 class CliChannel:
-    """走本机 lark-cli。本机调试用；生产团队机器上不一定有。"""
+    """走本机 lark-cli **个人授权**（v5.04 起默认路径）。
+
+    所有调用显式 `--as user`——用同事本人的飞书身份读表；授权与登录态由
+    feishu_auth.py / lark-cli 管理，本类只负责发起请求与错误透传。
+    """
 
     def __init__(self, identity="user", path=None):
-        self.identity = identity
+        self.identity = identity or "user"
         self.path = (path or os.environ.get("LARK_CLI")
                      or shutil.which("lark-cli"))
         if not self.path:
             raise FeishuError(
-                "找不到 lark-cli。请用 --lark-cli 指定路径，或改用 --via api 走应用凭证。")
+                "本机没有 lark-cli（飞书官方命令行工具，随 WorkBuddy 安装）。\n"
+                "   请让 WorkBuddy 帮你安装 lark-cli，或用 --lark-cli 指定路径。")
         # ⚠️ 必须禁代理：本机 Clash 代理会让请求打不通（实测）
         self.env = dict(os.environ, LARK_CLI_NO_PROXY="1")
 
@@ -212,8 +262,10 @@ class CliChannel:
                        "--as", self.identity], "列出 sheet")
         raw = (((j.get("data") or {}).get("sheets") or {}).get("sheets")) or []
         if not raw:
+            # 个人身份下空返回 ≈ 你本人无权访问这张表（飞书静默返回空）
             raise FeishuError(
-                "列出 sheet 返回空 —— 可能是应用未被加为表格协作者（飞书会静默返回空）。")
+                "列出 sheet 返回空 —— 你的飞书账号很可能无权访问这张表格，"
+                "请联系表格管理员开通「可阅读」权限。")
         return [{"sheetId": s.get("sheet_id"), "title": s.get("title") or "",
                  "rows": (s.get("grid_properties") or {}).get("row_count"),
                  "cols": (s.get("grid_properties") or {}).get("column_count"),
@@ -231,7 +283,8 @@ class CliChannel:
 
 
 class ApiChannel:
-    """直连飞书开放平台。**生产路径** —— 8 个团队各拿一份应用凭证即可。"""
+    """直连飞书开放平台。⚠️ v5.04 起为**旧共享应用身份（存量兼容，非默认）**——
+    新安装不再下发 appSecret；同事机器上一律走 CliChannel（个人授权）。"""
 
     def __init__(self, app_id, app_secret):
         if not app_id or not app_secret:
@@ -341,13 +394,22 @@ def main():
 
     via = args.via or fs.get("via") or "cli"
     if via == "cli":
+        # v5.04 个人授权预检：登录态缺失时立刻给引导，而不是让用户看一堆报错。
+        # （用 feishu_auth 而不是直接信 `auth status`——后者对过期 token 会报假成功，
+        #   真正的判据是调用时的错误分类，见 __main__ 的统一出口。）
+        try:
+            import feishu_auth
+            ok, _why = feishu_auth.check_status(verbose=False)
+        except ImportError:
+            ok = True          # 旧包缺 feishu_auth.py：不做预检，靠调用期错误分类兜底
+        if not ok:
+            _exit_guidance("auth", "lark-cli 无可用的个人登录态（首次使用或授权已过期）")
         ch = CliChannel(args.identity or fs.get("identity") or "user", args.lark_cli)
     else:
         auth = fs.get("auth") or {}
         _aid = os.environ.get("FEISHU_APP_ID") or auth.get("appId")
         _sec = os.environ.get("FEISHU_APP_SECRET") or auth.get("appSecret")
-        # v4.84 企业门禁：先确认本机使用人是本公司员工（每 180 天一次），
-        # 非本公司的人即使拿到分发包也走不到这里后面的取数。
+        # 旧共享应用身份（存量兼容）：保留企业门禁。个人授权路径不经过这里。
         try:
             import guard
             guard.ensure_access(_aid, _sec, quiet=True)
@@ -491,4 +553,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # v5.04 统一错误出口：把调用期的飞书错误分类成「缺授权」/「无表权限」，
+    # 给同事可执行的引导；**绝不自动切回共享应用身份**。
+    try:
+        main()
+    except FeishuError as e:
+        kind = classify_feishu_error(str(e))
+        if kind in ("auth", "perm"):
+            _exit_guidance(kind, str(e))
+        raise
+    except SystemExit:
+        raise

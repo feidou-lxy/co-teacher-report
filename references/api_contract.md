@@ -132,7 +132,7 @@ GET /ai/getCoTeacherStudents?coTeacherName=<联席姓名>     联席维度
 - **`productName` 课程名（v4.7 新增 · 报告取课程名的唯一来源）**——
   如 `2026Q-SX-高二数学985层进化班六D谢胡`（`YYYYQ-学科码-` 前缀 + 课程名；
   学科码：SX 数学 / WL 物理 / HX 化学 / YW 语文 / YY 英语）。实测 3781/3781 条非空。
-- `groupName` 群名（如 `张喜然(W)-高二数学985层六D谢胡-26Q`）：**v4.7 起不再用于解析课程**，
+- `groupName` 群名（如 `某生(W)-高二数学985层六D谢胡-26Q`）：**v4.7 起不再用于解析课程**，
   仅在按课程筛选时作兜底 + 不一致诊断（见下）
 - `grade` / `gradeName` 年级（`5` → `高二`）
 - `subject` / `subjectName` 学科（如 `数学` / `物理` / `英语`）

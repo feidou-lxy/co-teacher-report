@@ -7,18 +7,13 @@
  "_team_note": "用户 2026-10-16 更正：孙一文团队属**高二数学**（此前误记为高一数学）。佐证：本团队 8 张表的课程名主体是「高二数学…」（清北层日E邵 / 211层六C肖 / 进度一985层六B袁 等）；少数「【26届】高一数学…零点五加三直升班」是 26 届学生在上高一内容的直升班，不改变团队归属。",
  "minVersion": "4.19",
  "feishu": {
-  "via": "api",
-  "_via_note": "cli = 走本机 lark-cli（用户身份，调试用）；api = 直连飞书开放平台 tenant_access_token（生产用，需 appId + appSecret）",
+  "via": "cli",
+  "_via_note": "cli = 走本机 lark-cli 个人授权（v5.04 默认）。首次取数会引导授权；不含任何共享密钥。旧 via=api + appSecret 通道仅存量兼容。",
   "sourceType": "wiki",
   "source": "PXqPwBtu6i54v2kFuxjcpnjTnXg",
   "_source_note": "wiki 节点 token。sourceType=sheet 时这里直接填 spreadsheetToken。",
   "spreadsheetToken": "Ju8gs9IC0hZt5stL82ac8LlxnWd",
   "_spreadsheetToken_note": "已解析出的真实表格 token（= wiki get_node 的 obj_token）。留空则每次自动解析。",
-  "auth": {
-   "appId": "cli_a95f759091bddcd5",
-   "appSecret": "",
-   "_note": "模板文件：appSecret 由 install.sh --secret 注入。仓库里永远留空。"
-  },
   "sheets": {
    "include": [
     "NPMSWD",

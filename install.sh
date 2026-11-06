@@ -2,19 +2,20 @@
 #
 # 联席学情报告技能 · 一键安装脚本
 #
-# 公司同事用法（命令由《操作手册》给出，含 --secret）：
-#   bash <(curl -sL https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/main/install.sh) \
-#     --secret=xxxxxxxx
+# 同事用法（命令由《安装手册》给出，**不再携带任何密钥**）：
+#   bash <(curl -sL https://raw.githubusercontent.com/feidou-lxy/co-teacher-report/main/install.sh)
 #
-# 装完会要求输入一次「公司手机号」，验证通过后 180 天不用再验证。
+# 飞书数据走 **lark-cli 个人授权**（v5.04）：装好后首次取数会给出浏览器授权链接，
+# 你本人点一下「同意授权」即可（全程不用发飞书密码/验证码/token 给任何人）；
+# 之后日常运行复用本机登录态，不会重复弹授权。
 #
 # 其他参数：
-#   --appid=cli_xxx     覆盖应用 App ID（默认已内置，一般不用传）
-#   --secret=xxx        应用 App Secret（必填，否则装完取数会失败）
-#   --account=138xxx    公司手机号/邮箱，随命令一起验证（不给则装完交互询问）
-#   --no-verify         跳过手机号验证（仅调试用，正式使用不要加）
 #   --team=娜娜组       顺便把配置部署到某个工作目录（配合 --workdir）
 #   --workdir=<路径>    见上
+# ── 旧共享应用身份（存量兼容，已非默认）──
+#   --appid=cli_xxx --secret=xxx   走旧的应用凭证通道（需要同时给 --account 或 --no-verify）
+#   --account=138xxx    公司手机号/邮箱（仅旧通道的身份验证用）
+#   --no-verify         跳过旧通道的手机号验证（仅调试用）
 #
 # 也可用环境变量覆盖源仓库：
 #   REPO=https://github.com/其他账号/co-teacher-report BRANCH=main bash <(curl -sL <install.sh地址>)
@@ -104,12 +105,34 @@ if [ -z "$SRC" ]; then
   exit 1
 fi
 
-# ── 把凭证注入团队模板，生成真正的 profile 配置 ────────────────────────
-# 仓库里只有 *.template.json（不含 secret）；本机生成 *.json（含 secret）。
+# ── 生成团队配置 ────────────────────────────────────────────────────────
+# 默认（无 --secret）：模板原样生成本机配置 —— via=cli（lark-cli 个人授权），
+# 不含任何 appSecret。有 --secret 时走旧的应用凭证通道（存量兼容，已非默认）。
 if [ -z "$SECRET" ]; then
-  echo "⚠️  没有收到 --secret，技能能装上，但拉取飞书表格会失败。"
-  echo "    请回到《操作手册》复制完整命令（命令里带 --secret=…）。"
+  python3 - "$SRC" <<'PY'
+import glob, json, os, sys
+root = sys.argv[1]
+tpls = sorted(glob.glob(os.path.join(root, "assets", "teams", "*.template.json")))
+if not tpls:
+    sys.exit("❌ 安装包里没有 assets/teams/*.template.json，请重新下载。")
+for tpl in tpls:
+    with open(tpl, encoding="utf-8") as f:
+        cfg = json.load(f)
+    fs = cfg.get("feishu") or {}
+    fs["via"] = "cli"
+    fs["_via_note"] = ("cli = 走本机 lark-cli 个人授权（v5.04 默认）。"
+                       "首次取数会引导授权；不含任何共享密钥。")
+    fs.pop("auth", None)          # 保险：绝不落共享密钥
+    cfg["feishu"] = fs
+    out = tpl.replace(".template.json", ".json")
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=1)
+    os.chmod(out, 0o600)
+    print(f"   🧩 已生成 {os.path.basename(out)}（{cfg.get('team', '?')}，个人授权模式）")
+PY
 else
+  echo "ℹ️  检测到 --secret：走旧共享应用身份通道（存量兼容）。"
+  echo "    推荐尽快迁移到个人授权：对旧工作目录运行 guard.py --migrate-feishu <工作目录>。"
   python3 - "$SRC" "$APPID" "$SECRET" <<'PY'
 import glob, json, os, sys
 root, appid, secret = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -129,7 +152,7 @@ for tpl in tpls:
     with open(out, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=1)
     os.chmod(out, 0o600)
-    print(f"   🔑 已生成 {os.path.basename(out)}（{cfg.get('team', '?')}）")
+    print(f"   🔑 已生成 {os.path.basename(out)}（{cfg.get('team', '?')}，旧共享身份）")
 PY
 fi
 
@@ -139,7 +162,7 @@ mv "$SRC" "$DEST"
 
 echo "✅ 技能已安装到：$DEST"
 
-# ── 企业身份验证（一次，管 180 天） ────────────────────────────────────
+# ── 旧共享身份的身份验证（仅 --secret 时执行；个人授权路径不做这一步） ──
 if [ "$VERIFY" = "1" ] && [ -n "$SECRET" ]; then
   echo
   if [ -n "$ACCOUNT" ]; then
@@ -167,6 +190,17 @@ if [ "$VERIFY" = "1" ] && [ -n "$SECRET" ]; then
   fi
 fi
 
+# ── 个人授权预检（无 secret 的默认路径）────────────────────────────────
+if [ -z "$SECRET" ]; then
+  echo
+  if python3 "$DEST/scripts/feishu_auth.py" status; then
+    echo "   飞书个人授权已就绪，取数会自动复用本机登录态。"
+  else
+    echo "   首次取数时会引导你完成授权（浏览器点一下，不发任何密码/验证码/token）。"
+    echo "   也可以现在就授权：python3 $DEST/scripts/feishu_auth.py login"
+  fi
+fi
+
 # ── 可选：顺手把某个团队配置部署到工作目录 ─────────────────────────────
 if [ -n "$TEAM" ] && [ -n "$WORKDIR" ]; then
   echo
@@ -179,6 +213,7 @@ echo "✅ 安装完成。接下来直接对 WorkBuddy 说："
 echo
 echo "   用 co-teacher-report 技能，生成 <联席名> 2026年9月1日-9月30日 的学情分析"
 echo
-echo "   （首次会让你发一次后台账号密码，图形验证码会截图给你辨认）"
+echo "   （首次会让你发一次后台账号密码，图形验证码会截图给你辨认；"
+echo "    飞书表走你自己的授权，浏览器点一下即可，不需要发任何凭据）"
 echo "────────────────────────────────────────────────────────────"
-echo "自检：python3 $DEST/scripts/guard.py --status"
+echo "自检：python3 $DEST/scripts/feishu_auth.py status"

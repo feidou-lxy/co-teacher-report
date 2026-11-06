@@ -4145,3 +4145,27 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
 - **注释级清理**：export_tags / adapt_api / adapt_legacy / pull_knowledge / kp 共 5 处。
 - 保留不动的兼容层：`adapt_*` 仍读 `board_analysis.json`（恒为空 → snapshot/boards.json 恒 []，
   meta counts["boards"]=0），仅为兼容不报错；报告学习证据实际消费 `boards_summary.json`（接口产物）。
+
+### v5.04 · 飞书取数改 lark-cli 个人授权（2026-11-06 用户指令）
+
+同事装技能不再带公司共享 App Secret，改用自己的飞书账号授权读表：
+
+- **新脚本 `scripts/feishu_auth.py`**：`status`（lark-cli 是否装 + 是否已个人授权，
+  identity=bot / "Token does not exist" → 未授权）+ `login`（设备码流程：
+  `auth login --domain sheets,wiki --no-wait --json` 拿 device_code/verification_url →
+  用户浏览器点同意 → `--device-code` 阻塞等待）。最小权限只申请 `sheets,wiki`。
+  ⚠️ 必须 `LARK_CLI_NO_PROXY=1`（Clash 劫持本地代理会让回调失败）。
+- **`pull_feishu.py`**：`--via cli` 为默认（显式 `--as user`）；main() cli 分支加**授权预检**，
+  未授权 → `_exit_guidance("auth")` 引导跑 feishu_auth.py login；
+  `classify_feishu_error()` 区分 auth 类（20064/invalid token/401）与 perm 类
+  （99991672/permission/403/无权）→ 后者提示「联系表格管理员开可阅读」，**绝不自动回退共享应用身份**。
+  个人身份下 list_sheets 空返回 ≈ 无表权限，文案同步。
+- **`install.sh`**：不带 `--secret` 即可安装（默认路径：模板复制为 via=cli 的本机配置，
+  `fs.pop("auth")` 保险，chmod 600）；手机号验证仅在 `--secret` 旧通道执行；
+  装完自检改为 `feishu_auth.py status`。
+- **`guard.py`**：新增 `--migrate-feishu WORKDIR`——旧 api profile 一键迁移（备份到
+  `_not_deliverable/profile_api_<ts>.json`、via→cli、删 auth、团队映射保留、快照不动）；
+  已是 cli 则提示无需迁移。`ensure_access`（手机号查通讯录 + 180 天门禁）仅保留在 via=api 存量分支。
+- **模板**：`assets/teams/*.template.json` 去掉 auth 段、via="cli"；表格映射（spreadsheetToken/sheets）不动。
+  本机 nana/sunyiwen.json 从新模板重建，旧含密钥版备份 `$SKILL/_not_deliverable/`。
+- ⚠️ x-token（题库后台）与飞书授权**完全独立**，互不影响。

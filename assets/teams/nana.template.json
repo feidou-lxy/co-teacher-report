@@ -6,17 +6,12 @@
  "team": "高一数学 · 娜娜组",
  "minVersion": "4.20",
  "feishu": {
-  "via": "api",
-  "_via_note": "cli = 走本机 lark-cli（用户身份，调试用）；api = 直连飞书开放平台 tenant_access_token（生产用，需 appId + appSecret）",
+  "via": "cli",
+  "_via_note": "cli = 走本机 lark-cli 个人授权（v5.04 默认）。首次取数会引导授权；不含任何共享密钥。旧 via=api + appSecret 通道仅存量兼容。",
   "sourceType": "sheet",
   "source": "CNPNsX8wth7YZCtc4JfcV6YCnud",
   "_source_note": "⚠️ 本团队给的是 /sheets/ 直链 → sourceType=sheet，source 直接就是 spreadsheetToken，无需 wiki 换 obj_token。",
   "spreadsheetToken": "CNPNsX8wth7YZCtc4JfcV6YCnud",
-  "auth": {
-   "appId": "cli_a95f759091bddcd5",
-   "appSecret": "",
-   "_note": "模板文件：appSecret 由 install.sh --secret 注入。仓库里永远留空。"
-  },
   "sheets": {
    "include": [
     "3haroV",
