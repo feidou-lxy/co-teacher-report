@@ -30,6 +30,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -62,8 +63,8 @@ class FeishuError(RuntimeError):
 _AUTH_HINTS = ("20064", "invalid access token", "access token", "please log in",
                "请重新登录", "未授权", "unauthorized", "401", "app ticket",
                "token has been", "login required", "auth")
-_PERM_HINTS = ("99991672", "permission", "forbidden", "403", "无权", "没有权限",
-               "denied", "permission denied", "restriction")
+_PERM_HINTS = ("99991672", "131005", "permission", "forbidden", "403", "无权", "没有权限",
+               "denied", "permission denied", "restriction", "not found")
 
 
 def classify_feishu_error(msg):
@@ -207,6 +208,20 @@ class CliChannel:
                 "   请让 WorkBuddy 帮你安装 lark-cli，或用 --lark-cli 指定路径。")
         # ⚠️ 必须禁代理：本机 Clash 代理会让请求打不通（实测）
         self.env = dict(os.environ, LARK_CLI_NO_PROXY="1")
+        # ⚠️ lark-cli 1.0.99 改了 sheets 子命令语法（+info→+workbook-info、
+        #    +read→+cells-get，返回结构也变了）→ 按版本分流，兼容新旧两版。
+        self.new_syntax = self._version() >= (1, 0, 50)
+
+    def _version(self):
+        try:
+            p = subprocess.run([self.path, "--version"], capture_output=True,
+                               text=True, env=self.env, timeout=30)
+            m = re.search(r"(\d+)\.(\d+)\.(\d+)", (p.stdout or ""))
+            if m:
+                return tuple(int(x) for x in m.groups())
+        except Exception:
+            pass
+        return (1, 0, 14)  # 保守：按旧语法处理
 
     def _run(self, args, what):
         try:
@@ -258,6 +273,19 @@ class CliChannel:
         return tok, node.get("title") or "", node.get("obj_type") or ""
 
     def list_sheets(self, tk):
+        if self.new_syntax:
+            # lark-cli 1.0.99+：`+workbook-info`，结构为顶层 data.sheets[]
+            j = self._run(["sheets", "+workbook-info", "--spreadsheet-token", tk,
+                           "--as", self.identity], "列出 sheet")
+            raw = (j.get("data") or {}).get("sheets") or []
+            if not raw:
+                raise FeishuError(
+                    "列出 sheet 返回空 —— 你的飞书账号很可能无权访问这张表格，"
+                    "请联系表格管理员开通「可阅读」权限。")
+            return [{"sheetId": s.get("sheet_id"), "title": s.get("sheet_name") or "",
+                     "rows": s.get("row_count"), "cols": s.get("column_count"),
+                     "hidden": bool(s.get("is_hidden"))} for s in raw]
+        # 旧版（≤1.0.14）：`+info`，结构为 data.sheets.sheets[]
         j = self._run(["sheets", "+info", "--spreadsheet-token", tk,
                        "--as", self.identity], "列出 sheet")
         raw = (((j.get("data") or {}).get("sheets") or {}).get("sheets")) or []
@@ -272,6 +300,19 @@ class CliChannel:
                  "hidden": bool(s.get("hidden"))} for s in raw]
 
     def read(self, tk, sheet_id, rng):
+        if self.new_syntax:
+            # lark-cli 1.0.99+：`+cells-get`，value 即格式化后的显示值
+            # （--max-chars 放到 20M：整班整月 readCols 的量级可能远超默认 50 万）
+            j = self._run(["sheets", "+cells-get", "--spreadsheet-token", tk,
+                           "--sheet-id", sheet_id, "--range", rng,
+                           "--max-chars", "20000000",
+                           "--as", self.identity], f"读取 {sheet_id}!{rng}")
+            ranges = (j.get("data") or {}).get("ranges") or []
+            if not ranges:
+                raise FeishuError(f"读取 {sheet_id}!{rng} 未返回 ranges 字段")
+            return [[c.get("value") for c in row]
+                    for row in (ranges[0].get("cells") or [])]
+        # 旧版（≤1.0.14）：`+read` + FormattedValue
         j = self._run(["sheets", "+read", "--spreadsheet-token", tk,
                        "--sheet-id", sheet_id, "--range", rng,
                        "--value-render-option", "FormattedValue",

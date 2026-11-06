@@ -4169,3 +4169,17 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
 - **模板**：`assets/teams/*.template.json` 去掉 auth 段、via="cli"；表格映射（spreadsheetToken/sheets）不动。
   本机 nana/sunyiwen.json 从新模板重建，旧含密钥版备份 `$SKILL/_not_deliverable/`。
 - ⚠️ x-token（题库后台）与飞书授权**完全独立**，互不影响。
+- ⚠️ **lark-cli 1.0.99 语法适配**（实测踩坑）：1.0.99 改了 sheets 子命令与返回结构——
+  `+info`→`+workbook-info`（`data.sheets.sheets[]`→顶层 `data.sheets[]`，字段
+  `title`→`sheet_name`、`hidden`→`is_hidden`、grid_properties 摊平为 row_count/column_count）、
+  `+read`→`+cells-get`（`data.valueRange.values`→`data.ranges[0].cells`，每格取 `.value`，
+  默认即格式化值，需 `--max-chars 20000000` 放开 50 万字符上限，否则整班读取被截断）。
+  `api GET` 语法不变。CliChannel 按版本分流（≥1.0.50 走新语法），新旧两版都兼容。
+- ⚠️ **无表权限的真实形态**：个人身份下 wiki `get_node` 返回 `131005 not found`、
+  list_sheets 返回空 —— 已把 `131005`/`not found` 归入 perm 类，提示联系表格管理员。
+- ⚠️ **WorkBuddy 沙箱坑（授权验证实测）**：沙箱把 lark-cli 保存 token 的 rename 拦成
+  file-delete，`run_in_background` 即使带免沙箱标志也不生效（仍被拦）→ 授权必须
+  前台 + 免沙箱执行。绕过法：lark-cli 失败后会在 lark-cli 目录留下完整加密的 `.tmp`
+  凭证文件，前台免沙箱 `mv` 为正式 `.enc` 文件名即可恢复登录态。
+- ⚠️ lark-cli `--device-code` 两步式在 1.0.99 实测报「device_code is invalid」
+  （no-wait 后再交换不被接受）→ feishu_auth.py 保持**一体式阻塞**流程，靠前台免沙箱跑通。
