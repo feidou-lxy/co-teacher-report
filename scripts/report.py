@@ -2959,9 +2959,16 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         # 群里几乎不发言，却写「沟通配合好、关系良好」= 自相矛盾 → 不渲染（v4.52 规则照旧）
         if not ((s.get("n_stu_sub") or 0) <= 2 and re.search(r"沟通|配合|关系", _adv)):
             _adv_items = [x.strip() for x in _adv.split("；") if x.strip()][:2]
-    # 风险：前两条跟进事项的「现象描述」（act_brief 冒号前半句，如「催交作业未响应 4 次」）。
-    #   不新造判定 —— 它们本来就是todos 的排序结果。
-    _risk_items = [x for x in (_a1, _a2) if x and x != "—"]
+    # 风险：前两条跟进事项的「现象描述」。⚠️ act_brief 的 brief 是剥括号后的**整句**
+    #   （含「：动作」半句）→ 总评卡风险行必须再按「：」截前半，否则与「下一步」行重复。
+    def _risk_brief(t):
+        b = act_brief(t)[0]
+        return b.split("：", 1)[0].strip() or b
+    _risk_items = []
+    for _t in todos_list[:2]:
+        _rb = _risk_brief(_t)
+        if _rb and _rb != "—":
+            _risk_items.append(_rb)
     # 下一步：a1 完整原文按「：」拆出的动作半句（现象已由风险行承载，不重复）。
     _act_txt = ""
     if _a1 and _a1 != "—":
