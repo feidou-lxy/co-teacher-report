@@ -702,13 +702,14 @@ def board_block(sm):
     for d in ds:
         # v4.66：读图技术失败单独一行说明，**不能显示成「空白未提交」**
         #   （那是把 API 故障写成学生没交白板，读者会当成分层依据）
+        # v5.03：表格新增「图片」列（后台接口版每题带板书原图 URL）→ 失败行占位 colspan 5
         if d.get("failed"):
             _why = (d.get("fail_reason") or "").split(":")[0][:40]
             rows += (f'<tr><td>{d.get("lesson_date") or "—"}</td>'
                      f'<td colspan="2" class="bs ft">读图失败（未计入判定）</td>'
-                     f'<td colspan="4" class="ftq">{_html.escape(_why) or "视觉模型调用异常"}</td></tr>')
+                     f'<td colspan="5" class="ftq">{_html.escape(_why) or "视觉模型调用异常"}</td></tr>')
             continue
-        cls = {"完整作答": "ok", "部分作答": "pb", "空白": "no"}.get(d.get("status"), "")
+        cls = {"完整作答": "ok", "部分作答": "pb", "空白": "no", "空白未提交": "no"}.get(d.get("status"), "")
         # v4.80（用户 2026-10-30）：读图把这个模块整体标成「函数与导数」，但函数和导数在本课
         #   **是分开讲的两章**，合并名会让联席/教务以为导数已经上了。实测本课 805 轮白板题
         #   的 topic_knowledge 全部是「函数与导数」，而题目无一例外都是函数内容
@@ -724,16 +725,29 @@ def board_block(sm):
         # v4.61：读图结果常只填 topic 不填 problem → 「题目」列整列空白。
         #   退回 topic（题目所属模块）至少能看出这一轮考的是什么，别留一片空。
         _pb = d.get("problem") or d.get("topic") or ""
+        # v5.03：「图片」列 —— 后台接口版每题带板书原图 URL；缩略图点击放大（灯箱）。
+        #   同一轮多题共用同一张图 → 缩略图重复出现属正常（每行 = 一道题）。
+        #   旧本地读图数据没有 image 字段 → 显示「—」。
+        _img = (d.get("image") or "").strip()
+        if _img:
+            _u = _html.escape(_img, quote=True)
+            _img_cell = (f'<a href="{_u}" target="_blank" rel="noopener" title="点击查看原图（新窗口）">'
+                         f'<img class="bdth" src="{_u}" loading="lazy" alt="板书"'
+                         f' onclick="bdZoom(event,\'{_u}\')"></a>')
+        else:
+            _img_cell = '<span class="ftq">—</span>'
         rows += (f'<tr><td>{_html.escape(ld)}</td><td>{_html.escape(_pb)}</td>'
                  f'<td class="bs {cls}">{_html.escape(d.get("status",""))}</td>'
                  f'<td>{_html.escape(d.get("correct",""))}</td>'
                  f'<td>{_html.escape(tk)}</td><td>{_html.escape(err)}</td>'
-                 f'<td>{_html.escape(stuck)}</td></tr>')
+                 f'<td>{_html.escape(stuck)}</td><td class="bdimgtd">{_img_cell}</td></tr>')
     # v4.0：正文只留「一句话作答概况 + 典型错误」，**每次课的情况与逐轮明细一律折叠**
     #（用户反馈：课次表铺在卡里太占版面，需要时再点开看）。
     # v4.61：若读图来源目录名带「第 N 节课」，标题直接标出来 —— 否则一张卡上只有 9 个
     #   时间戳目录，读者不知道这是哪节课的小黑板（用户 2026-10-24：「增加上第五节课小黑板的内容」）。
     _clbl = (str(sm.get("class_label")) + " · ") if sm.get("class_label") else ""
+    # v5.03：数据源标注 —— 后台接口版（每题带板书原图）与本地读图版要能一眼区分
+    _src_note = ' · 数据源：后台接口' if str(sm.get("source") or "").startswith("后台接口") else ""
     # 只有 1 次课时，逐次课表就是 1 行 —— 标题改成「课次汇总（日期）」，避免「逐次课情况（1 次课）」
     _ld0 = (lessons[0].get("lesson_date") if lessons else "") or ""
     _lsum = (f"课次汇总（{_ld0}）" if (lc == 1 and _ld0)
@@ -742,12 +756,12 @@ def board_block(sm):
     _nok = max(0, n - _fr)
     _ftip = (f"（另有 {_fr} 轮读图失败，属技术问题、未计入）" if _fr else "")
     return f'''<div class="sub-blk">
-      <div class="sb-h">课堂小黑板（{_clbl}{lc} 次课 · {_nok} 轮 · 学习情况佐证）</div>
+      <div class="sb-h">课堂小黑板（{_clbl}{lc} 次课 · {_nok} 轮 · 学习情况佐证{_src_note}）</div>
       <div class="kv"><span class="k">作答概况</span><span class="v">共 {_nok} 轮{_ftip} ｜ {dist} ｜ 趋势：{trend}</span></div>
       <div class="kv"><span class="k">典型错误</span><span class="v">{errs}</span></div>
       <details class="bdet"><summary>{_lsum}</summary>{ltable}</details>
-      <details class="bdet"><summary>逐轮明细（{n} 轮，点击展开）</summary>
-        <table><tr><th>上课日期</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th></tr>{rows}</table>
+      <details class="bdet"><summary>逐题明细（{len(ds)} 题 · {n} 轮，点击展开）</summary>
+        <table><tr><th>上课日期</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th><th>图片</th></tr>{rows}</table>
       </details>
     </div>'''
 
@@ -971,7 +985,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.02"
+SKILL_VER = "v5.03"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -3505,6 +3519,16 @@ details.bdet table{margin-top:6px}
 /* v4.66 读图失败行：灰色说明，不占「作答」语义，也不计入分层 */
 .bs.ft{color:#7b838d;background:#f4f5f7;font-weight:600}
 .ftq{color:#a8afb8;font-size:11px}
+/* v5.03 小黑板「图片」列：缩略图 + 点击放大灯箱 */
+.bdimgtd{white-space:nowrap}
+img.bdth{width:46px;height:34px;object-fit:cover;border:1px solid #dfe4ea;border-radius:4px;
+ cursor:zoom-in;display:block;transition:transform .12s}
+img.bdth:hover{transform:scale(1.35);border-color:#3a5bdb;position:relative;z-index:5}
+#bdlightbox{position:fixed;inset:0;background:rgba(10,14,22,.78);z-index:9999;
+ display:none;align-items:center;justify-content:center;cursor:zoom-out;padding:24px}
+#bdlightbox img{max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 12px 48px rgba(0,0,0,.5);
+ background:#fff}
+#bdlightbox .bdtip{position:fixed;top:14px;right:20px;color:#fff;font-size:13px;opacity:.75}
 details.attdet{margin:4px 0}
 details.attdet>summary{cursor:pointer;font-size:12px;font-weight:600;color:#3a5bdb;list-style:none;outline:none}
 details.attdet>summary::-webkit-details-marker{display:none}
@@ -5968,7 +5992,18 @@ def main():
 • <b>预警卡（v4.12 落地 · Tab③ 学生学情）</b>：常规学生卡来自「有聊天记录」的学生，<b>在册、却一条聊天记录都没有的学生在 Tab③ 原本完全缺席</b>。v4.12 把这批人（失联 / 出勤但无沟通）从覆盖率快照 <code>coverage.json</code> 里捞出来，以<b>左侧红边预警卡</b>呈现：把<b>沟通轴</b>（群在不在、有没有人说话）与<b>学习轴</b>（出勤 ＋ 小黑板作答）两句话摊开写清，给出<b>结论</b>与<b>可直接执行的动作</b>，并逐项标注<b>数据来源</b>（在册花名册 / 群列表 / 聊天 / 小黑板 各自 ✓ 或 ✗），便于回后台、回文件夹逐字核对。🔒 <b>防伪铁律</b>：学习轴一旦有证据（有出勤，或有小黑板作答）→ 结论只写「<b>企业微信沟通通道失效</b>」，<b>绝不写「学生流失」</b>（实测本课「出勤但无沟通」学生全部正常上课，如某生出勤 5/5、小黑板作答 21/29 张）；只有「既无沟通、也无出勤与小黑板」才写「无学习痕迹 · 需人工核实就读状态」。⚠️ <b>v4.14 起预警卡默认收起、并置于本组常规学生卡的下方</b> —— 常规学生卡才是主要信息，一进 Tab③ 不应被红卡占满首屏。展开入口有两处：本组底部的「⚠️ 另有 N 名在册学生未进入学情分析」入口条（点击就地展开 / 收起），以及上方 KPI 卡「<b>未触达预警</b>」（点击隐藏常规卡、只留预警卡）；点「学生数」或再点一次即恢复。搜索命中预警卡时该区自动展开。<br>
 </p></details>
 </div>
+<div id="bdlightbox" onclick="bdZoomClose()"><span class="bdtip">点击任意处或按 Esc 关闭</span><img src="" alt="板书原图"></div>
 <script>
+// v5.03：小黑板缩略图点击放大（灯箱）。点遮罩或按 Esc 关闭。
+function bdZoom(ev, src){{
+  if (ev) ev.preventDefault(), ev.stopPropagation();
+  var lb = document.getElementById('bdlightbox');
+  if (!lb) return;
+  lb.querySelector('img').src = src;
+  lb.style.display = 'flex';
+}}
+function bdZoomClose(){{ var lb=document.getElementById('bdlightbox'); if(lb) lb.style.display='none'; }}
+document.addEventListener('keydown', function(e){{ if(e.key==='Escape') bdZoomClose(); }});
 // ===== v4.10：主 Tab（① 失联预警 ② 学生情况概览 ③ 学生学情 & To-Do ④ 下节课讲这个）=====
 // v4.88：不再写死 ['t1','t2','t3'] —— 改为按 .mainpanel 遍历，Tab④ 有没有、叫什么由后端决定。
 function showMain(t){{

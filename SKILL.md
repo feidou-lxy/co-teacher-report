@@ -4139,3 +4139,30 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
 - 实测（张豫）：续报 262 条无变化；课程记录 263/263 命中；在读科目 +0、春暑变化 0
   （与 15:10 全量一致，说明幂等）；重渲 KPI：已续报1/未续报262/多科目150/单科113/可扩科81。
 - 罗绂燕 token 已过期（code=7），刷新会跳过并弹桌面通知；重新登录后自动恢复。
+
+### v5.03 · 小黑板改走后台接口 + 逐题明细加「图片」列（2026-11-06）
+
+用户拍板：小黑板不再跑本地图片文件夹，直接取后台接口；展开项里加「小黑板图片」列，点击看图。
+
+- 新脚本 `pull_boards_api.py`（取代 pull_boards + read_boards 的本地链路）：
+  输入 = `snapshot/attendance.json` 的 `classes[].classId`（考勤落盘 ID 与分析表精确对齐，
+  v4.99 已验证谢胡课 18 个 classId 全命中）；逐课节 `GET /ai/getClassBlackboardAnalysis`；
+  输出 = `snapshot/boards_api.json`（原始留证，反编造）+ `boards_summary.json`
+  （与 read_boards **同 schema**，report.py 无感消费）。写 summary 前备份旧文件到 `_not_deliverable/`。
+- 接口实测口径（都是踩过才知道的）：
+  · 单课节可回 833 条 / 548KB（99 人 × 9 轮）；一张图 `analysisResult` 是**逐题数组**
+    （实测 22% 图片多题）→ 一个 detail = 一道题，同图多题共用 image URL；
+  · `status` 有「空白未提交」（空白图也返回一条占位分析，correct 恒「待判」）→
+    聚合正确率只算「正确/有错」，与 read_boards 口径一致；report 的作答色卡加「空白未提交」映射；
+  · `analysisResult` 为空（5/833）= 后台分析缺失 → detail failed=True，绝不写成空白未提交；
+  · `studentName` 空 = 未关联 → 只计数不进报告；
+  · 课节无分析数据（空 list）≠ 失败；全部课节失败 → 不写盘退出码 2。
+- report.py `board_block`：逐题明细表新增「**图片**」列（缩略图 46×34 + hover 放大 +
+  点击灯箱看原图 / 新窗口链接兜底；Esc 或点遮罩关闭）；旧本地数据无 image 显示「—」；
+  失败行 colspan 4→5；标题改「逐题明细（N 题 · M 轮）」（多题图后行数≠轮数）；
+  sb-h 加「数据源：后台接口」标注；`#bdlightbox` 容器 + `bdZoom()` 全局 JS。
+- run_all.py：不传 `--boards` 时默认走 `pull_boards_api.py`（`--boards` 保留为旧链路逃生口）。
+- 实测（谢胡高一课）：8 课节 → 有数据 2 / 无分析 6；112 人 / 1207 图 / 1555 条逐题明细；
+  图片直链 200 热链可看；冒烟通过（旧 schema 显「—」、新 schema 灯箱、失败行正常）。
+- ⚠️ 张豫（高二）41 个课节全部「无分析数据」→ 该报告小黑板块诚实显示暂无，
+  等后台补分析后重跑 `pull_boards_api.py` 即自动出现。

@@ -98,7 +98,7 @@ def main():
     ap.add_argument("--co", default=None, help="联席姓名（联席视角 / 课程内子筛选）")
     ap.add_argument("--edu", default=None, help="教务姓名（教务视角；续报 renewed 由 pull_enroll.py --edu 从接口拉取）")
     ap.add_argument("--course", default=None, help="课程名（课程维度），如 2026Q-SX-高二数学清北层日E邵")
-    ap.add_argument("--boards", default=None, help="小黑板图片根目录（提供后追加小黑板读图分析）")
+    ap.add_argument("--boards", default=None, help="（旧链路）小黑板图片根目录。v5.03 起不传即自动走后台接口取小黑板分析")
     ap.add_argument("--window", default="2026-09-01")
     ap.add_argument("--end", default=None,
                     help="分析窗口止（YYYY-MM-DD，含当天），默认今天；"
@@ -175,8 +175,14 @@ def main():
     run("leave_notes.py", ["--workdir", wd] + win_args)
     run("merge.py", ["--workdir", wd])
     if args.boards:
+        # 旧链路：本地图片目录 + 视觉模型读图（v5.03 起仅显式 --boards 时才走）
         run("pull_boards.py", base + ["--boards", args.boards])
         run("read_boards.py", base + ["--boards", args.boards])
+    else:
+        # v5.03（2026-11-06 用户拍板）：小黑板改从后台接口取（逐课节分析结果 + 图片 URL），
+        # 不再依赖本地图片文件夹。无数据的课节返回空 list 属正常；全部课节都失败时
+        # pull_boards_api 不写盘、旧 boards_summary.json 保留。
+        run("pull_boards_api.py", base)
 
     # ---------------- 飞书表（v4.66：并入主链路，需显式 --feishu）----------------
     # 为什么以前不并：pull_feishu 依赖 lark-cli 授权，单次要跑几分钟，不适合默认执行。
