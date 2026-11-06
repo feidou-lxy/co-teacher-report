@@ -985,7 +985,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.03"
+SKILL_VER = "v5.05"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -2784,8 +2784,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     _mgrid = metrics_grid(r, fst)
     _a1, _a1_full = act_brief(todos_list[0]) if todos_list else ("—", "")
     _a2 = act_brief(todos_list[1])[0] if len(todos_list) > 1 else ""
-    _a2_html = (f'<div class="act2"><span class="actk">其次</span>{_a2}</div>') if _a2 else ""
-    # v4.60：历史延迟只作「后续注意」的弱提示 —— 灰底细线、无橙色标签，**不占「最该做」位**。
+    _a2_html = (f'<div class="act2"><span class="actk">其次</span>{_a2}</div>') if _a2 else ""    # v4.60：历史延迟只作「后续注意」的弱提示 —— 灰底细线、无橙色标签，**不占「最该做」位**。
     #   用户口径：过去几天、后续一直在沟通、家长没不满的延迟，不要写成当下最该做的事。
     _rhint = s.get("resp_hint") or ""
     _hint_html = (f'<div class="acthint"><span class="acthk">后续注意</span>'
@@ -2836,11 +2835,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         # 没有可见区 chips 时，这一块就是唯一出口（去掉空标题，避免两级标题叠在一起）
         _fine = re.sub(r'<div class="fine-h">.*?</div>', '', _fine, flags=re.S)
         _det.append(_fine)
-    if adv and adv != "—":                          # 优势（剥掉与指标格重复的前半句）
-        _adv = re.sub(r'^飞书表各项提交[^，]*，', '', adv)
-        # 群里几乎不发言，却写「沟通配合好、关系良好」= 自相矛盾 → 不渲染
-        if not ((s.get("n_stu_sub") or 0) <= 2 and re.search(r"沟通|配合|关系", _adv)):
-            _det.append(_kv("优势", _adv))
+    # v5.05（方案 C）：「优势」已上提到可见区总评卡 —— 折叠区不再重复（同一句话不出现两次）。
     if board and BOARDS_ON:                         # 小黑板（课堂实证）
         _det.append(board_block(board))
     _un, _uo = s.get("urge_n", 0), s.get("urge_ok", 0)
@@ -2936,8 +2931,17 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         _det.append(_fp_extra)
     if _fp_src:                                     # 飞书表溯源（表名 + 行号 + 口径）
         _det.append(_fp_src)
-    _det_html = (f'<details class="slimdet"><summary>补充信息（作业明细 / '
-                 f'跟进痕迹 / 老师手记）</summary>{"".join(_det)}</details>') if _det else ""
+    # ── v5.05（方案 C）：最近 3 次课 / 后续注意 / 出勤校准说明 全部属于「证据明细」，
+    #    从可见区收进折叠区（可见区只留结论与行动：总评卡 + KPI + chips + 处方）
+    _r3 = recent3_block(s)
+    if _r3:
+        _det.insert(0, _r3)
+    if _hint_html:
+        _det.insert(1, _hint_html)
+    if _att_html:
+        _det.insert(2, _att_html)
+    _det_html = (f'<details class="slimdet"><summary>证据与明细（最近课次 / 作业 / 跟进痕迹 / 手记）'
+                 f'</summary>{"".join(_det)}</details>') if _det else ""
     _more_html = ""
     if len(todos_list) > 2:
         _mli = "".join(f'<li><span class="pri pri-{p}">{p}</span>{a}</li>'
@@ -2945,6 +2949,44 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         _more_html = (f'<details class="slimdet"><summary>其余跟进建议（{len(todos_list) - 2} 条）'
                       f'</summary><ol class="todos">{_mli}</ol>'
                       f'{_kv(cadence_label, cadence)}</details>')
+
+    # ══ v5.05 总评卡（方案 C）：诊断句 + 优势 + 风险 + 下一步，一眼收齐 ══
+    # 优势：沿用上方 adv（群聊正面 / 小黑板完整正确 / 飞书表高提交，防矛盾规则照旧），
+    #   按分号拆开最多取 2 条 —— 数据源不变，只是从折叠区上提到可见区。
+    _adv_items = []
+    if adv and adv != "—":
+        _adv = re.sub(r'^飞书表各项提交[^，]*，', '', adv)
+        # 群里几乎不发言，却写「沟通配合好、关系良好」= 自相矛盾 → 不渲染（v4.52 规则照旧）
+        if not ((s.get("n_stu_sub") or 0) <= 2 and re.search(r"沟通|配合|关系", _adv)):
+            _adv_items = [x.strip() for x in _adv.split("；") if x.strip()][:2]
+    # 风险：前两条跟进事项的「现象描述」（act_brief 冒号前半句，如「催交作业未响应 4 次」）。
+    #   不新造判定 —— 它们本来就是todos 的排序结果。
+    _risk_items = [x for x in (_a1, _a2) if x and x != "—"]
+    # 下一步：a1 完整原文按「：」拆出的动作半句（现象已由风险行承载，不重复）。
+    _act_txt = ""
+    if _a1 and _a1 != "—":
+        _parts = _a1_full.split("：", 1)
+        _act_txt = _parts[1].strip() if len(_parts) == 2 and _parts[1].strip() else ""
+    _sumrows = ""
+    if _adv_items:
+        _sumrows += (f'<div class="sumrow sum-adv"><span class="sk">优势</span>'
+                     f'<span class="sv">{_html.escape("；".join(_adv_items))}</span></div>')
+    if _risk_items:
+        _sumrows += (f'<div class="sumrow sum-risk"><span class="sk">风险</span>'
+                     f'<span class="sv">{_html.escape("；".join(_risk_items))}</span></div>')
+    if _act_txt:
+        _sumrows += (f'<div class="sumrow sum-act" title="{_html.escape(_a1_full)}">'
+                     f'<span class="sk">下一步</span><span class="sv">{_html.escape(_act_txt)}</span></div>')
+    if _sumrows:
+        _sumcard = f'<div class="sumcard"><div class="dx dx-{lv_key}">{_diag}</div>{_sumrows}</div>'
+    else:
+        _sumcard = f'<div class="dx dx-{lv_key}">{_diag}</div>'
+    # actbox 已并入总评卡（行动行 + hover 完整原文），不再单独渲染；
+    # 若总评卡没建起来（无优势/风险/动作——极端退化情形），退回旧 actbox 以免动作丢失。
+    _actbox_html = "" if _sumrows else (
+        f'<div class="actbox">'
+        f'<div class="act1" title="{_html.escape(_a1_full)}"><span class="actk actk-1">最该做</span><b>{_a1}</b></div>'
+        f'{_a2_html}</div>')
     return f"""
     <div class="card slim" data-co="{co}" data-name="{r['stu']}" {kattr}>
       <div class="chead">
@@ -2954,19 +2996,13 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         <div class="cstatus">{head_right}</div>
       </div>
       {_xsum}
-      <div class="dx dx-{lv_key}">{_diag}</div>
+      {_sumcard}
       <div class="mgrid">{_mgrid}</div>
       {_score_html}
       {_issue_html}
       {_tp_html}
-      <div class="actbox">
-        <div class="act1" title="{_html.escape(_a1_full)}"><span class="actk actk-1">最该做</span><b>{_a1}</b></div>
-        {_a2_html}
-      </div>
-      {_hint_html}
-      {_att_html}
+      {_actbox_html}
       {_rx}
-      {recent3_block(s)}
       {_det_html}
       {_more_html}
     </div>"""
@@ -3871,6 +3907,24 @@ details.meth[open]>summary:before{content:"▾ "}
 .dx-orange{background:#fff9ec;border-left-color:#fa8c16;color:#ad4e00}
 .dx-green{background:#f2fbf5;border-left-color:#28a745;color:#1a7f45}
 .dx-blue{background:#f0f7ff;border-left-color:#1677ff;color:#0b4fc4}
+/* ══ v5.05 总评卡（方案 C · 用户 2026-11-06）：结论先行 ══
+   诊断句 + 优势（绿）+ 风险（红）+ 下一步（橙）收进一张总评卡；
+   优势从「补充信息」折叠区上提（原来要点两次才看得到）；actbox 并入不再单独渲染。
+   折叠区只放证据明细，不放任何「结论」。 */
+.sumcard{border:1px solid #eef0f3;border-radius:10px;background:#fff;
+  padding:0 12px 9px;margin:9px 0 10px}
+.sumcard .dx{margin:8px -6px 4px;border-radius:6px}
+.sumrow{display:flex;gap:9px;font-size:13px;line-height:1.65;margin:4px 0;align-items:flex-start}
+.sumrow .sk{flex:0 0 44px;text-align:center;font-size:10.5px;font-weight:700;
+  padding:2px 0;border-radius:4px;margin-top:2px;white-space:nowrap}
+.sumrow .sv{flex:1;min-width:0}
+.sum-adv .sk{background:#eaf3de;color:#3b6d11}
+.sum-adv .sv{color:#1a7f45}
+.sum-risk .sk{background:#fff1f0;color:#cf1322}
+.sum-risk .sv{color:#8c3a2b}
+.sum-act .sk{background:#fff7e6;color:#ad4e00}
+.sum-act .sv{color:#6d4a0b}
+.sum-act .sv b{color:#ad4e00}
 .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:11px}
 .mg{background:#fafbfc;border:1px solid #eef0f3;border-radius:8px;padding:7px 9px}
 .mgk{display:block;font-size:11px;color:#8a9099;margin-bottom:1px}
