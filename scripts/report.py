@@ -985,7 +985,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.05"
+SKILL_VER = "v5.06"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -2804,7 +2804,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     # ⚠️「需要关注」红块与下面的作业分项是同一批数字 → 有分项时不再重复；没有分项才留
     #    （此时风险来自评级下滑 / 表内成绩等 fsitems 之外的信号）
     if _fp_risk and not (fst and fst.get("items")):
-        _det.append(_fp_risk)
+        _det.append(("prof", _fp_risk))
     if _fp_items:                                   # 提交分项 + 评级序列条（合计已在指标格）
         _it2 = re.sub(r'<span class="fsfrom">.*?</span>', '', _fp_items)
         # 只有 1 个分项时，这行与指标格是同一个数字（1/2 → 1/2）→ 不重复占行，只在评级序列条另有内容时保留
@@ -2812,18 +2812,18 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
             _it2 = re.sub(r'<div class="fsitems">.*?</div>', '', _it2, flags=re.S)
         _it2 = _drop_fsrate(_it2)
         if "fsrate" in _it2 or "fsitems" in _it2:
-            _det.append(_it2)
+            _det.append(("hw", _it2))
     # v4.35：知识点已挪到**可见区**（点开看明细）→ 折叠区不再重复整块。
     #   只有两种残留情形要补：① 超出可见上限（4 个）的知识点；② 细粒度证据有、但粗知识点没对齐上
     #   （极罕见），此时整块明细放进折叠区，避免信息丢失。
     if _tp_rest:
-        _det.append(_kv("其余",
-                        f'<div class="tchips">{"".join(_tp_rest)}</div>'))
+        _det.append(("prof", _kv("其余",
+                        f'<div class="tchips">{"".join(_tp_rest)}</div>')))
     # v4.47：只提过 1 次的知识点单独收在这里 —— 既不占「薄弱点」结论位，也不让信息丢失
     if _weak1:
         _w1 = "、".join(_html.escape(x) for x in _weak1[:6]) + ("…" if len(_weak1) > 6 else "")
-        _det.append(_kv("群内提及",
-                        f'<span class="mute">仅提过 1 次、未到定性门槛（不计入薄弱点）：{_w1}</span>'))
+        _det.append(("prof", _kv("群内提及",
+                        f'<span class="mute">仅提过 1 次、未到定性门槛（不计入薄弱点）：{_w1}</span>')))
     # v4.52（用户拍板 2026-10-22 14:52）：**只在没有可见区 chips 时才落到折叠区**。
     #   ⚠️ v4.51 曾经在这里「始终」再输出一份「🎯 具体薄弱点 · 完整清单」，本意是怕读者
     #   不知道该点标签；但用户实测后指出：点开 chip 看到的就是同一批「知识点 → 题型 → 原文」，
@@ -2834,10 +2834,10 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         _fine = re.sub(r'<div class="note">.*?</div>', '', fine_html, flags=re.S)
         # 没有可见区 chips 时，这一块就是唯一出口（去掉空标题，避免两级标题叠在一起）
         _fine = re.sub(r'<div class="fine-h">.*?</div>', '', _fine, flags=re.S)
-        _det.append(_fine)
+        _det.append(("prof", _fine))
     # v5.05（方案 C）：「优势」已上提到可见区总评卡 —— 折叠区不再重复（同一句话不出现两次）。
     if board and BOARDS_ON:                         # 小黑板（课堂实证）
-        _det.append(board_block(board))
+        _det.append(("hw", board_block(board)))
     _un, _uo = s.get("urge_n", 0), s.get("urge_ok", 0)
     if _un:                                         # 催交痕迹（没催过就不占行）
         if _uo == _un:
@@ -2847,7 +2847,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
                    f"属<b>未回消息</b>、非未交作业")
         else:
             _ut = f"提醒 {_un} 次，提醒后仍未交 {_un - _uo} 次"
-        _det.append(_kv("催交", _ut))
+        _det.append(("trace", _kv("催交", _ut)))
     _fn, _fo = s.get("fix_n", 0), s.get("fix_ok", 0)
     # v4.72：判定已收紧为「老师**明确要求**订正」（extract.FIX_REQ），文案必须跟着改，
     #   否则「批改 N 次，未改 M 次」读起来像在指责学生不自觉。
@@ -2865,17 +2865,17 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
             if _ff:
                 _ft += (f'<br><span class="mute">最近一次 {_ff[-1][0]}：'
                         f'「{_html.escape(str(_ff[-1][1]))}」</span>')
-        _det.append(_kv("订正", _ft))
+        _det.append(("trace", _kv("订正", _ft)))
     _av, _ac, _at, _iss, _sev = att_view(r)
     if not r.get("att"):
         # v4.24 防误判：**无出勤记录 ≠ 退课**。群里有活跃沟通的，最可能是未排课 / 纯看回放，
         #   写成「可能已退课」会让教务打错电话（实测该课 3 人：群内 26~83 条、最近消息当天）。
         if (s.get("n_text") or 0):
-            _det.append(_kv("出勤", f"后台无该生出勤记录（最近消息 {(s.get('newest') or '—')[:10]}、"
+            _det.append(("prof", _kv("出勤", f"后台无该生出勤记录（最近消息 {(s.get('newest') or '—')[:10]}、"
                                     f"群内 {s.get('n_text')} 条）→ 更可能是<b>未排课 / 纯看回放</b>，"
-                                    f"不像退课；需向教务确认排课状态"))
+                                    f"不像退课；需向教务确认排课状态")))
         else:
-            _det.append(_kv("出勤", "后台无该生出勤记录（可能已退课 / 未排入该课程）"))
+            _det.append(("prof", _kv("出勤", "后台无该生出勤记录（可能已退课 / 未排入该课程）")))
     else:
         # 出勤细账：异常时必写；**直播课里混了回放**也要写（否则「到课 4/5」看不出含 2 次回放）
         _n2, _eff2, _att2, _pbo2, _pb2, _abs2, _ = common.att_stats(r["att"])
@@ -2911,7 +2911,7 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
                 if _eff2 > _att2:
                     _vt += f"（到课 {_att2} ＋ 回放 {_eff2 - _att2}，看回放同样算出勤）"
             _vt += _miss_txt
-            _det.append(_kv("出勤", _vt))
+            _det.append(("prof", _kv("出勤", _vt)))
     # ── v4.72：响应时效 / 家长参与量 = 教务关心的维度，联席视角不展示 ──
     #   用户 2026-10-28：「响应速度、家长参与等维度，联席不关注，教务更关注」。
     #   ⚠️ 只隐藏「统计数字」这一行；「学生提问没人回」这类**老师责任**仍以 To-Do 出现在联席卡上
@@ -2920,28 +2920,38 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         _rt2 = f"最长等待 {s['resp_max_h']:.0f} 小时"
         if "已说明" in (s.get("resp_evi") or ""):
             _rt2 += "（已说明安排）"
-        _det.append(_kv("响应", _rt2))
+        _det.append(("prof", _kv("响应", _rt2)))
     if s.get("neg"):                                # 情绪 / 压力表达
-        _det.append(_kv("情绪", f"群内出现 {s['neg']} 处压力 / 情绪表达"))
+        _det.append(("prof", _kv("情绪", f"群内出现 {s['neg']} 处压力 / 情绪表达")))
     if edu and (s.get("n_other") or 0) > 0:         # 家长出面量（不提网名）
-        _det.append(_kv("家长参与", f"窗口内家长发言 {s['n_other']} 条"))
-    if _fp_note:                                    # 老师手记（团队手填原文）
-        _det.append(_fp_note)
+        _det.append(("prof", _kv("家长参与", f"窗口内家长发言 {s['n_other']} 条")))
+    # v5.06：老师手记已上提总评卡（.sum-note），折叠区不再重复
     if _fp_extra:                                   # 续报 / 星星榜 / 新生 / 沟通优先级
-        _det.append(_fp_extra)
+        _det.append(("prof", _fp_extra))
     if _fp_src:                                     # 飞书表溯源（表名 + 行号 + 口径）
-        _det.append(_fp_src)
+        _det.append(("src", _fp_src))
     # ── v5.05（方案 C）：最近 3 次课 / 后续注意 / 出勤校准说明 全部属于「证据明细」，
     #    从可见区收进折叠区（可见区只留结论与行动：总评卡 + KPI + chips + 处方）
     _r3 = recent3_block(s)
     if _r3:
-        _det.insert(0, _r3)
+        _det.append(("hw", _r3))
     if _hint_html:
-        _det.insert(1, _hint_html)
+        _det.append(("trace", _hint_html))
     if _att_html:
-        _det.insert(2, _att_html)
-    _det_html = (f'<details class="slimdet"><summary>证据与明细（最近课次 / 作业 / 跟进痕迹 / 手记）'
-                 f'</summary>{"".join(_det)}</details>') if _det else ""
+        _det.append(("trace", _att_html))
+    # ── v5.06：折叠区按四组聚合（作业与课堂 / 跟进痕迹 / 沟通与档案 / 溯源），
+    #    每组一个灰色小标题 —— 展开后不再是一整条平铺流水账。
+    _GNAME = {"hw": "作业与课堂", "trace": "跟进痕迹", "prof": "沟通与档案", "src": "数据溯源"}
+    _gd = {}
+    for _g, _h in _det:
+        _gd.setdefault(_g, []).append(_h)
+    _det2 = []
+    for _g in ("hw", "trace", "prof", "src"):
+        if _gd.get(_g):
+            _det2.append(f'<div class="detg">{_GNAME[_g]}</div>')
+            _det2.extend(_gd[_g])
+    _det_html = (f'<details class="slimdet"><summary>证据与明细（作业课堂 / 跟进痕迹 / 档案 / 溯源）'
+                 f'</summary>{"".join(_det2)}</details>') if _det2 else ""
     _more_html = ""
     if len(todos_list) > 2:
         _mli = "".join(f'<li><span class="pri pri-{p}">{p}</span>{a}</li>'
@@ -2978,6 +2988,12 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     if _adv_items:
         _sumrows += (f'<div class="sumrow sum-adv"><span class="sk">优势</span>'
                      f'<span class="sv">{_html.escape("；".join(_adv_items))}</span></div>')
+    # v5.06：老师手记（团队手填原文）上提 —— 它是人的判断，优先级高于统计推断，
+    #   放优势之后、风险之前；完整展示不截断。
+    _note_txt = str((fst or {}).get("note") or "").strip()
+    if _note_txt:
+        _sumrows += (f'<div class="sumrow sum-note"><span class="sk">手记</span>'
+                     f'<span class="sv">{_html.escape(_note_txt)}</span></div>')
     if _risk_items:
         _sumrows += (f'<div class="sumrow sum-risk"><span class="sk">风险</span>'
                      f'<span class="sv">{_html.escape("；".join(_risk_items))}</span></div>')
@@ -3932,6 +3948,13 @@ details.meth[open]>summary:before{content:"▾ "}
 .sum-act .sk{background:#fff7e6;color:#ad4e00}
 .sum-act .sv{color:#6d4a0b}
 .sum-act .sv b{color:#ad4e00}
+/* v5.06 老师手记上提：团队手填的第一手人工观察，与优势/风险同级 */
+.sum-note .sk{background:#e8f1fb;color:#185fa5}
+.sum-note .sv{color:#1d3a5f;white-space:pre-wrap}
+/* v5.06 折叠区分组小标题：证据与明细不再平铺 */
+.detg{font-size:11px;font-weight:700;color:#5b6b8c;letter-spacing:.5px;
+  margin:12px 0 2px;padding-bottom:3px;border-bottom:1px solid #eef0f3}
+.detg:first-child{margin-top:6px}
 .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:11px}
 .mg{background:#fafbfc;border:1px solid #eef0f3;border-radius:8px;padding:7px 9px}
 .mgk{display:block;font-size:11px;color:#8a9099;margin-bottom:1px}
