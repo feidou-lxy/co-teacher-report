@@ -755,9 +755,12 @@ def board_block(sm):
     _fr = int(sm.get("failed_rounds") or 0)
     _nok = max(0, n - _fr)
     _ftip = (f"（另有 {_fr} 轮读图失败，属技术问题、未计入）" if _fr else "")
+    # v5.06：趋势为「样本不足」时整段不显示（用户 2026-11-06：这种文字不展示）；
+    #   有实际趋势（逐步改善/下滑/基本持平）才写。
+    _trend_txt = (f" ｜ 趋势：{trend}" if str(trend) and str(trend) != "样本不足" else "")
     return f'''<div class="sub-blk">
       <div class="sb-h">课堂小黑板（{_clbl}{lc} 次课 · {_nok} 轮 · 学习情况佐证{_src_note}）</div>
-      <div class="kv"><span class="k">作答概况</span><span class="v">共 {_nok} 轮{_ftip} ｜ {dist} ｜ 趋势：{trend}</span></div>
+      <div class="kv"><span class="k">作答概况</span><span class="v">共 {_nok} 轮{_ftip} ｜ {dist}{_trend_txt}</span></div>
       <div class="kv"><span class="k">典型错误</span><span class="v">{errs}</span></div>
       <details class="bdet"><summary>{_lsum}</summary>{ltable}</details>
       <details class="bdet"><summary>逐题明细（{len(ds)} 题 · {n} 轮，点击展开）</summary>
@@ -915,7 +918,7 @@ def rating_block(ratings):
         elif not n_r:
             badge, bcls = "无评级", "flat"
         elif n_r < min_r:
-            badge, bcls = "样本不足", "flat"
+            badge, bcls = "", "flat"        # v5.06：样本不足不出徽章（用户 2026-11-06，正文已说明暂不判趋势）
         elif trend == "up":
             badge, bcls = "上升 ↑", "up"
         elif trend == "down":
@@ -942,9 +945,11 @@ def rating_block(ratings):
         chunks = concl.split("**")
         concl_html = "".join((f"<b>{_html.escape(c)}</b>" if i % 2 else _html.escape(c))
                              for i, c in enumerate(chunks))
+        # v5.06：badge 为空（样本不足）时整个徽章 span 不输出
+        _badge_html = (f'<span class="rtb {bcls}">{badge}</span>' if badge else "")
         parts.append(
             f'<div class="fsrate"><div class="fshr"><b>📈 {_html.escape(item)}趋势</b>'
-            f'<span class="rtb {bcls}">{badge}</span>'
+            f'{_badge_html}'
             f'<span class="rtsum">{concl_html}</span></div>'
             f'<div class="rseq">{"".join(cells)}</div></div>')
         badges.append((item, badge, bcls, trend))
@@ -2911,7 +2916,9 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
                 if _eff2 > _att2:
                     _vt += f"（到课 {_att2} ＋ 回放 {_eff2 - _att2}，看回放同样算出勤）"
             _vt += _miss_txt
-            _det.append(("prof", _kv("出勤", _vt)))
+        # v5.06：出勤细账整行删除（用户 2026-11-06）—— KPI 四格已有出勤数字，
+        #   细账属重复信息；「缺哪节课」由风险行与跟进建议承载。
+        # ⚠️ 「无出勤记录」两条防误判说明保留（它们不是冗余，是防止把未排课误读成退课）。
     # ── v4.72：响应时效 / 家长参与量 = 教务关心的维度，联席视角不展示 ──
     #   用户 2026-10-28：「响应速度、家长参与等维度，联席不关注，教务更关注」。
     #   ⚠️ 只隐藏「统计数字」这一行；「学生提问没人回」这类**老师责任**仍以 To-Do 出现在联席卡上
@@ -2926,10 +2933,9 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     if edu and (s.get("n_other") or 0) > 0:         # 家长出面量（不提网名）
         _det.append(("prof", _kv("家长参与", f"窗口内家长发言 {s['n_other']} 条")))
     # v5.06：老师手记已上提总评卡（.sum-note），折叠区不再重复
+    # v5.06：数据溯源行删除（用户 2026-11-06）—— 内部口径说明对老师无用，不再展示。
     if _fp_extra:                                   # 续报 / 星星榜 / 新生 / 沟通优先级
         _det.append(("prof", _fp_extra))
-    if _fp_src:                                     # 飞书表溯源（表名 + 行号 + 口径）
-        _det.append(("src", _fp_src))
     # ── v5.05（方案 C）：最近 3 次课 / 后续注意 / 出勤校准说明 全部属于「证据明细」，
     #    从可见区收进折叠区（可见区只留结论与行动：总评卡 + KPI + chips + 处方）
     _r3 = recent3_block(s)
@@ -2939,18 +2945,18 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         _det.append(("trace", _hint_html))
     if _att_html:
         _det.append(("trace", _att_html))
-    # ── v5.06：折叠区按四组聚合（作业与课堂 / 跟进痕迹 / 沟通与档案 / 溯源），
+    # ── v5.06：折叠区按三组聚合（作业与课堂 / 跟进痕迹 / 沟通与档案），
     #    每组一个灰色小标题 —— 展开后不再是一整条平铺流水账。
-    _GNAME = {"hw": "作业与课堂", "trace": "跟进痕迹", "prof": "沟通与档案", "src": "数据溯源"}
+    _GNAME = {"hw": "作业与课堂", "trace": "跟进痕迹", "prof": "沟通与档案"}
     _gd = {}
     for _g, _h in _det:
         _gd.setdefault(_g, []).append(_h)
     _det2 = []
-    for _g in ("hw", "trace", "prof", "src"):
+    for _g in ("hw", "trace", "prof"):
         if _gd.get(_g):
             _det2.append(f'<div class="detg">{_GNAME[_g]}</div>')
             _det2.extend(_gd[_g])
-    _det_html = (f'<details class="slimdet"><summary>证据与明细（作业课堂 / 跟进痕迹 / 档案 / 溯源）'
+    _det_html = (f'<details class="slimdet"><summary>证据与明细（作业课堂 / 跟进痕迹 / 档案）'
                  f'</summary>{"".join(_det2)}</details>') if _det2 else ""
     _more_html = ""
     if len(todos_list) > 2:
