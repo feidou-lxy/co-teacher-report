@@ -4183,3 +4183,7 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
   凭证文件，前台免沙箱 `mv` 为正式 `.enc` 文件名即可恢复登录态。
 - ⚠️ lark-cli `--device-code` 两步式在 1.0.99 实测报「device_code is invalid」
   （no-wait 后再交换不被接受）→ feishu_auth.py 保持**一体式阻塞**流程，靠前台免沙箱跑通。
+- **手册安装命令已去掉 `?v=` 版本参数**（用户 2026-11-06 要求，默认装最新版）。
+  ⚠️ 旧规则「改 install.sh 必给手册 ?v= +1」**作废**，替代做法：push 后等 3~5 分钟、
+  `curl -s <install.sh 地址> | grep -c <新特征>` 确认 CDN 返回新版，再把手册发给同事
+  （raw.githubusercontent.com 的 CDN 缓存约 5 分钟，真内容走 codeload 实时打包不受影响）。
