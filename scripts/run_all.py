@@ -174,12 +174,6 @@ def main():
     run("extract.py", base + win_args)
     run("leave_notes.py", ["--workdir", wd] + win_args)
     run("merge.py", ["--workdir", wd])
-    # ---------------- 小黑板（v5.03 起只走后台接口）----------------
-    # 2026-11-06 用户拍板：本地图片目录 + 视觉模型读图的旧链路（pull_boards + read_boards）
-    # 整体废弃，一律取后台接口（GET /ai/getClassBlackboardAnalysis，按课节 ID 拉分析结果与图片）。
-    # 无数据的课节返回空 list 属正常；全部课节都失败时 pull_boards_api 不写盘、
-    # 旧 boards_summary.json 保留。
-    run("pull_boards_api.py", base)
 
     # ---------------- 飞书表（v4.66：并入主链路，需显式 --feishu）----------------
     # 为什么以前不并：pull_feishu 依赖 lark-cli 授权，单次要跑几分钟，不适合默认执行。
@@ -199,6 +193,13 @@ def main():
     adapter = "adapt_api.py" if args.api else "adapt_legacy.py"
     run(adapter, ["--workdir", wd] + scope_flag
         + ["--start", args.window, "--end", end])
+    # ---------------- 小黑板（v5.03 起只走后台接口；v5.08 挪到 adapter 之后）----------------
+    # ⚠️ 必须在 adapter 之后：pull_boards_api 按 snapshot/attendance.json 的课节 ID 拉，
+    #    而 attendance.json 正是 adapter（adapt_legacy/api）落盘的 —— 原先排在 adapter
+    #    之前，全新工作目录首跑必中断（2026-11-06 同事实测踩中）。
+    # 无数据的课节返回空 list 属正常；全部课节都失败时 pull_boards_api 不写盘、
+    # 旧 boards_summary.json 保留（report 对缺失文件本就有显式降级，不会崩）。
+    run("pull_boards_api.py", base)
     run("coverage.py", ["--workdir", wd, "--chat-days", str(args.chat_days)])
     run("report.py", base + win_args)
 

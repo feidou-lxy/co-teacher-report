@@ -207,7 +207,14 @@ class CliChannel:
                 "本机没有 lark-cli（飞书官方命令行工具，随 WorkBuddy 安装）。\n"
                 "   请让 WorkBuddy 帮你安装 lark-cli，或用 --lark-cli 指定路径。")
         # ⚠️ 必须禁代理：本机 Clash 代理会让请求打不通（实测）
+        # v5.08：认 LARK_HOME —— 授权若用隔离 HOME（--home / LARK_HOME）落盘，
+        #    取数必须用同一个 HOME，否则读不到 token 又要重新授权。
+        _h = os.environ.get("LARK_HOME")
         self.env = dict(os.environ, LARK_CLI_NO_PROXY="1")
+        if _h:
+            _h = os.path.abspath(os.path.expanduser(_h))
+            self.env["HOME"] = _h
+            print(f"   （lark-cli 使用隔离 HOME：{_h}）")
         # ⚠️ lark-cli 1.0.99 改了 sheets 子命令语法（+info→+workbook-info、
         #    +read→+cells-get，返回结构也变了）→ 按版本分流，兼容新旧两版。
         self.new_syntax = self._version() >= (1, 0, 50)

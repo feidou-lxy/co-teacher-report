@@ -245,7 +245,12 @@ def build_summary(records):
 def main():
     ap = argparse.ArgumentParser(description="小黑板取数（后台接口版）：课节分析 → 学生聚合")
     ap.add_argument("--workdir", default=".")
-    args = ap.parse_args()
+    # v5.08：run_all.py 会把视角参数（--edu/--co/--course）一并透传进来，本脚本只认
+    #   --workdir —— 用 parse_known_args 忽略多余的，否则首次全流程在这一步直接
+    #   「unrecognized arguments」中断（2026-11-06 同事实测踩中，前面的取数全白等）。
+    args, _unknown = ap.parse_known_args()
+    if _unknown:
+        print(f"ℹ️ 忽略本脚本不使用的参数：{' '.join(_unknown)}")
     wd = common.workdir(args)
 
     token = common.load_token(wd)

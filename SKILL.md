@@ -294,17 +294,19 @@ python <skill>/scripts/run_all.py --api --fill --course 2026Q-SX-高一数学B�
    两者的差别**仅在 roster/groups 两张表的来源**（接口直给 vs 群名反查），其余表复用同一批函数 ——
    因此两套适配器产出的快照形态 100% 一致，分析层与报告**一行都不用改**。
    字段定义见 `references/data_contract.md`。缺失字段一律写进 `snapshot/meta.json` 的 `degraded[]`，**绝不静默兜底**。
-9. **`coverage.py`（v4.8 新增）** — 读快照算**覆盖率与四档预警** → `coverage.json`。
-   报告主体只覆盖「有聊天记录」的学生，本步把余下的人（恰恰最需要预警）按「出勤 × 聊天」两轴收口。
-10. `report.py` — 生成三 Tab HTML 报告（联席按课程切换 / 课程单课程按联席下钻 / 教务双维度）→ `<姓名|课程名>_学情分析.html`
-
-**小黑板（v5.03 起固定走后台接口，不再有本地图片目录）：**
-
-11. `pull_boards_api.py` — 按 `snapshot/attendance.json` 的课节 ID 逐个调
-    `GET /ai/getClassBlackboardAnalysis`，取后台已分析好的逐题结论与板书图片 URL
-    → `snapshot/boards_api.json`（原始留证）→ 聚合 `boards_summary.json`（含图片 URL，
-    报告逐题明细自带「图片」列）。旧本地链路（`pull_boards` + `read_boards` + `board_cache`）
-    已废弃归档为 `_bak_*_local.py`；`run_all.py --boards` 参数已吞掉不生效（兼容旧调用不报错）。
+9. **小黑板 `pull_boards_api.py`（v5.03 后台接口 / v5.08 起固定排在 adapter 之后）** —
+   按 `snapshot/attendance.json` 的课节 ID 逐个调 `GET /ai/getClassBlackboardAnalysis`，
+   取后台已分析好的逐题结论与板书图片 URL → `snapshot/boards_api.json`（原始留证）
+   → 聚合 `boards_summary.json`（含图片 URL，报告逐题明细自带「图片」列）。
+   ⚠️ **必须先有 adapter 落盘的 `snapshot/attendance.json`**（v5.08 前排在 adapter 之前，
+   全新工作目录首跑必中断——2026-11-06 同事实测踩中）。
+   无数据的课节返回空 list 属正常；全部课节请求失败时**不写盘**、旧 boards_summary.json 保留
+   （report 对缺失文件本就有显式降级，不会崩）。
+   旧本地链路（`pull_boards` + `read_boards` + `board_cache`）已废弃归档为 `_bak_*_local.py`；
+   `run_all.py --boards` 参数已吞掉不生效（兼容旧调用不报错）。
+10. **`coverage.py`（v4.8 新增）** — 读快照算**覆盖率与四档预警** → `coverage.json`。
+    报告主体只覆盖「有聊天记录」的学生，本步把余下的人（恰恰最需要预警）按「出勤 × 聊天」两轴收口。
+11. `report.py` — 生成三 Tab HTML 报告（联席按课程切换 / 课程单课程按联席下钻 / 教务双维度）→ `<姓名|课程名>_学情分析.html`
 
 **可选（v4.19）：接入团队自维护的飞书表** —— 再追加两步。**刻意不并入 `run_all.py`**：
 飞书表按团队而异（表 ID、sheet 构成、列名都不同），且各团队用自己的凭证跑。
@@ -313,6 +315,24 @@ python <skill>/scripts/run_all.py --api --fill --course 2026Q-SX-高一数学B�
 python <skill>/scripts/pull_feishu.py  --workdir <workdir>   # → feishu_raw.json
 python <skill>/scripts/adapt_feishu.py --workdir <workdir>   # → snapshot/feishuLearning.json
 ```
+
+**⭐ AI 代跑沙箱场景（v5.08，同事实测反馈）** —— WorkBuddy 沙箱会把 lark-cli 保存
+token 的 rename 拦成 `keychain Set failed: rename … operation not permitted`
+（服务器端授权其实成功了，只是本地落盘失败）。**登录/取数类 lark-cli 调用必须前台
+非沙箱执行；`run_in_background` 即使带免沙箱标志也不生效（仍被拦）。**
+被拦时的实测有效逃生通道 —— 隔离 HOME：
+
+```bash
+# 授权（一次即可；--home 会自动建目录。别放 /tmp —— 重启清空，授权会丢）
+python3 <skill>/scripts/feishu_auth.py login --home ~/.workbuddy/.lark-home
+# 取数必须用同一个 HOME（环境变量两种脚本都认）：
+export LARK_HOME=~/.workbuddy/.lark-home
+python3 <skill>/scripts/pull_feishu.py --workdir <workdir>
+```
+
+feishu_auth.py 检测到 keychain/rename 失败时会**自动打印**上面这套方案；
+同事环境下若主 HOME 的 lark-cli 状态被历史失败写坏（反复报 device_code invalid），
+隔离 HOME 也一并解决。`LARK_HOME` 与 `--home` 都不传时＝用系统 HOME（原有行为不变）。
 
 13. **`pull_feishu.py`（v4.19 / v4.20 加分块）** — 按 `<workdir>/profile.json` 读飞书表格 → `feishu_raw.json`。
     **双通道，换通道不改代码**：`--via cli` 走本机 `lark-cli`（用户身份，**只用于本机调试**）；
@@ -4145,6 +4165,32 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
 - **注释级清理**：export_tags / adapt_api / adapt_legacy / pull_knowledge / kp 共 5 处。
 - 保留不动的兼容层：`adapt_*` 仍读 `board_analysis.json`（恒为空 → snapshot/boards.json 恒 []，
   meta counts["boards"]=0），仅为兼容不报错；报告学习证据实际消费 `boards_summary.json`（接口产物）。
+
+### v5.08 · 全流程首跑三连修（2026-11-06 同事实测 v5.05 反馈）
+
+同事用 v5.05 跑教务全流程实测出的 3 个中断点 + 1 个留档缺口，全部复现确认后修复：
+
+1. **`pull_boards_api.py` 参数不兼容**：run_all 透传 `--edu/--co/--course` 而 argparse
+   只定义了 `--workdir` → `unrecognized arguments` exit 2，首次全流程在第 11 步中断
+   （前面的取数全部白等）。→ 改 `parse_known_args()`，忽略时打印提示行。
+2. **小黑板步骤顺序错误**：原排在 `merge` 之后、`adapt_*` 之前 —— 而 attendance.json
+   正是 adapter 落盘的 → 全新工作目录首跑必报「缺少 snapshot/attendance.json」。
+   → `run_all.py` 挪到 **adapter 之后、coverage 之前**；SKILL.md 第 1~11 步同步
+   重排（9=小黑板、10=coverage、11=report，与 run_all 实际顺序一致）。
+   「全部课节失败→不写盘」设计保留：report 对缺失 boards_summary.json 本就有
+   显式降级（横幅 + 卡片不渲染），写空 dict 反而会掩盖 token 过期。
+3. **lark-cli 保存 token 被沙箱拦 → 隔离 HOME 逃生通道产品化**：
+   `feishu_auth.py` 加 `--home`（根命令与 login 子命令都认）+ `LARK_HOME` 环境变量；
+   检测到 `keychain/rename/operation not permitted/failed to save token` 时**自动打印**
+   隔离 HOME 方案（默认建议 `~/.workbuddy/.lark-home`，别放 /tmp）；
+   `pull_feishu.py` CliChannel 认 `LARK_HOME`（授权与取数必须同一个 HOME）。
+   SKILL.md 补「AI 代跑沙箱场景」：lark-cli 必须**前台非沙箱**，后台免沙箱标志不生效。
+   （同事实测：主 HOME 反复报 device_code invalid、隔离 HOME 一次即成。）
+4. **`audit_exam.py` 手动单跑落盘**：给 `--workdir` 时输出自动写
+   `<workdir>/exam_audit.txt`（与 run_all 的 run_tee 同落点）—— 第③道防线要求
+   人眼过 + 留档，手工重跑不再「只打印」。
+
+SKILL_VER → v5.08（仅脚本层，报告渲染无变化）。
 
 ### v5.07 · 知识点处方默认折叠（2026-11-06 用户圈选「折叠」）
 
