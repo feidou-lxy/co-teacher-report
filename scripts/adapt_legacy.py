@@ -11,7 +11,7 @@
     groups.json            群标识
     chats.json             群消息 {学生名: {group, total, messages}}
     attendance_clean.json  出勤 {归一化姓名: {...}}
-    board_analysis.json    小黑板读图结果（可选，list）
+    board_analysis.json    小黑板读图结果（已废弃，v5.03 起恒为空，仅为兼容保留读取）
 
 输出（<workdir>/snapshot/）
     meta.json  roster.json  groups.json  groupActivity.json

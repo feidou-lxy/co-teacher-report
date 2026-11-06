@@ -243,9 +243,9 @@ token 有效期约 24 小时，过期重走本步。
 
 ```bash
 # —— 新接口链路（v4.11，推荐）——
-# 课程视角（含小黑板）
+# 课程视角（小黑板 v5.03 起自动走后台接口，无需本地图片目录）
 python <skill>/scripts/run_all.py --api --fill --course 2026Q-SX-高二数学清北层日E邵 \
-       --window 2026-09-01 --boards ~/Desktop/邵清北课上小黑板
+       --window 2026-09-01
 # 联席视角（跨课程）
 python <skill>/scripts/run_all.py --api --fill --co 张巍 --window 2026-09-01 --month 2026-09
 
@@ -298,14 +298,13 @@ python <skill>/scripts/run_all.py --api --fill --course 2026Q-SX-高一数学B�
    报告主体只覆盖「有聊天记录」的学生，本步把余下的人（恰恰最需要预警）按「出勤 × 聊天」两轴收口。
 10. `report.py` — 生成三 Tab HTML 报告（联席按课程切换 / 课程单课程按联席下钻 / 教务双维度）→ `<姓名|课程名>_学情分析.html`
 
-**提供 `--boards <小黑板目录>` 时，另追加两步（`pull_boards` + `read_boards`）：**
+**小黑板（v5.03 起固定走后台接口，不再有本地图片目录）：**
 
-11. `pull_boards.py` — 扫描小黑板图片目录，建立「学生 → 逐轮」索引 → `boards.json`
-12. `read_boards.py` — 逐张读图做结构化分析（作答完整度 / 正确错误 / 问题定位）→ `board_analysis.json` → 聚合 `boards_summary.json`
-    （未配置视觉模型时，先生成 `board_analysis_template.json` 待填清单，人工/代理回填后再跑本步聚合；详见「小黑板读图」小节）
-
-> ⚠️ 顺序注意：适配器会读 `board_analysis.json` 一并折算进快照，
-> 所以**带小黑板时必须先跑读图**（`run_all.py` 已按此顺序编排）。
+11. `pull_boards_api.py` — 按 `snapshot/attendance.json` 的课节 ID 逐个调
+    `GET /ai/getClassBlackboardAnalysis`，取后台已分析好的逐题结论与板书图片 URL
+    → `snapshot/boards_api.json`（原始留证）→ 聚合 `boards_summary.json`（含图片 URL，
+    报告逐题明细自带「图片」列）。旧本地链路（`pull_boards` + `read_boards` + `board_cache`）
+    已废弃归档为 `_bak_*_local.py`；`run_all.py --boards` 参数已吞掉不生效（兼容旧调用不报错）。
 
 **可选（v4.19）：接入团队自维护的飞书表** —— 再追加两步。**刻意不并入 `run_all.py`**：
 飞书表按团队而异（表 ID、sheet 构成、列名都不同），且各团队用自己的凭证跑。
@@ -456,22 +455,9 @@ python <skill>/scripts/adapt_feishu.py --workdir <workdir>   # → snapshot/feis
 > `course_raw` 已被 `common.course_name()` 剥掉 `2026Q-SX-` 前缀，飞书侧存的是带前缀全名 ——
 > **只按一种形态建键会全部落空**（实测命中率 40/70 → 0/70）。
 
-⭐ **v4.8 起请优先走 `board_cache.py`（读图缓存 · 增量读图）**：同一张图**只读一次**，跨课程 / 跨月份 / 跨会话复用 ——
-第二轮课通常只多出几十张新图，不必把上千张全部重读。三步替代原来的「全量读图」：
-
-```bash
-# ① 扫图 → 已读过的直接复用，只把「没读过的」分好批
-python <skill>/scripts/board_cache.py sync --boards "$HOME/Desktop/邵清北课上小黑板" \
-       --workdir <工作区> --batch-size 28 [--roster <工作区>/students.json]
-#    产出：<工作区>/board_analysis.json（缓存命中，直接可聚合）
-#          <工作区>/board_todo.json + board_batches/batch_N.json（**只有新图**，交给读图）
-# ② 读图（只读 todo 里的新图）→ result_N.json
-# ③ 读完把结果写回缓存（下次自动命中）
-python <skill>/scripts/board_cache.py merge <工作区>/board_batches/result_*.json
-```
-
-缓存位：`<skill>/.cache/board_reads.json`（**本地缓存，不进 git**）；键=图片绝对路径，校验位=文件大小+mtime，
-**图片被替换 / 重新导出会自动失效并重读**。查规模：`python <skill>/scripts/board_cache.py stats`。
+> 🗑 **v5.03 起小黑板读图缓存（board_cache.py）已废弃**：小黑板一律走后台接口
+> `pull_boards_api.py`（分析结果与图片 URL 由后台统一产出），不再扫本地图片目录、
+> 不再调视觉模型逐张读图。旧脚本归档为 `_bak_board_cache_local.py`，仅供回溯。
 
 `--co` / `--edu` / `--course` 三选一为主维度，不可同用（课程视角可另加 `--co` 做课程内子筛选）。
 
@@ -1095,52 +1081,30 @@ v4.12 把这批人从 `coverage.json` 捞出来，渲染为**左侧红边预警�
   解析不出层级/班号时原样返回，绝不硬凑）。学生卡上的课程串用 `course_raw`（课程名原串），可回后台逐字核对。
   `groupName` 仅作回退（兼容 v4.6 及更早、不含 `productName` 的归档 `groups.json`）。
 
-### 小黑板读图（v3.6 新增，可选）
+### 小黑板（v5.03 起走后台接口，本地图片目录链路已废弃）
 
-- **图片目录结构（v3.8 明确，关键）**：三层
-  - **第 1 层 = 一次课**（命名含上课日期，如 `0906邵小黑板` / `0927邵清北打穿题` / `1011邵清北课上小黑板`）；
-    同一天可能有多个主题文件夹（如 `0927邵清北打穿题` 与 `0927邵清北课上小黑板`），按文件夹分别统计。
-  - **第 2 层 = 该次课下的每一轮**（时间戳目录，如 `小黑板_2026-09-06 19-27-57`）。
-  - **第 3 层 = 图片**，文件名 `序号_[W/Z]-姓名[数字].png`；
-    **带红笔批改痕迹的是联席批改后的图**（读图时不要把批改痕迹当成学生作答）。
-  - ⚠️ **课次 ≠ 轮次**：一次课下有多轮。轮次按第 2 层目录**去重计数**（同一轮可能上传多张）。
-  - ⚠️ **序号每轮会变**，匹配必须用**姓名**（`norm_name` 去尾部数字后缀）；**W/Z 只是分批上传标记，无教学含义，不当过关/未过关**。
-  - 无 W/Z 的（如 `1_邵文剑`）＝空白模板/老师版。
-- **索引**：`pull_boards.py --boards <目录>` → `boards.json`（`{归一化姓名: [{round, lesson, lesson_date, date, path, flag}]}`）。
-- **读图分析**：`read_boards.py`
-  - ⚠️ **必须全量读图**（v4.3 强调）：**一次课都不能漏、一轮都不能漏**。① 学习情况里的「具体薄弱点」是
-    **聊天记录 ＋ 每次课每一轮的小黑板读图结果一起归纳**出来的，只读一轮 / 一次课会直接把结论做偏（曾只读了
-    3 张 / 63 张，导致 8 次课 29 轮被压成 1 次课 1 轮）。图中若**同时有印刷题目与手写作答**，只依据手写部分判断；
-    **带红笔痕迹的是联席批改痕迹，不要当成学生作答**；只有空白题目 / 问卷、没有学生笔迹 → 记 `空白未提交`。
-  - ⭐ **读图缓存（v4.8 新增 · 增量读图，强烈建议默认走这条）**：读图是全流程最贵的一步，**同一张图不该读第二次**。
-    `board_cache.py sync` 先按「**图片绝对路径 + 文件大小 + mtime**」查 `<skill>/.cache/board_reads.json`：
-    - **命中** → 直接复用历史结论写进 `<工作区>/board_analysis.json`（零成本，不再调用读图）；
-    - **未命中** → 写进 `board_todo.json` 并按 `--batch-size` 自动切成 `board_batches/batch_N.json`，**只需要读这些新图**；
-    - 读完执行 `board_cache.py merge <result_*.json>` 把结论**写回缓存**，下一轮自动命中。
-    - 缓存是**只增不改**的本地文件（`.cache/` 已在 `.gitignore`，含学生姓名，**不要入库、不要分发**）；图片被替换（size/mtime 变）会自动失效重读。
-    - 典型收益：某课程本轮 1363 张图，其中 658 张已读 → 复用后**只需读 705 张**；第二轮课若只多上一次课，通常只读几十张。
-    - ⚠️ **缓存只解决「读图」成本，不改变「必须全量」的原则**：新图仍要全量读（每次课 × 每一轮都不能漏）。
-  - **图片多时先分批**：按「学生 × 课次」切成若干批，每批写一个 `batch_N.json`（含 `student/round/lesson/lesson_date/path`），
-    并行读图后各自产出 `result_N.json`，再合并成 `board_analysis.json` —— 比单线程逐张读快得多，且每批都能自检
-    「条数 = 输入条数、`path` 一一对应」。
-  - 配置视觉模型时全自动：在 `<workdir>/boards_llm.json` 写 `{"base_url","api_key","model"}`（OpenAI 兼容多模态），
-    或设环境变量 `BOARDS_LLM_BASE_URL / BOARDS_LLM_API_KEY / BOARDS_LLM_MODEL`；逐张输出
-    `problem / topic / topic_knowledge / status(完整作答|部分作答|空白未提交) / correct(正确|基本正确|有错|待判) / errors[] / stuck_at / note`。
-    - **`topic_knowledge`（关联知识点，v3.6.1 新增）**：该作答/卡点关联的**大知识点**，必须从与聊天高频 `TOPICS` **同口径**的候选里选
-      （立体几何/空间向量、直线和圆、函数与导数、数列、圆锥曲线、三角函数、概率统计、解三角形、不等式/参数、计算/粗心、其他）；
-      ⚠️ **v4.6：求轨迹 / 轨迹方程类题目请标 `曲线与方程`**（不要标 `圆锥曲线`）——「圆锥曲线」只用于椭圆 / 双曲线 / 抛物线的几何性质题。
-      ⚠️ **v4.76 起识别范围以后台知识树为准**：立体几何/数列/概率统计已剔除（导数为例外，见 v4.81）；
-      读图给的合并名「函数与导数」在报告**显示层**过 `_bk_name()` 变成「函数」，标「导数」或有导数强词才单列（v4.80 / v4.81）。
-      提示词仍可让读图自由标注 —— 显示归一在渲染侧做，不在读图侧硬约束。
-      该字段用于把小黑板错误**反向落到知识点上**、并与聊天高频交叉验证薄弱点（⚠️ 口径不一致会导致双证据永远匹配不上）；
-      即便读图标错，`common.ITEM_TOPIC` 也会在聚合时按题型纠正归属。
-  - 未配置模型时：生成 `board_analysis_template.json` 待填清单（含 `topic_knowledge` 字段），人工/代理逐张读图回填 `board_analysis.json` 后再跑本步聚合。
-  - 聚合产物 `boards_summary.json`（`{姓名: {rounds, analyzed, status_counts, error_types, kb_topics, error_topics, trend, lessons, lesson_count, details}}`）：
-    `kb_topics`＝小黑板涉及的全部知识点；`error_topics`＝**有错误/卡点轮次所关联的知识点**（即小黑板实证的薄弱点）；
-    `lessons` / `lesson_count`＝按**课次**（第 1 层目录）分组，供报告「逐次课情况」表消费；`details[].topic` ＝题目模块（v4.2 起 `common.fine_from_board()` 用它把小黑板卡点落到「知识点 → 题型」）。
-    ⚠️ **v4.2 修复**：读图 / 人工填表常只给出 `topic` 而留空 `topic_knowledge`，旧版聚合因此得到空的 `kb_topics` / `error_topics`，
-    报告的「小黑板实证薄弱」整条断链、细粒度条目还会落到「未归类」；现已在聚合时**退回 `topic`** 兜底。
-- **呈现**：报告 ①「学习情况」内的佐证子块 —— 正文只给「一句话作答概况 + 典型错误」，**逐次课情况表与逐轮明细表均默认折叠**（v4.0，含每题「关联知识点」，v4.2 起 `topic_knowledge` 为空时显示 `topic`）；**只出文字结论，不嵌图片**。
+- **取数**：`pull_boards_api.py` —— 按 `snapshot/attendance.json` 里的 `classes[].classId`
+  逐个调 `GET /ai/getClassBlackboardAnalysis`（鉴权同后台 `x-token`），
+  产出 `snapshot/boards_api.json`（接口原样留证，反编造）+ `boards_summary.json`（学生聚合）。
+- **接口口径（实测）**：一张图片 = 一条记录，`analysisResult` 是**逐题数组**（约 22% 图片多题）
+  → 聚合时**一个 detail = 一道题**，同图多题共用 `image` URL；
+  `status` ∈ 完整作答/部分作答/空白未提交（空白图也返回一条占位分析，`correct` 恒「待判」，
+  正确率只算「正确/有错」）；`analysisResult` 为空 = 后台分析缺失 → 记 `failed=True`，
+  **绝不写成学生空白未提交**；`studentName` 为空 = 未关联到学生 → 只计数不进报告；
+  课节无分析数据（空 list）≠ 失败；全部课节失败 → 不写盘退出码 2。
+- **聚合产物 `boards_summary.json`**（`{姓名: {rounds, analyzed, status_counts, error_types, kb_topics, error_topics, trend, lessons, lesson_count, details}}`），
+  与旧读图链路**同 schema**：`kb_topics`＝涉及的全部知识点；`error_topics`＝有错误轮次实证的薄弱点；
+  `lessons` 按「课节（className + 上课日期）」分组；`details[]` 比旧版多 `image`（板书原图 URL）与 `board_matches`（与教师板书的匹配情况）。
+- **呈现**：报告 ①「学习情况」佐证子块 —— 正文只给「一句话作答概况 + 典型错误」，
+  **逐次课情况表与逐题明细表均默认折叠**；v5.03 起逐题明细带「**图片**」列
+  （缩略图点击放大灯箱 / 新窗口开原图），子块标题标注「数据源：后台接口」。
+- ⚠️ **数据覆盖以后台为准**：后台没分析的课节返回空 → 该课次不出现在报告里（诚实降级）；
+  后台补完分析后重跑 `pull_boards_api.py` 即自动出现。
+- 🗑 **旧链路归档**：本地图片目录三层结构、文件名姓名解析、读图缓存（board_cache）、
+  人工回填模板等整套流程已废弃，脚本归档为 `_bak_pull_boards_local.py` /
+  `_bak_read_boards_local.py` / `_bak_board_cache_local.py`（仅供回溯，不再维护）。
+  历史 bug 修复记录（姓名两层前缀、读图失败熔断等）见下方各版本小节，其经验已吸收进接口版口径。
+
 
 ## 目录与产物
 
@@ -1157,11 +1121,9 @@ v4.12 把这批人从 `coverage.json` 捞出来，渲染为**左侧红边预警�
 ├── analysis.json            # 信号提取
 ├── leave_notes.json         # 请假备注
 ├── analysis_merged.json     # 合并最终分析
-├── boards.json              # （可选）小黑板图片索引（提供 --boards 时）
-├── board_analysis.json      # （可选）逐张读图结构化结论
-├── boards_summary.json      # （可选）小黑板逐生聚合结论（①学习情况佐证消费）
+├── boards_summary.json      # 小黑板逐生聚合结论（pull_boards_api.py 产出，①学习情况佐证消费，v5.03 起带图片 URL）
 ├── snapshot/                # （v4.8）「中间契约」快照：meta / roster / groups /
-│                            #   groupActivity / chats / attendance / boards —— 分析层只读这里
+│                            #   groupActivity / chats / attendance / boards_api —— 分析层只读这里
 ├── coverage.json            # （v4.8）覆盖率 + 四档预警（报告 Tab① 消费）
 └── <姓名|课程名>_学情分析.html    # ← 主交付（联席按课程切换 / 课程按联席下钻 / 教务双维度）
 ```
@@ -4166,3 +4128,20 @@ test_exam / test_prescribe 回归全过；三门真实课（数学/物理/化学
   图片直链 200 热链可看；冒烟通过（旧 schema 显「—」、新 schema 灯箱、失败行正常）。
 - ⚠️ 张豫（高二）41 个课节全部「无分析数据」→ 该报告小黑板块诚实显示暂无，
   等后台补分析后重跑 `pull_boards_api.py` 即自动出现。
+
+### v5.03 补充 · 本地小黑板链路整体下线（2026-11-06 用户确认）
+
+「后面都不需要从本地走了，均取后台接口」—— 全链路清理：
+
+- **归档**：`pull_boards.py` / `read_boards.py` / `board_cache.py` →
+  `_bak_pull_boards_local.py` / `_bak_read_boards_local.py` / `_bak_board_cache_local.py`
+  （仅供回溯，不再维护；rsync 排除 `_bak_*`，不进发布仓库）。
+- **run_all.py**：`--boards` 参数保留但 **SUPPRESS + 不生效**（兼容旧调用不报错），
+  主链路固定跑 `pull_boards_api.py`；完成提示里的「board_analysis_template 人工回填」改为接口说明。
+- **report.py**：两处用户可见文案的「补跑/重跑 read_boards.py」→ `pull_boards_api.py`。
+- **SKILL.md 现役指引重写**：主链路步骤、`--boards` 用法示例、board_cache 增量读图节、
+  「小黑板读图」整节（44 行本地目录结构/文件名解析/读图缓存说明）→ 统一改为接口版说明；
+  历史版本小节里的旧记录**不改动**（那是修复史，经验已吸收进接口口径）。
+- **注释级清理**：export_tags / adapt_api / adapt_legacy / pull_knowledge / kp 共 5 处。
+- 保留不动的兼容层：`adapt_*` 仍读 `board_analysis.json`（恒为空 → snapshot/boards.json 恒 []，
+  meta counts["boards"]=0），仅为兼容不报错；报告学习证据实际消费 `boards_summary.json`（接口产物）。

@@ -2,7 +2,7 @@
 
 数据来源只有一处：`pull_knowledge.py` 落盘的 `snapshot/knowledge_points.json`。
 **不再维护第二份知识点词表** —— 在这之前 `extract.py:TOPIC_UNITS`（14 个大模块）
-和 `read_boards.py` 的 prompt 候选各写一份，加一个知识点要改两处，还容易对不上。
+和小黑板读图口径各写一份，加一个知识点要改两处，还容易对不上。
 
 用法：
     import kp

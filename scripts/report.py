@@ -852,7 +852,7 @@ def data_health(wd):
             if _f:
                 out.append(("warn", f"小黑板有 <b>{_f}</b> 轮读图失败（共 {_r} 轮，{_f / max(1, _r):.0%}）→ "
                                     "已<b>排除</b>在分层与作答统计之外（技术问题，不算学生没交）；"
-                                    "补跑 <code>read_boards.py</code> 可补齐。"))
+                                    "补跑 <code>pull_boards_api.py</code> 可补齐。"))
         except Exception:
             pass
     return out
@@ -3123,7 +3123,7 @@ def light_card_html(v, board=None, chat_days=14, show_co_tag=False):
                      + (f" · 读图失败 {_fr} 轮（技术问题，未计入分母）" if _fr else "")))
     elif _fr:
         grid.append(("小黑板作答", "读图失败", "mute",
-                     f"{_fr} 轮全部读图失败（技术问题，未计入判定）；重跑 read_boards.py 后再看"))
+                     f"{_fr} 轮全部读图失败（技术问题，未计入判定）；重跑 pull_boards_api.py 后再看"))
     else:
         grid.append(("小黑板作答", "无记录", "mute", "这节课的小黑板目录里没有该生的图"))
     grid.append(("群内互动", "未采集到", "mute",
@@ -5375,7 +5375,8 @@ def main():
             '知识点仅由内置词表识别 —— 与后台标准名可能不一致，补跑 <code>pull_knowledge.py</code> 后重跑即可。<br>'
         )
 
-    # 小黑板逐轮读图结论（可选）：boards_summary.json 由 pull_boards + read_boards 产出，按「姓名」索引
+    # 小黑板逐轮读图结论（可选）：boards_summary.json 由 pull_boards_api.py 产出
+    #   （v5.03 起走后台接口 getClassBlackboardAnalysis；旧本地读图链路已废弃），按「姓名」索引
     boards_path = os.path.join(wd, "boards_summary.json")
     boards_map = json.load(open(boards_path, encoding="utf-8")) if os.path.exists(boards_path) else {}
     global BOARDS_ON, BOARDS_MAP

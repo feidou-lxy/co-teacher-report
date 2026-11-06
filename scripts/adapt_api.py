@@ -9,7 +9,7 @@
 输入（<workdir>/）
     roster_api_raw.json    接口原始响应（由 pull_roster.py 落盘）★ 若有则优先用它
     students.json          由 pull_roster.py 落盘的花名册（含 roomId），兜底来源
-    chats.json / attendance_clean.json / board_analysis.json  旧方式产物（不变）
+    chats.json / attendance_clean.json / board_analysis.json  旧方式产物（board_analysis 已废弃，v5.03 起恒为空）
 
 输出（<workdir>/snapshot/）：与 adapt_legacy.py 完全相同的 7 个文件。
 契约定义见 references/data_contract.md。
