@@ -4806,9 +4806,8 @@ def _focus_html(crows, boards_map, limit=6):
     return (
         '<div class="tadv-focus">'
         '<div class="fadv-h">⚠️ 建议先跟进的学生</div>'
-        f'<div class="fadv-s">{summary}'
-        f'下表列最该先跟进的 {len(shown)} 人'
-        + (f'，其余 {more} 人见折叠。' if more > 0 else '。') + '</div>'
+        # v5.06（用户 2026-11-06）：顶部说明句（「有群聊数据的 N 人中 N 人互动不足…」）删除 ——
+        #   理由都在每行的「关注理由」标签上，总结句属重复叙述。
         '<table class="foc-tab"><tr><th>学生</th><th>关注理由</th>'
         '<th>可以做的事</th><th>依据（可核对）</th></tr>'
         + body + '</table>'
@@ -5110,7 +5109,8 @@ def teaching_advice(crows, boards_map, n_any=None, more_n=0, one_course=True, rx
         _rx_cls
         + '<div class="tadv">'
         + '<div class="tadv-h">📊 学生情况概览 · 共性薄弱面</div>'
-        + '<div class="tadv-sum">' + line + '</div>'
+        # v5.06（用户 2026-11-06）：顶部小结句（「共性的薄弱面是…97 人 81% 涉及…」）删除 ——
+        #   数据都在下表里，文字总结属重复叙述。
         + '<table class="tadv-tab"><tr><th>优先</th><th>薄弱知识点</th><th>覆盖学生</th>'
         + '<th>群聊提及</th><th>小黑板实证</th><th>典型题型 / 卡点</th></tr>'
         + rows + '</table>'
