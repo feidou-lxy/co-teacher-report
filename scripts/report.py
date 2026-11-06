@@ -4770,17 +4770,16 @@ def _focus_html(crows, boards_map, limit=6):
                 _seen.add(k)
                 _pairs.append((k, w))          # 保留原始 why 文本（带真实数字，不用模板里的 N）
         _main, _others = _pb.pick([k for k, _ in _pairs])
+        _tip = ""                     # v5.06：小字收进悬停（先隐藏，信息不丢）
         if _main:
             act = _pbtxt(_pb.BY_KEY[_main]["act"])
-            act += (f'<span class="fdone">完成标准：'
-                    f'{_pbtxt(_pb.BY_KEY[_main]["done"])}</span>')
+            _tip = f'完成标准：{_pbtxt(_pb.BY_KEY[_main]["done"])}'
             _olist = [(k, w) for k, w in _pairs if k != _main]
             if _olist:
                 _o = "".join(
-                    f'<span class="fmore">另需处理：{_pbtxt(w)} → '
-                    f'{_pbtxt(_pb.BY_KEY[k]["short"])}</span>'
+                    f'另需处理：{_pbtxt(w)} → {_pbtxt(_pb.BY_KEY[k]["short"])}'
                     for k, w in _olist[:2])
-                act += _o
+                _tip += ("\n" + _o if _o else "")
         else:
             # 认不出的理由仍走旧文案（宁可泛一点，也不要套错措施）
             act = _FOCUS_ACT[x["lead"]]
@@ -4789,9 +4788,11 @@ def _focus_html(crows, boards_map, limit=6):
             if x.get("has_fs") and "fs" in x["kinds"]:
                 act += "；" + _bact["fs"]
         ev = " ｜ ".join(e for e in x["evi"] if e)
+        # title 是纯文本属性：先剥掉 act/_tip 里的 <b> 标签再转义（否则双重转义显示 &lt;b&gt;）
+        _act_title = _html.escape(re.sub(r"<[^>]+>", "", f"{act}。{_tip}")) if _tip else _html.escape(re.sub(r"<[^>]+>", "", act))
         return (f'<tr><td class="fst">{x["stu"]}</td>'
                 f'<td class="fw">{tags}</td>'
-                f'<td class="fact">{act}</td>'
+                f'<td class="fact" title="{_act_title}">{act}</td>'
                 f'<td class="fev">{ev or "—"}</td></tr>')
 
     body = "".join(_row(x) for x in shown)
