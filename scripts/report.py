@@ -990,7 +990,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.09"
+SKILL_VER = "v5.10"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -1918,6 +1918,22 @@ _ENROLL_CACHE = {}            # {wd: (by_name, renew_by_name)}
 _KUAKE_CACHE = {}             # {wd: kuake}
 _KNOW_CACHE = {}              # {wd: knowledge_used.json}
 
+# ── v5.10 飞书续报表（叶子团队 aux 并表）的姓名级聚合 ──
+_FS_RENEW_CACHE = {}          # {wd: {nm: {rank, level, rn, reasons[]}}}
+_FS_RENEW_PRI = ["C等级", "有退费风险", "B等级", "A等级", "已报名", "已续报"]
+_FS_RENEW_KEY = {"已续报": "ok", "已报名": "ok", "A等级": "a",
+                 "B等级": "b", "C等级": "c", "有退费风险": "risk"}
+_FS_RENEW_SHORT = {"已续报": "已续报", "已报名": "已报名", "A等级": "A·确定续",
+                   "B等级": "B·有意向", "C等级": "C·未续", "有退费风险": "退费风险"}
+
+
+def _fs_renew_key(lv):
+    lv = str(lv or "").strip()
+    for pre, k in _FS_RENEW_KEY.items():
+        if lv.startswith(pre):
+            return k
+    return None
+
 
 def _knowledge_info():
     """读 `knowledge_used.json`（v4.94）—— 用来区分「没证据」和「本版不支持这个科目」。
@@ -2218,6 +2234,46 @@ def _load_enroll(wd):
     return _ENROLL_CACHE[wd]
 
 
+def _load_fs_renew(wd):
+    """飞书续报表（adapt_feishu aux 并表）→ 姓名级 {续报等级, 未续原因分类}。v5.10。
+
+    供教务 KPI 顶栏聚合（续报分布 / 未续原因分类）。
+    ⚠️ 一人可能有多门课的多条记录（续报表按姓名并到每条主档案记录）→ 按姓名去重时
+       取**风险优先**（C > 退费风险 > B > A > 已报名 > 已续报）—— 风险信号不能被
+       另一门课的「已续报」盖掉。
+    ⚠️ 未续原因表内可能是复合串（「家长暂不回复,刚报名的新生」）→ 按 ，,、;； 拆开
+       逐类计数；C/退费风险没写原因的归「未填原因」（显式，不静默）。
+    无 feishuLearning.json / 无 renewLevel → 返回 {}（KPI 整组隐藏，其他团队零影响）。
+    """
+    if wd in _FS_RENEW_CACHE:
+        return _FS_RENEW_CACHE[wd]
+    out = {}
+    p = os.path.join(wd, "snapshot", "feishuLearning.json")
+    if os.path.exists(p):
+        try:
+            for rec in json.load(open(p, encoding="utf-8")):
+                m = rec.get("meta") or {}
+                lv = str(m.get("renewLevel") or "").strip()
+                if not lv:
+                    continue
+                nm = common.norm_name(rec.get("stuName") or "")
+                rk = _fs_renew_key(lv)
+                if not nm or not rk:
+                    continue
+                rank = next((i for i, pre in enumerate(_FS_RENEW_PRI) if lv.startswith(pre)), 99)
+                cur = out.get(nm)
+                if cur and cur["rank"] <= rank:
+                    continue
+                reasons = [x.strip() for x in
+                           re.split(r"[，,、;；]", str(m.get("renewReason") or "")) if x.strip()]
+                out[nm] = {"rank": rank, "level": lv, "rn": rk,
+                           "reasons": reasons or (["未填原因"] if rk in ("c", "risk") else [])}
+        except Exception:
+            out = {}
+    _FS_RENEW_CACHE[wd] = out
+    return _FS_RENEW_CACHE[wd]
+
+
 def _cjw_line(r, edu):
     """教务卡头身份行：在读科目 + 续报 + 扩科意向（仅 edu 维度）。
 
@@ -2281,6 +2337,12 @@ def edu_overview_block(rows, course_order=None):
     v4.41：课程筛选上移到页面顶部「课程标签条」（全局维度）；本块只跟随全局课程状态过滤。"""
     enr_by_name, renew_by_name = _load_enroll(_WD)
     kuake = _load_kuake(_WD)
+    # v5.10：飞书续报表（叶子团队 aux 并表）的姓名级聚合 —— KPI 顶栏「表内续报」五卡
+    #   + C 级未续原因分类 chips。无数据（其他团队）→ 空 dict，整组不渲染。
+    fs_renew = _load_fs_renew(_WD)
+    _has_fsr = bool(fs_renew)
+    fs_cnt = {"ok": 0, "a": 0, "b": 0, "c": 0, "risk": 0}
+    reason_cnt = {}
     total = len(rows)
 
     # 课程清单：优先沿用主流程 course_order（与 Tab②③ 课程子标签同序），缺口补在后面
@@ -2364,14 +2426,37 @@ def edu_overview_block(rows, course_order=None):
              f'{k["subject"]}{"·问过" if k.get("kind") == "ask" else ""}</span>'
              f'<span class="kuevi" title=\'{_html.escape(k["text"])}\'>{_html.escape(k["text"])}</span>')
             for k in kk) or '<span class="jwv none">—</span>')
+        # v5.10：飞书续报表的姓名级续报等级（叶子团队）—— KPI 五卡计数 + 明细行筛选键 + 新列
+        fr = fs_renew.get(nm)
+        frn = fr["rn"] if fr else ""
+        frlv = fr["level"] if fr else ""
+        frsn = "；".join(fr["reasons"]) if fr else ""
+        if frn:
+            fs_cnt[frn] += 1
+        if frn in ("c", "risk"):
+            for _rs in fr["reasons"]:
+                reason_cnt[_rs] = reason_cnt.get(_rs, 0) + 1
+        if _has_fsr:
+            if fr:
+                _ftip = f'飞书续报表直引：{frlv}'
+                if frsn:
+                    _ftip += f'｜原因：{frsn}'
+                _fcl = "risk" if frn in ("c", "risk") else ("mid" if frn == "b" else "ok")
+                _fshort = next((v for k2, v in _FS_RENEW_SHORT.items()
+                                if frlv.startswith(k2)), frlv)
+                frh = f'<span class="rnbadge {_fcl}" title="{_html.escape(_ftip)}">{_fshort}</span>'
+            else:
+                frh = '<span class="jwv none">—</span>'
         # data-* 供前端筛选：kc=课程 key r=续报态 m=科目数(1多科/0单科/u未知)
         #   k 用字符串：i=有明确意向 a=问过其他科目（ia 两者都有）—— 空串才表示都没有
         #   kk=可扩科（v5.01）：s=春在读秋不在读 u=暑在读秋不在读 su=两者
+        #   rn=表内续报等级（v5.10）：ok/a/b/c/risk；rsn=未续原因分类（；连接，indexOf 匹配）
         _m = "1" if len(subs) > 1 else ("0" if len(subs) == 1 else "u")
         _kf = ("i" if _ki else "") + ("a" if _ka else "")
+        _fs_attr = f' data-rn="{frn}" data-rsn="{_html.escape(frsn)}"' if _has_fsr else ""
         detail.append(f'<tr data-kc="{_html.escape(ck)}" data-r="{rst}" data-m="{_m}"'
-                      f' data-k="{_kf}" data-kk="{_kk_flag}"><td>{_html.escape(nm)}</td><td>{subj}</td>'
-                      f'<td>{rvh}</td><td>{kkh}</td><td>{kh}</td></tr>')
+                      f' data-k="{_kf}" data-kk="{_kk_flag}"{_fs_attr}><td>{_html.escape(nm)}</td><td>{subj}</td>'
+                      f'<td>{rvh}</td>{f"<td>{frh}</td>" if _has_fsr else ""}<td>{kkh}</td><td>{kh}</td></tr>')
     tbody = "".join(detail)
 
     # v4.90（用户 2026-11-03）：教务维度默认展开 —— 教务来这一页就是逐生看续报状态，
@@ -2389,7 +2474,7 @@ def edu_overview_block(rows, course_order=None):
             f'暑在读 · 秋不在读<span class="cnt" id="kkc-u">0</span></button>'
             f'</span>'
             f'</summary><div class="edu-detbox"><table><thead><tr><th>学生</th><th>在读科目（秋）</th>'
-            f'<th>续报</th><th>可扩科目</th><th>扩科意向 / 他科问题</th></tr></thead>'
+            f'<th>续报</th>{ "<th>续报等级（表）</th>" if _has_fsr else "" }<th>可扩科目</th><th>扩科意向 / 他科问题</th></tr></thead>'
             f'<tbody id="eduDetailBody">{tbody}</tbody></table></div></details>')
     det = _det
 
@@ -2405,6 +2490,7 @@ def edu_overview_block(rows, course_order=None):
 <script>
 (function(){
   var K='', KK='';      // KK（v5.01）：'' 全部 / 's' 春在读秋不在读 / 'u' 暑在读秋不在读
+  var R='';             // R（v5.10）：未续原因分类筛选（'' 全部；按 data-rsn indexOf 匹配）
   function trs(){return document.querySelectorAll('#eduDetailBody tr');}
   window.eduKpi=function(k){
     K=(K===k)?'':k;
@@ -2423,15 +2509,27 @@ def edu_overview_block(rows, course_order=None):
     }
     eduApply();
   };
+  // v5.10：未续原因分类筛选（C 级 / 退费风险的原因 chips，可与 K/KK/课程叠加）
+  window.rsnTab=function(k){
+    R=(R===k)?'':k;
+    var tabs=document.querySelectorAll('.rsnrow .sectab');
+    for(var i=0;i<tabs.length;i++){
+      tabs[i].classList.toggle('on', tabs[i].getAttribute('data-rsn')===R);
+    }
+    eduApply();
+  };
   // v4.41：课程 = 页面顶部标签（全局状态 window.EDUC，'' = 全部课程）
   window.eduApply=function(){
     var ck=window.EDUC||'';
-    var c={yes:0,no:0,multi:0,single:0,kk:0,kuake:0,aska:0,kks:0,kku:0}, shown=0;
+    var c={yes:0,no:0,multi:0,single:0,kk:0,kuake:0,aska:0,kks:0,kku:0,rok:0,a:0,b:0,c:0,risk:0}, shown=0;
     var rs=trs();
     for(var i=0;i<rs.length;i++){
-      var d=rs[i].dataset, inC=(!ck||d.kc===ck), ok=inC, _k=d.k||'', _kk=d.kk||'';
-      if(ok&&K){ ok=(K==='multi')?(d.m==='1'):((K==='single')?(d.m==='0'):((K==='kk')?(_kk!==''):((K==='kuake')?(_k.indexOf('i')>=0):((K==='aska')?(_k.indexOf('a')>=0):(d.r===K))))); }
+      var d=rs[i].dataset, inC=(!ck||d.kc===ck), ok=inC, _k=d.k||'', _kk=d.kk||'', _rn=d.rn||'';
+      // v5.10：表内续报五卡走 RNMAP 查表（不再往三元链里续层，防括号数错）
+      var _rnm={rok:'ok',ra:'a',rb:'b',rc:'c',rrisk:'risk'}[K];
+      if(ok&&K){ ok=_rnm?(_rn===_rnm):((K==='multi')?(d.m==='1'):((K==='single')?(d.m==='0'):((K==='kk')?(_kk!==''):((K==='kuake')?(_k.indexOf('i')>=0):((K==='aska')?(_k.indexOf('a')>=0):(d.r===K)))))); }
       if(ok&&KK){ ok=(_kk.indexOf(KK)>=0); }
+      if(ok&&R){ ok=((d.rsn||'').indexOf(R)>=0); }
       rs[i].style.display=ok?'':'none';
       if(inC){
         if(c[d.r]!==undefined)c[d.r]++;
@@ -2442,6 +2540,7 @@ def edu_overview_block(rows, course_order=None):
         if(_kk.indexOf('u')>=0)c.kku++;
         if(_k.indexOf('i')>=0)c.kuake++;
         if(_k.indexOf('a')>=0)c.aska++;
+        if(_rn&&c[_rn]!==undefined)c[_rn]++;
       }
       if(ok)shown++;
     }
@@ -2449,13 +2548,25 @@ def edu_overview_block(rows, course_order=None):
     var cs=document.getElementById('kkc-s'), cu=document.getElementById('kkc-u');
     if(cs)cs.textContent=c.kks;
     if(cu)cu.textContent=c.kku;
-    var ks=['yes','no','multi','single','kk','kuake','aska'];
+    // v5.10：未续原因 chips 计数跟随课程过滤（按 inC 口径，与行显示无关）
+    var rtabs=document.querySelectorAll('.rsnrow .sectab');
+    for(var t=0;t<rtabs.length;t++){
+      var _r=rtabs[t].getAttribute('data-rsn'), n=0;
+      for(var i2=0;i2<rs.length;i2++){
+        var d2=rs[i2].dataset;
+        if((!ck||d2.kc===ck)&&(d2.rn==='c'||d2.rn==='risk')&&(d2.rsn||'').indexOf(_r)>=0)n++;
+      }
+      var sp=rtabs[t].querySelector('.cnt');
+      if(sp)sp.textContent=n;
+    }
+    var ks=['yes','no','multi','single','kk','kuake','aska','rok','ra','rb','rc','rrisk'];
     for(var j=0;j<ks.length;j++){
       var el=document.getElementById('edun-'+ks[j]);
       if(el&&el.getAttribute('data-na')!=='1'){
         el.textContent=c[ks[j]];
         // v5.00：multi/single/kk/kuake/aska 零值整卡隐藏（与初始渲染一致）；
         //   yes/no 不隐藏——「已续报 0」是有效业务结论，不是没数据。
+        //   v5.10：表内续报五卡（rok/ra/rb/rc/rrisk）同样零值隐藏。
         if(ks[j]!=='yes'&&ks[j]!=='no'){
           var kc=el.closest('.kpi');
           if(kc)kc.style.display=(c[ks[j]]>0)?'':'none';
@@ -2465,7 +2576,7 @@ def edu_overview_block(rows, course_order=None):
     var cnt=document.getElementById('eduCnt');
     if(cnt)cnt.textContent=shown;
     var det=document.querySelector('.edu-ov details');
-    if(det&&(K||ck||KK))det.open=true;
+    if(det&&(K||ck||KK||R))det.open=true;
   };
   eduApply();
 })();
@@ -2479,6 +2590,27 @@ def edu_overview_block(rows, course_order=None):
     _h_single = "" if single else ' style="display:none"'
     _h_kuake = "" if kuake_n else ' style="display:none"'
     _h_aska = "" if aska_n else ' style="display:none"'
+    # v5.10：表内续报五卡（飞书续报表直引，叶子团队数据源）—— 无数据整组**不进 DOM**
+    _fs_cards = ""
+    if _has_fsr:
+        _h = {k: ('' if v else ' style="display:none"') for k, v in fs_cnt.items()}
+        _fs_cards = (
+            f'<div class="kpi kbl green" data-k="rok" onclick="eduKpi(\'rok\')" title="飞书续报表直引（adapt_feishu aux 并表）：「已续报」或「已报名」——按姓名去重，多门课取风险优先"{_h["ok"]}><div class="n" id="edun-rok">{fs_cnt["ok"]}</div><div class="l">表内已报/已续</div></div>'
+            f'<div class="kpi kbl green" data-k="ra" onclick="eduKpi(\'ra\')" title="飞书续报表「A等级」= 确定续（教务/联席在续报表里标注）；按姓名去重，多门课取风险优先"{_h["a"]}><div class="n" id="edun-ra">{fs_cnt["a"]}</div><div class="l">续报A·确定续</div></div>'
+            f'<div class="kpi kbl" data-k="rb" onclick="eduKpi(\'rb\')" title="飞书续报表「B等级」= 有续报意向；按姓名去重，多门课取风险优先"{_h["b"]}><div class="n" id="edun-rb">{fs_cnt["b"]}</div><div class="l">续报B·有意向</div></div>'
+            f'<div class="kpi kbl" data-k="rc" onclick="eduKpi(\'rc\')" style="background:#fdeaea" title="飞书续报表「C等级」= 存在未续情况；未续原因见下方分类 chips 与明细行悬停"{_h["c"]}><div class="n" id="edun-rc" style="color:#e54545">{fs_cnt["c"]}</div><div class="l">续报C·未续</div></div>'
+            f'<div class="kpi kbl" data-k="rrisk" onclick="eduKpi(\'rrisk\')" style="background:#fdeaea" title="飞书续报表「有退费风险/刚挽退」"{_h["risk"]}><div class="n" id="edun-rrisk" style="color:#e54545">{fs_cnt["risk"]}</div><div class="l">退费风险</div></div>')
+    # v5.10：未续原因分类 chips（C 级 / 退费风险行；点按只看该类，可与 KPI/课程筛选叠加）
+    _rsn_sorted = sorted(reason_cnt.items(), key=lambda kv: (-kv[1], kv[0]))
+    _rsn_html = ""
+    if _has_fsr and _rsn_sorted:
+        _rsn_chips = "".join(
+            f'<button class="sectab rsn" data-rsn="{_html.escape(k)}"'
+            f' onclick="event.preventDefault();rsnTab(this.getAttribute(\'data-rsn\'))">'
+            f'{_html.escape(k)}<span class="cnt">{v}</span></button>'
+            for k, v in _rsn_sorted)
+        _rsn_html = (f'<div class="rsnrow"><span class="rsnlab">未续原因分类'
+                     f'（C 级 + 退费风险，表内原文直引；点按只看该类）：</span>{_rsn_chips}</div>')
     return f'''<div class="section edu-ov">
   <div class="edu-hd">
     <h2 title="续报 · 在读科目 · 可扩科 ｜ 课程筛选在页面顶部（全局生效）｜ {_html.escape(_hint)}">📋 教务核心数据</h2>
@@ -2486,12 +2618,14 @@ def edu_overview_block(rows, course_order=None):
   <div class="kpis" style="margin-bottom:6px">
     <div class="kpi kbl" data-k="yes" onclick="eduKpi('yes')"><div class="n" id="edun-yes" data-na="{_na}">{_yes_txt}</div><div class="l">已续报</div></div>
     <div class="kpi kbl" data-k="no" onclick="eduKpi('no')" title="后台「是否续报」为「否」，或学生尚未在后台选择（未设置）、或未在接口返回中 —— 均按未续报计入"><div class="n" id="edun-no" data-na="{_na}">{_no_txt}</div><div class="l">未续报</div></div>
+    {_fs_cards}
     <div class="kpi kbl" data-k="multi" onclick="eduKpi('multi')" title="在读 2 个及以上科目（后台「在读」状态）"{_h_multi}><div class="n" id="edun-multi">{multi}</div><div class="l">多科目在读</div></div>
     <div class="kpi kbl" data-k="single" onclick="eduKpi('single')" title="当前仅在读 1 个科目（后台「在读」状态；无在读记录的不计）"{_h_single}><div class="n" id="edun-single">{single}</div><div class="l">单科在读</div></div>
     <div class="kpi kbl green" data-k="kk" onclick="eduKpi('kk')" title="2026 春季或暑期在本机构读过、但秋季没有再读的科目 —— 即「可扩科」的口子；一人多科算 1。明细表可用二级切换分别看春/暑"{_h_kk}><div class="n" id="edun-kk">{kkstu_n}</div><div class="l">可扩科</div></div>
     <div class="kpi kbl green" data-k="kuake" onclick="eduKpi('kuake')" title="聊天里本人提到其他科目，且带付费/预约含义（想报 / 多少钱 / 有没有班 / 试听 / 约课…）；与科目词须同句、紧邻、无否定。依据见明细表与卡片"{_h_kuake}><div class="n" id="edun-kuake">{kuake_n}</div><div class="l">有扩科意向</div></div>
     <div class="kpi kbl blue" data-k="aska" onclick="eduKpi('aska')" title="聊天里本人问过其他科目的题，或索要其他科目的试卷 / 资料 / 讲义 / 课（「您有英语的期中卷子」「物理课能发我看看不」）。这不是报班意向，但说明家长已在别处铺了这门课，是推科最早的口子"{_h_aska}><div class="n" id="edun-aska">{aska_n}</div><div class="l">问过其他科目</div></div>
   </div>
+  {_rsn_html}
   {det}
 </div>''' + js
 
@@ -4253,6 +4387,10 @@ details.slimdet>summary:hover{color:#3a5bdb}
 .pmeta{font-size:11px;color:#98a2b3;margin-top:2px}
 .psum{margin-top:8px;border-top:1px dashed #f0d5d5;padding-top:6px;font-size:12.5px;color:#57606a}
 .psum b{color:#b23434;margin-right:6px}
+/* v5.10 教务 KPI：未续原因分类 chips 行 */
+.rsnrow{margin:2px 0 10px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rsnrow .rsnlab{font-weight:600;color:#8c2f2f}
+.rsnrow .sectab .cnt{margin-left:4px}
 .rx-h1{display:flex;align-items:center;gap:7px;font-size:13px;margin-bottom:4px;flex-wrap:wrap}
 .rx-h1::before{content:counter(rx);flex:0 0 auto;width:16px;height:16px;border-radius:50%;
   background:#3a5bdb;color:#fff;font-size:10.5px;font-weight:700;text-align:center;line-height:16px}
