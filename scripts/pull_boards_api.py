@@ -264,7 +264,36 @@ def main():
 
     records, ok_ids, empty_ids, err_ids = fetch_all(wd, token, class_map)
     if not ok_ids:
-        print("❌ 所有课节都拉取失败/无数据 → 不写盘，旧 boards_summary.json 原样保留。")
+        if err_ids:
+            # 请求真的失败（多为 token 过期）→ 不写盘防静默沿用旧数据，中断链路
+            print("❌ 所有课节都拉取失败 → 不写盘，旧 boards_summary.json 原样保留。")
+            print("   （多为 token 过期；失败明细见上，修复后重跑。）")
+            return 2
+        if empty_ids:
+            # v5.10：接口**全部正常返回**、但所有课节都无分析数据（实测：叶子团队初三数学
+            #   18 个课节全「无分析」）—— 这不是拉取失败，不该中断整条链（run_all 曾在此断掉，
+            #   coverage/report 没跑成）。显式落**空** boards_summary.json：① 覆盖旧文件防静默
+            #   沿用；② report 对空文件本就有显式降级横幅。
+            print(f"⚠️ {len(empty_ids)} 个课节接口正常返回、但均无小黑板分析数据 "
+                  f"→ 落空 boards_summary.json（报告显式降级），不中断链路。")
+            snap_dir = os.path.join(wd, "snapshot")
+            os.makedirs(snap_dir, exist_ok=True)
+            write_json_atomic(os.path.join(snap_dir, "boards_api.json"), {
+                "pulledAt": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+                "api": "GET /ai/getClassBlackboardAnalysis",
+                "classIds_ok": [], "classIds_empty": empty_ids, "classIds_err": [],
+                "records": [],
+            })
+            dst = os.path.join(wd, "boards_summary.json")
+            if os.path.exists(dst):
+                bdir = os.path.join(wd, "_not_deliverable")
+                os.makedirs(bdir, exist_ok=True)
+                shutil.copy2(dst, os.path.join(bdir, "boards_summary_local_"
+                                               + dt.datetime.now().strftime("%Y%m%d_%H%M") + ".json"))
+            write_json_atomic(dst, {})
+            print(f"✅ {dst}（空 · 无小黑板数据）")
+            return 0
+        print("❌ 没有任何课节被处理 → 不写盘。")
         return 2
 
     # 原始留证

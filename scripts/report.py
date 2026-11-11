@@ -2529,7 +2529,8 @@ def edu_overview_block(rows, course_order=None):
       var _rnm={rok:'ok',ra:'a',rb:'b',rc:'c',rrisk:'risk'}[K];
       if(ok&&K){ ok=_rnm?(_rn===_rnm):((K==='multi')?(d.m==='1'):((K==='single')?(d.m==='0'):((K==='kk')?(_kk!==''):((K==='kuake')?(_k.indexOf('i')>=0):((K==='aska')?(_k.indexOf('a')>=0):(d.r===K)))))); }
       if(ok&&KK){ ok=(_kk.indexOf(KK)>=0); }
-      if(ok&&R){ ok=((d.rsn||'').indexOf(R)>=0); }
+      // v5.10：R 只筛 C 级/退费风险行 —— A/B 级行的 data-rsn 是沟通记录，不算「未续原因」
+      if(ok&&R){ ok=((_rn==='c'||_rn==='risk')&&(d.rsn||'').indexOf(R)>=0); }
       rs[i].style.display=ok?'':'none';
       if(inC){
         if(c[d.r]!==undefined)c[d.r]++;
