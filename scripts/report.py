@@ -2521,7 +2521,7 @@ def edu_overview_block(rows, course_order=None):
   // v4.41：课程 = 页面顶部标签（全局状态 window.EDUC，'' = 全部课程）
   window.eduApply=function(){
     var ck=window.EDUC||'';
-    var c={yes:0,no:0,multi:0,single:0,kk:0,kuake:0,aska:0,kks:0,kku:0,rok:0,a:0,b:0,c:0,risk:0}, shown=0;
+    var c={yes:0,no:0,multi:0,single:0,kk:0,kuake:0,aska:0,kks:0,kku:0,ok:0,a:0,b:0,c:0,risk:0}, shown=0;
     var rs=trs();
     for(var i=0;i<rs.length;i++){
       var d=rs[i].dataset, inC=(!ck||d.kc===ck), ok=inC, _k=d.k||'', _kk=d.kk||'', _rn=d.rn||'';
@@ -2560,17 +2560,22 @@ def edu_overview_block(rows, course_order=None):
       var sp=rtabs[t].querySelector('.cnt');
       if(sp)sp.textContent=n;
     }
+    // ⚠️ 键名映射（v5.10 首版的教训）：KPI 卡 key（rok/ra/rb/rc/rrisk）与 data-rn 值
+    //   （ok/a/b/c/risk）是两套名字 —— 计数表 c 用 rn 值做键（行计数 c[_rn]++ 直接命中），
+    //   更新卡片时经 RKEY 换算。两套名字对不上 = 五卡全部被当 0 人隐藏（于红霞报告实测）。
+    var RKEY={rok:'ok',ra:'a',rb:'b',rc:'c',rrisk:'risk'};
     var ks=['yes','no','multi','single','kk','kuake','aska','rok','ra','rb','rc','rrisk'];
     for(var j=0;j<ks.length;j++){
       var el=document.getElementById('edun-'+ks[j]);
       if(el&&el.getAttribute('data-na')!=='1'){
-        el.textContent=c[ks[j]];
+        var _ck=RKEY[ks[j]]||ks[j];
+        el.textContent=c[_ck];
         // v5.00：multi/single/kk/kuake/aska 零值整卡隐藏（与初始渲染一致）；
         //   yes/no 不隐藏——「已续报 0」是有效业务结论，不是没数据。
         //   v5.10：表内续报五卡（rok/ra/rb/rc/rrisk）同样零值隐藏。
         if(ks[j]!=='yes'&&ks[j]!=='no'){
           var kc=el.closest('.kpi');
-          if(kc)kc.style.display=(c[ks[j]]>0)?'':'none';
+          if(kc)kc.style.display=(c[_ck]>0)?'':'none';
         }
       }
     }

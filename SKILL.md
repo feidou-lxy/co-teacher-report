@@ -4351,3 +4351,14 @@ renew → meta 挂 `renewLevel/renewReason/renewNote/renewContact`；problems �
 原因 12 类（家长暂不回复 28、刚报名的新生 22、未填原因 6…）。
 回归（六C谢胡·娜娜团队，0 条 renewLevel）：五卡/新列/data-rn 属性/rsn chips 全部不进 DOM，
 原有 KPI 七卡与明细行数守恒。
+
+### v5.10 补丁（同日 · 于红霞首跑实测抓出两处）
+
+- **run_all 教务链路漏了 pull_enroll**：帮助文本说了「续报由 pull_enroll.py --edu 拉取」，
+  但 run_all 从没执行过 → 教务报告「已续报/未续报」永远「—」、多科目/单科目/可扩科全 0、
+  kkTab 两档空壳可点（点了就是「明细 0 人」）。已在 adapter 之后补 `pull_enroll.py`（edu 角色）。
+- **eduApply 键名双 bug**：计数表 c 用 data-rn 值（ok/a/b/c/risk）做键，KPI 更新却用
+  卡 key（rok/ra/rb/rc/rrisk）直接查 c → `c['ra']` undefined → 五卡全被当 0 人隐藏；
+  `c['ok']` 又不存在 → rok 恒 0。修复：c 初始化改用 rn 值键 + RKEY 换算卡 key。
+  ⚠️ 教训：**两套键名必须有一张显式映射表**，且核验要模拟「JS 在真实 DOM 上跑一遍」，
+  只 grep 服务器端 HTML 查不出这类运行时隐藏。

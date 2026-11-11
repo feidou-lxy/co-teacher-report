@@ -193,6 +193,12 @@ def main():
     adapter = "adapt_api.py" if args.api else "adapt_legacy.py"
     run(adapter, ["--workdir", wd] + scope_flag
         + ["--start", args.window, "--end", end])
+    # ---------------- 教务维度：在读科目 / 续报接口（v5.10 补链）----------------
+    #   ⚠️ 此前只在 --edu 帮助文本里提了 pull_enroll，run_all 却从没执行过 —— 教务报告的
+    #   「已续报/未续报」永远显示「—」、多科目/可扩科全 0（于红霞首跑实测踩中）。
+    #   依赖 snapshot/roster.json（adapter 落盘）+ token，放 adapter 之后正好。
+    if role == "edu":
+        run("pull_enroll.py", base)
     # ---------------- 小黑板（v5.03 起只走后台接口；v5.08 挪到 adapter 之后）----------------
     # ⚠️ 必须在 adapter 之后：pull_boards_api 按 snapshot/attendance.json 的课节 ID 拉，
     #    而 attendance.json 正是 adapter（adapt_legacy/api）落盘的 —— 原先排在 adapter
