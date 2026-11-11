@@ -495,11 +495,16 @@ def main():
 
     inc = args.sheet or (fs.get("sheets") or {}).get("include") or []
     exc = {} if args.with_excluded else ((fs.get("sheets") or {}).get("exclude") or {})
+    # ⭐ v5.09：辅助表（profile.feishu.auxSheets = {sheetId: 用途}）——
+    #   不进学情表 detect 主流程，但**要拉**：续报情况（按学生并表出续报等级/未续原因）、
+    #   问题学生跟进清单（报告直引）等。exc 里出现 aux 的 sheetId 时 **aux 优先**。
+    aux = {k: v for k, v in (fs.get("auxSheets") or {}).items() if not k.startswith("_")}
     picked, skipped = [], []
     for s in all_sheets:
         if args.sheet:
+            # ⚠️ --sheet 调试模式：**只拉指定的**（aux 判定仅对完整链路生效）
             (picked if s["sheetId"] in inc else skipped).append(s)
-        elif s["sheetId"] in inc:
+        elif s["sheetId"] in inc or s["sheetId"] in aux:
             picked.append(s)
         else:
             skipped.append(s)
@@ -582,6 +587,8 @@ def main():
             "gridRows": rows, "gridCols": cols,
             "hidden": s.get("hidden", False),
             "readRows": len(vals),
+            # v5.09：辅助表标记（None = 主学情表）
+            "aux": aux.get(s["sheetId"]),
             "values": vals,
         })
         _dump(out_sheets, done=False)

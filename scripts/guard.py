@@ -52,6 +52,9 @@ TEAMS = {
     "高一数学 · 娜娜组": "nana.json",
     "孙一文组": "sunyiwen.json",
     "高二数学 · 孙一文组": "sunyiwen.json",
+    # v5.09：叶子团队（26秋季初三数学）—— via=cli 无密钥形态，配置可进仓库
+    "叶子团队": "yezi.json",
+    "初三数学 · 叶子团队": "yezi.json",
 }
 
 

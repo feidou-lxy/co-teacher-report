@@ -35,13 +35,30 @@ import common
 TZ = "+08:00"
 # ⚠️ 加第二组：单行表头的表把子列名写在课次格里（`第1次课-出勤`）。
 #    续行表头（孙一文类）里该组为空串 —— 两种形态共用一条正则。
-LESSON_RE = re.compile(r"^第\s*(\d+)\s*[次节]\s*课\s*[-－—_:：]?\s*(.*)$")
+# v5.09：兼容叶子团队的「课次N」写法（原来只认「第N次课/第N节课」）。
+#   叶子团队主档案表把课次标记写在分组首列（`课次1`…`课次18`），子列名在下一行 ——
+#   与孙一文「首列标记 + 续行子列名」形态相同，只是措辞不同。
+LESSON_RE = re.compile(r"^(?:第\s*(\d+)\s*[次节]\s*课|课次\s*(\d+))\s*[-－—_:：]?\s*(.*)$")
+# 取序号 / 内联子列名的辅助：两组序号只可能有一组命中
+def lesson_seq(m):
+    return int(m.group(1) or m.group(2))
+
+
+def lesson_leaf(m):
+    return (m.group(3) or "").strip()
 
 # ⚠️ 公式辅助列：飞书表习惯把「课次数字 / 成绩数字」放在尾部给公式用。
 #     实测娜娜团队尾部有 80 个 `第N次课数字`/`模拟测试N数字` —— 若不排除，
 #     它们会被当成**额外的课次标记**（`第N次课数字` 同样匹配课次正则），把课次区撑到 218 列。
 #     默认按「以数字结尾」跳过，可在 profile.feishu.columnSkipPatterns 覆盖（置空数组 = 不跳过）。
 SKIP_COL_PATTERNS_DEFAULT = [r"数字$"]
+
+# ⭐ v5.09 计星规则说明行（叶子团队主档案表第 3 行）：「当周出勤或周末完成回放：+1颗⭐」
+#    「评为优秀+2颗⭐，完成+1颗⭐」这类长文本。它既不是表头子列名也不是数据 ——
+#    按表头续行吃掉会污染 leaf 词表（wide4 事故），当数据行会多出「有数据但姓名空」假告警。
+#    命中即整行跳过（仅 row_heuristics=True 时启用）。⚠️ 数据行星值是「+1⭐」不带「颗」，
+#    规则文本才带「颗⭐」，据此区分。
+RULE_ROW_PAT = re.compile(r"颗⭐|评为优秀|当周出勤或周末完成回放|一轮直接通关|视频打卡")
 
 # ---- 默认口径（profile.feishu.items 可覆盖）
 # ⚠️ v4.50：加入「总结」—— 娜娜团队每节课最后一组子列是
@@ -215,7 +232,8 @@ def match_field(header, extra=None):
 
 
 # ================================================================ 结构探测
-def detect(values, max_probe=6, skip_pats=None, meta_alias=None):
+def detect(values, max_probe=6, skip_pats=None, meta_alias=None, header_limit=None,
+           meta_rate=None, row_heuristics=False):
     """探测表头布局。返回 spec 或 None（无课次列 = 非学情表）。
 
     ⭐ 表头/数据分界判据（实测得出）：
@@ -261,7 +279,7 @@ def detect(values, max_probe=6, skip_pats=None, meta_alias=None):
             continue
         m = LESSON_RE.match(str(v).strip())
         if m:
-            marks.append((j, int(m.group(1)), (m.group(2) or "").strip()))
+            marks.append((j, lesson_seq(m), lesson_leaf(m)))
     if not marks:
         return None
     first_col = marks[0][0]
@@ -279,17 +297,42 @@ def detect(values, max_probe=6, skip_pats=None, meta_alias=None):
     hi = hi_probe
 
     # ---- 向下探表头续行
+    #   v5.09：header_limit —— 续行数上限（profile.feishu.headerSubRowLimit）。
+    #     叶子团队主档案表第 3 行是「计星规则」说明（元数据区也是空的），
+    #     不限会被当成第三层表头 → 子列名 leaf 变成规则长文本，词表全部失配。
+    #     声明 headerSubRowLimit=1 即只认第 2 行子列名。
+    header_limit = header_limit if header_limit is not None else 4
+    # v5.09：meta_rate —— 表头续行的「元数据区非空率」上限（profile.feishu.headerRowMetaRate）。
+    #    缺省 0.20 是按娜娜团队调的；叶子团队把「第一道题/第二道题/知识随时学」4 个
+    #    子列放在元数据区**末尾**（O~R 列），续行非空率 0.22 —— 按默认会被误判成数据行，
+    #    整表降成 wide1 → 学生姓名列错位（培优荷表 0 人事故）。可配置放宽。
+    meta_rate = meta_rate if meta_rate is not None else 0.20
     header_rows = []
     r = best + 1
-    while r < len(values) and len(header_rows) < 4:
+    rule_skips = 0
+    while r < len(values):
         row = values[r]
+        zone = [row[j] for j in range(first_col, min(hi_probe + 1, len(row))) if row[j] not in (None, "")]
+        zone_txt = " ".join(str(v) for v in zone)
+        # v5.09 row_heuristics：计星规则行 —— 不当表头也不当数据，整行跳过
+        if row_heuristics and zone_txt and RULE_ROW_PAT.search(zone_txt) and rule_skips < 5:
+            rule_skips += 1
+            r += 1
+            continue
+        if len(header_rows) >= header_limit:
+            break
         ne = sum(1 for j in range(0, meta_cols) if j < len(row) and row[j] not in (None, ""))
         rate = ne / meta_cols if meta_cols else 0.0
-        if rate > 0.20:                        # 数据行
+        if rate > meta_rate:                   # 数据行
             break
         les_ne = sum(1 for j in range(first_col, hi_probe + 1)
                      if j < len(row) and row[j] not in (None, ""))
         if les_ne == 0:                        # 课次区全空 —— 既不是表头也不是数据
+            break
+        # v5.09 row_heuristics：数据行特征判定 —— 课次区有星值（「+1⭐」）的必是数据；
+        #    课次区非空格 < 3 的（零星备注）也不够格当表头续行。
+        #    ⚠️ 表头续行子列名是纯文字（当周完课/课堂小黑板总结…），不含 ⭐。
+        if row_heuristics and (any("⭐" in str(v) for v in zone) or les_ne < 3):
             break
         header_rows.append(r)
         r += 1
@@ -361,6 +404,7 @@ def detect(values, max_probe=6, skip_pats=None, meta_alias=None):
                                    "inline": is_inline})
             continue
         cur = ["" for _ in header_rows]         # (a) 续行子列名
+        seen_names = set()
         for j in range(g["start"], g["end"] + 1):
             txt = []
             for k, i in enumerate(header_rows):
@@ -370,8 +414,23 @@ def detect(values, max_probe=6, skip_pats=None, meta_alias=None):
                     cur[k] = v
                 txt.append(cur[k] if fill[k] else v)
             txt = [t for t in txt if t]
-            g["items"].append({"col": j, "name": "/".join(txt),
-                               "leaf": txt[-1] if txt else ""})
+            leaf = txt[-1] if txt else ""
+            # v5.09：课次行里**非课次标记**的文字（叶子团队「双提第1次模拟测试」插列组）
+            #   拼进 name 做前缀 —— 否则插列「累计星星数」与本组主列同名，
+            #   items 按 name 存 dict 会互相覆盖丢数据。leaf 不变 → 词表分类不受影响。
+            label = ""
+            if j < len(values[best]):
+                lt = cell_text(values[best][j])
+                if lt and not LESSON_RE.match(lt.strip()):
+                    label = lt
+            nm = "/".join([x for x in ([label] + txt) if x]) or (leaf or "col%s" % colname(j + 1))
+            if nm in seen_names and label:
+                nm = label + "/" + nm          # 理论到不了：label 命中即已唯一
+            if nm in seen_names:
+                nm = f"{nm}#{colname(j + 1)}"  # 兜底：仍撞名时加列号，绝不静默覆盖
+            seen_names.add(nm)
+            g["items"].append({"col": j, "name": nm,
+                               "leaf": leaf})
 
     # ---- 元数据列映射
     # ⚠️ v4.20：允许多列映射到同一字段（娜娜表把教务沟通拆成
@@ -616,6 +675,128 @@ def split_items(raw, done_set, ignore_set, alias):
     return got, unknown, ignored
 
 
+# ================================================================ aux 辅助表并表（v5.09）
+# 叶子团队：续报情况系列 sheet（班型/联席/学生姓名/续报等级/未续原因分类/具体备注/
+# 教务深入沟通【日期+沟通记录】/未续动作执行）+ 问题学生跟进清单（GLIOBk）。
+# 按 common.norm_name 匹配主表学生；匹配不上的**显式报告**，绝不猜。
+AUX_RENEW_COLS = {
+    "level": ["续报等级"], "reason": ["未续原因分类"], "note": ["未续原因具体备注"],
+    "contact": ["教务深入沟通"], "action": ["未续动作"],
+}
+AUX_RENEW_FIELD = {"level": "renewLevel", "reason": "renewReason",
+                   "note": "renewNote", "contact": "renewContact", "action": "renewAction"}
+AUX_PROBLEM_COLS = {
+    "level": ["问题等级"], "desc": ["问题描述"], "advice": ["跟进建议"],
+    "absent": ["缺勤课次"], "until": ["数据截至课次"], "rate": ["三刷提交率"],
+}
+
+
+def _aux_colmap(vals, wanted):
+    """首行表头 → {字段: 列号}。表头 startswith 匹配（「教务深入沟通【日期+沟通记录】」带后缀）。"""
+    hdr = [cell_text(v) for v in (vals[0] if vals else [])]
+    m = {}
+    for field, names in wanted.items():
+        for j, t in enumerate(hdr):
+            if t and any(t.startswith(nm) for nm in names):
+                m[field] = j
+                break
+    return m
+
+
+def merge_aux(students, aux_sheets, degraded):
+    """辅助表按学生姓名并入 students（meta 挂 renew* 字段 / problems 列表）。
+
+    ⚠️ 续报等级口径（用户 2026-11-11）：A=确定续、B=有意向、C 存在 —— 原样保留，不换算。
+    ⚠️ 同名学生在多张续报 sheet 出现（按教务分工分 sheet）→ 字段取第一个非空、
+       contact 逐条拼接（每条带 sheet 名出处）。问题清单允许多条（不同课次的问题）。
+    """
+    by_norm = {}
+    for s in students:
+        by_norm.setdefault(s["studentNameNorm"], []).append(s)
+    stats = {}
+    for sh in aux_sheets:
+        purpose, title = sh.get("aux"), (sh.get("title") or "")
+        vals = sh.get("values") or []
+        if purpose == "renew":
+            cm = _aux_colmap(vals, {"stu": ["学生姓名"], **AUX_RENEW_COLS})
+            if "stu" not in cm or "level" not in cm:
+                degraded.append({
+                    "field": f"feishu.aux[{sh.get('sheetId')}]",
+                    "reason": f"续报表「{title}」表头不认识（需要「学生姓名+续报等级」列）",
+                    "impact": "该 sheet 的续报数据未并入，报告将不展示这些学生的续报等级",
+                })
+                continue
+            n_hit = n_miss = 0
+            miss_names = []
+            for row in vals[1:]:
+                def _g(f):
+                    j = cm.get(f)
+                    return cell_text(row[j]) if (j is not None and j < len(row)) else ""
+                name = _g("stu")
+                entry = {f: _g(f) for f in AUX_RENEW_COLS}
+                if not name or not any(entry.values()):
+                    continue
+                tgt = by_norm.get(common.norm_name(name))
+                if not tgt:
+                    n_miss += 1
+                    if len(miss_names) < 15:
+                        miss_names.append(name)
+                    continue
+                n_hit += 1
+                for s in tgt:
+                    m = s.setdefault("meta", {})
+                    for f, v in entry.items():
+                        if not v:
+                            continue
+                        field = AUX_RENEW_FIELD[f]
+                        if f == "contact" and m.get(field):
+                            m[field] += f"｜[{title}] {v}"      # 沟通记录逐条拼接
+                        elif not m.get(field):
+                            m[field] = v
+            stats["renew:" + title] = {"rows_hit": n_hit, "rows_unmatched": n_miss}
+            if n_miss:
+                degraded.append({
+                    "field": f"feishu.aux[{sh.get('sheetId')}].join",
+                    "reason": f"续报表「{title}」{n_miss} 行学生未命中主档案表"
+                              f"（如 {miss_names[:6]}）",
+                    "impact": "这些行不并表（可能只报了寒春/已退费学生）；如人数偏多请人工核对姓名写法",
+                })
+        elif purpose == "problems":
+            cm = _aux_colmap(vals, {"stu": ["学生姓名"], **AUX_PROBLEM_COLS})
+            if "stu" not in cm or "level" not in cm:
+                degraded.append({
+                    "field": f"feishu.aux[{sh.get('sheetId')}]",
+                    "reason": f"问题学生清单「{title}」表头不认识（需要「学生姓名+问题等级」列）",
+                    "impact": "该清单未并入，报告将不展示问题学生直引块",
+                })
+                continue
+            n_hit = n_miss = 0
+            for row in vals[1:]:
+                def _g(f):
+                    j = cm.get(f)
+                    return cell_text(row[j]) if (j is not None and j < len(row)) else ""
+                name = _g("stu")
+                entry = {f: _g(f) for f in AUX_PROBLEM_COLS}
+                entry = {k: v for k, v in entry.items() if v}
+                if not name or not entry:
+                    continue
+                tgt = by_norm.get(common.norm_name(name))
+                if not tgt:
+                    n_miss += 1
+                    continue
+                n_hit += 1
+                for s in tgt:
+                    s.setdefault("problems", []).append(entry)
+            stats["problems:" + title] = {"rows_hit": n_hit, "rows_unmatched": n_miss}
+        else:
+            degraded.append({
+                "field": f"feishu.aux[{sh.get('sheetId')}]",
+                "reason": f"未知用途的辅助表「{title}」：{purpose}",
+                "impact": "未处理；请在 profile.feishu.auxSheets 里改用途或在 exclude 里移除",
+            })
+    return stats
+
+
 # ================================================================ main
 def main():
     ap = argparse.ArgumentParser()
@@ -636,9 +817,11 @@ def main():
     prof = load_json(ppath, {}) or {}
     fs = prof.get("feishu") or {}
     items_cfg = fs.get("items") or {}
-    DONE = set(items_cfg.get("done") or DEFAULT_DONE)
-    IGNORE = set(items_cfg.get("ignore") or DEFAULT_IGNORE)
-    PASSIVE = set(items_cfg.get("passive") or DEFAULT_PASSIVE)
+    # v5.09：显式空列表也算声明（原来 `or DEFAULT_DONE` 会把 [] 吞成默认词表）——
+    #   叶子团队全部子列都是「星星记录型」（+2⭐/未参与-1），done 词表就是空的。
+    DONE = set(items_cfg["done"]) if isinstance(items_cfg.get("done"), list) else set(DEFAULT_DONE)
+    IGNORE = set(items_cfg["ignore"]) if isinstance(items_cfg.get("ignore"), list) else set(DEFAULT_IGNORE)
+    PASSIVE = set(items_cfg["passive"]) if isinstance(items_cfg.get("passive"), list) else set(DEFAULT_PASSIVE)
     ALIAS = dict(DEFAULT_ALIAS)
     ALIAS.update(items_cfg.get("alias") or {})
     PROD_MAP = fs.get("sheetProductMap") or {}     # sheetId → 课程全名（sheet 名不是课程名时用）
@@ -660,10 +843,33 @@ def main():
         SKIP_PATS = SKIP_COL_PATTERNS_DEFAULT
     if SKIP_PATS is False:
         SKIP_PATS = []
+    # ⭐ v5.09：表头续行数上限（叶子团队第 3 行是计星规则说明，不能当表头）
+    HEADER_LIMIT = fs.get("headerSubRowLimit")
+    if not isinstance(HEADER_LIMIT, int) or HEADER_LIMIT < 0:
+        HEADER_LIMIT = None
+    # ⭐ v5.09：表头续行「元数据区非空率」上限 + 数据行特征启发式（规则行跳过 / ⭐判数据）。
+    #    声明 headerRowMetaRate 即启用整套 row_heuristics（只在叶子团队这类结构上开）。
+    META_RATE = fs.get("headerRowMetaRate")
+    if not isinstance(META_RATE, (int, float)) or not (0 < META_RATE < 1):
+        META_RATE = None
+    ROW_HEUR = META_RATE is not None
     # ⭐ v4.20：长文本告警阈值（各团队正常值长度差异大，见 LONG_VAL_LEN 注释）
     LONG_LEN = fs.get("longValLen")
     if not isinstance(LONG_LEN, (int, float)) or LONG_LEN <= 0:
         LONG_LEN = LONG_VAL_LEN
+    # ⭐ v5.09：值归一表（profile.feishu.valueAlias = {字段: {原值: 新值}}）。
+    #    叶子团队联席列混写昵称（士博/则怡/皓月/海璇）与真名（李士博/李则怡/王皓月/赵海璇），
+    #    不归一 → 同一老师被拆成两人、与后台花名册对齐还会漏。归一依据 = 后台接口
+    #    按老师查课程交叉自证（同一人跨班带课），不是猜测。
+    VALUE_ALIAS = {k: {a: b for a, b in (v or {}).items() if not a.startswith("_")}
+                   for k, v in (fs.get("valueAlias") or {}).items()
+                   if not k.startswith("_") and isinstance(v, dict)}
+    # ⭐ v5.09：合并单元格字段下填（profile.feishu.fillDownFields = [字段名]）。
+    #    叶子团队主档案表的「班型」列整列合并（值只在首行），数据行 B 列全空 →
+    #    productName 兜底成 sheet 名，courseAlias 全部落空。按字段声明下填，
+    #    逐行继承上一个非空值（跨 sheet 每张表独立 carry，不会串）。
+    FILL_DOWN_FIELDS = {f for f in (fs.get("fillDownFields") or [])
+                        if isinstance(f, str) and not f.startswith("_")}
     # ⭐ v4.21：评级序列声明（有 ABCD 等级的团队用；不声明 = 不启用）
     RATINGS = {k: v for k, v in (fs.get("ratings") or {}).items()
                if not k.startswith("_") and isinstance(v, dict)}
@@ -694,10 +900,22 @@ def main():
         print(f"⚠️⚠️ 注意：feishu_raw.json 只拉到 {len(raw.get('sheets') or [])}"
               f"/{raw.get('plannedSheets')} 个 sheet（半成品）")
 
+    aux_sheets = []
     for sh in raw.get("sheets") or []:
+        if sh.get("aux"):
+            # v5.09 辅助表：不进 detect 主流程（无课次表头），按用途并表
+            aux_sheets.append(sh)
+            sheet_reports.append({"sheetId": sh.get("sheetId"),
+                                  "title": sh.get("title") or "",
+                                  "structure": "aux:" + str(sh.get("aux")),
+                                  "students": 0,
+                                  "note": f"辅助表（{sh.get('aux')}）→ 按学生姓名并表，不进课次学情"})
+            continue
         vals = sh.get("values") or []
         sid, title = sh.get("sheetId"), sh.get("title") or ""
-        spec = detect(vals, skip_pats=SKIP_PATS, meta_alias=META_ALIAS)
+        spec = detect(vals, skip_pats=SKIP_PATS, meta_alias=META_ALIAS,
+                     header_limit=HEADER_LIMIT, meta_rate=META_RATE,
+                     row_heuristics=ROW_HEUR)
         if spec is None:
             sheet_reports.append({"sheetId": sid, "title": title, "structure": "flat",
                                   "students": 0, "note": "无课次表头，非学情表 → 跳过"})
@@ -728,8 +946,7 @@ def main():
             if ci is None:
                 degraded.append({
                     "field": f"feishu.columnRoles[{sid}].{field}",
-                    "reason": f"列角色配置的 col 无法解析：{cfg.get('col')!r}",
-                    "impact": "该覆盖未生效，此字段仍按表头文字匹配",
+                    "reason": f"列角色配置的 col 无法解析：{cfg.get('col')!r}",                    "impact": "该覆盖未生效，此字段仍按表头文字匹配",
                 })
                 continue
             if field in mm and mm[field] != ci:
@@ -741,6 +958,8 @@ def main():
             mm[field] = ci
             if cfg.get("fillDown"):
                 fill_fields.add(field)
+        # v5.09：按字段名声明的下填（班型等合并单元格列）—— 复用 cell() 的 carry 机制
+        fill_fields |= FILL_DOWN_FIELDS
         carry = {}                     # fillDown 用：跨行记住上一个非空值
 
         # ⚠️ 课程名解析链：① 行内「课程」列（含 columnRoles 覆盖）> ② profile.sheetProductMap
@@ -774,6 +993,16 @@ def main():
 
             name = cell(mm.get("stuName"))
             if not name:
+                # v5.09：**分组标题行**（叶子团队：B 列写班型、无学生姓名）——
+                #   必须在跳过前把 fillDown 字段的 carry 喂上值，否则后续学生行
+                #   全部继承不到班型（实测 36Vl9k 15 人班型全空）。
+                fed = False
+                for _ff in fill_fields:
+                    _fj = mm.get(_ff)
+                    if _fj is not None and cell(_fj, field=_ff):
+                        fed = True
+                if fed:
+                    continue                      # 分组行：喂完值即走，不算脏行
                 # 整行空白 / 只有备注 —— 不计
                 if not any(v not in (None, "") for v in row):
                     continue
@@ -849,6 +1078,10 @@ def main():
 
             meta = {f: cell(j) for f, j in mm.items()
                     if f not in ("stuName", "productName") and cell(j)}
+            # v5.09：值归一（昵称 → 后台真名），归一后再做 metaDup 合并
+            for _vf, _va in VALUE_ALIAS.items():
+                if _vf in meta and meta[_vf] in _va:
+                    meta[_vf] = _va[meta[_vf]]
             # ⚠️ v4.20：同一字段的额外列（娜娜表把教务沟通拆成 3 列）合并成一条，
             #    保证「不静默丢弃任何一列」。
             for f, cols in (spec.get("metaDup") or {}).items():
@@ -875,8 +1108,11 @@ def main():
                 "productRaw": (pname_raw if pname_raw != pname else None),
                 "productFrom": ("column" if from_col
                                 else ("profile" if prod_fallback else "sheet-name")),
-                "coTeacherName": cell(mm.get("coTeacherName")) or None,
-                "classTeacherName": cell(mm.get("classTeacherName")) or None,
+                # v5.09：顶层字段优先用归一后的 meta 值（昵称已换真名，与后台对齐）
+                "coTeacherName": meta.get("coTeacherName")
+                                or (cell(mm.get("coTeacherName")) or None),
+                "classTeacherName": meta.get("classTeacherName")
+                                or (cell(mm.get("classTeacherName")) or None),
                 "sourceSheetId": sid,
                 "sourceSheetTitle": title,
                 "sourceRow": ri + 1,
@@ -1152,6 +1388,10 @@ def main():
                       "feishuMeta.badCourses（可直接拿去核对表格）。**请回表修正**。",
         })
 
+    # ---- v5.09：辅助表并表（续报等级/未续原因/问题学生清单）—— 在花名册对齐前完成，
+    #      让这些字段跟着学生记录一起走完后续流程。
+    aux_stats = merge_aux(students, aux_sheets, degraded)
+
     # ---- 对齐花名册（去重后）
     joined = unmatched = 0
     unjoined_names = []
@@ -1223,6 +1463,7 @@ def main():
             "rows": bad_detail,
         },
         "sheets": sheet_reports,
+        "aux": aux_stats,
         "fingerprints": fingerprints,
         "rosterJoin": ({"roster": len(roster_norm), "joined": joined,
                         "unmatched": unmatched,

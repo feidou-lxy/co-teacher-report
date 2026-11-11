@@ -4278,3 +4278,48 @@ v5.05 用户实测两点反馈：①「老师手记也是重要信息，要在�
   ⚠️ 旧规则「改 install.sh 必给手册 ?v= +1」**作废**，替代做法：push 后等 3~5 分钟、
   `curl -s <install.sh 地址> | grep -c <新特征>` 确认 CDN 返回新版，再把手册发给同事
   （raw.githubusercontent.com 的 CDN 缓存约 5 分钟，真内容走 codeload 实时打包不受影响）。
+
+
+## v5.09（2026-11-07）：叶子团队（初三数学）接入 —— 复合表头/星星记录/续报ABC/问题学生直引
+
+新增团队 `assets/teams/yezi.json`（via=cli 无密钥）+ `guard.TEAMS` 注册。表源 = wiki
+`GgtuwFz2kiKmP5kc5lKcJL5anXc` → workbook `DVXDsTQDchWI3ptPoxRcY5UEnlO`（30 sheet：
+12 张主档案表 + 7 张续报 aux + 1 张问题清单 aux + 10 张派生/无关表排除）。
+
+**① 表结构（与娜娜/孙一文都不同）**：
+- 3 行复合表头：行0 = 固定列 + 「课次N」分组标记，行1 = 课次子列名，行2 = 计星规则说明
+  （「评为优秀+2颗⭐…」）。规则行**既不是表头也不是数据**。
+- ⚠️ detect 三处改造（`adapt_feishu.py`，只对声明了 `headerRowMetaRate` 的团队启用）：
+  1) `meta_rate`：表头续行「元数据区非空率」上限做成可配（默认 0.20 不变）—— 叶子把
+     「第一道题/第二道题/知识随时学」子列放在元数据区**末尾**，续行非空率 0.22~0.27，
+     按默认会把续行误判成数据行 → 整表降 wide1 → stuName 错位（培优荷 0 人事故）；
+  2) 规则行跳过（`RULE_ROW_PAT`：颗⭐/评为优秀/当周出勤或周末完成回放…）—— 数据行星值是
+     「+1⭐」不带「颗」，据此区分；
+  3) 数据行特征兜底：课次区有 ⭐ 的必是数据、非空格 <3 的不够格当表头续行。
+- ⚠️ stuName 短别名「学生」会抢先命中 E 列「**学生**及家长情况记录」→ 4 张表
+  （JSQDPe/Ss8SAf/eDPJ2K/MEbKOo）用 `columnRoles` 显式声明 stuName 真实列位（N/O 列）。
+- 「课次7 插列双提模拟测试」与主列撞名 → 宽表分支加 label 前缀 + `#列号` 兜底（既有机制）。
+- 全量验证（12 主表 841 人）：全部 wide2、课程名 100% 归一（courseAlias 19 条）、
+  联席昵称归一（valueAlias：明明→明菁、旭旭→刘旭、士博→李士博等）。
+
+**② aux 辅助表通道（v5.09 新机制）**：`profile.feishu.auxSheets = {sheetId: renew|problems}`，
+pull_feishu 打 aux 标记，adapt 侧 `merge_aux()` 按学生姓名（norm_name）并表：
+renew → meta 挂 `renewLevel/renewReason/renewNote/renewContact`；problems → `s["problems"]`
+列表（level P1-紧急/P2-重点/P3-关注/已改善 + desc/advice/until/rate/absent，**原文直引**）。
+全量命中率：小于 195/0、超超 56/0、美仪 71/1、浩浩 108/11、problems 474/13。
+
+**③ 报告渲染（`report.py`，叶子专属数据无则整块不渲染，不影响其他团队）**：
+- `renew_badge()`：卡头续报徽章 —— 已续报/已报名寒春（绿）、续报A·确定续（绿）、
+  续报B·有意向（蓝）、续报C·未续/退费风险（红）。⚠️ 徽章悬停的原因标签用中性「原因」
+  而非「未续原因」（A/B 级该字段是沟通记录，写「未续」自相矛盾）。
+- `renew_risk_line()`：C 级/退费风险 → 总评卡下红色重点行（未续原因/备注/触达记录原文）。
+- `problems_box()`：问题学生跟进块 —— level 徽章 + desc + 「表内建议」advice 直引 +
+  综合建议（规则组合：最重问题 × 续报等级 × 学习分层，不引入表外事实）。
+- `lessons_strip()`：课次星星条 —— 每课一枚 chip（本课得星，负数红底），hover 看当课
+  各列明细；仅当存在 ⭐ 值时渲染（叶子签名），头部数字优先取表内「本节课星星数」。
+- 卡片 `data-renew` 属性（ok/mid/risk）供 KPI 前端筛选。
+- 备注列（入学诊断/个性化需求）经既有「老师手记」行完整展示（v5.06 通道，零改动）。
+
+**实测数据**：841 人（12 表）、renewLevel 挂 690（A 287/B 285/C 67/已报名 29/已续报 17/
+退费风险 5）、problems 挂 404 人 530 条、note 挂 433。联席空 93 人 = 表内 D 列确实没填
+（多为退费/未分配），如实不渲染。

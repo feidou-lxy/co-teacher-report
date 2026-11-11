@@ -990,7 +990,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.08"
+SKILL_VER = "v5.09"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -2496,6 +2496,158 @@ def edu_overview_block(rows, course_order=None):
 </div>''' + js
 
 
+# ══════════ v5.09 叶子团队三件套：续报徽章 / 课次星值条 / 问题学生直引 ══════════
+# 数据源：adapt_feishu.py v5.09 的 aux 辅助表并表 —— renew* 挂在 meta、problems 挂在记录、
+# 课次 items 是星星记录（+1⭐/完成+1颗⭐/未参与-1⭐）。
+# 🔒 反编造铁律：原因 / 建议 / 描述一律**表内原文直引**，不改写、不推断；表里没写就写「表内未填」。
+
+_RENEW_BADGES = [
+    # (meta 值前缀, 徽章文案, 档位)  ⚠️ 顺序敏感：「已续报」要在 C 之前判
+    ("已续报", "已续报", "ok"),
+    ("已报名", "已报名寒春", "ok"),
+    ("A等级", "续报A·确定续", "ok"),
+    ("B等级", "续报B·有意向", "mid"),
+    ("有退费风险", "退费风险", "risk"),
+    ("C等级", "续报C·未续", "risk"),
+]
+
+
+def renew_badge(meta):
+    """meta.renewLevel → (卡头徽章 html, data-renew 档位)。无续报数据 → ("", None)。"""
+    lv = str((meta or {}).get("renewLevel") or "").strip()
+    if not lv:
+        return "", None
+    tip = f"续报等级：{lv}（飞书续报表直引）"
+    for pre, txt, cls in _RENEW_BADGES:
+        if lv.startswith(pre):
+            r = str((meta or {}).get("renewReason") or "").strip()
+            if r:
+                # ⚠️ 标签用中性的「原因」而非「未续原因」—— A/B 级该字段是沟通记录，
+                #    写「未续原因」会跟「确定续」自相矛盾；「未续原因」只用于 C 级红行。
+                tip += f"｜原因：{r}"
+            return (f'<span class="rnbadge {cls}" title="{_html.escape(tip)}">{txt}</span>', cls)
+    return (f'<span class="rnbadge mid" title="{_html.escape(tip)}">{_html.escape(lv)}</span>', "mid")
+
+
+def renew_risk_line(meta):
+    """C 级 / 退费风险 → 总评卡下方的红色重点行（未续原因分类重点展示）。
+    其他等级 / 无数据 → ""（A/B 只挂徽章，不占版面）。"""
+    meta = meta or {}
+    lv = str(meta.get("renewLevel") or "").strip()
+    if not lv.startswith(("C等级", "有退费风险")):
+        return ""
+    r = str(meta.get("renewReason") or "").strip()
+    n = str(meta.get("renewNote") or "").strip()
+    c = str(meta.get("renewContact") or "").strip()
+    parts = ["未续原因：" + (_html.escape(r) if r else "表内未填")]
+    if n:
+        parts.append(f"备注：{_html.escape(n[:60])}")
+    if c:
+        parts.append(f"触达记录：{_html.escape(c[:60])}")
+    return (f'<div class="renewline"><span class="rlk">续报风险</span>'
+            f'<span class="rlv">{_html.escape(lv)}</span>'
+            f'<span class="rlt">{"　｜　".join(parts)}</span></div>')
+
+
+_STAR_RE = re.compile(r"([+-]?)\s*(\d+)\s*⭐")
+_LS_SKIP = re.compile(r"^(累计星星数|获得星星数)")
+
+
+def lessons_strip(fs):
+    """课次星星条（星星记录型团队）：每课一枚 chip（本课得星），hover 看当课各列明细。
+
+    ⚠️ 仅当存在 ⭐ 值时渲染 —— 这是叶子团队的签名；其他团队课次值是完成项/评级，
+    已走「提交情况」通道，渲染星条反而重复。
+    头部数字优先取表内「本节课星星数」（老师自己算好的），没有才按 ±⭐ 求和。
+    """
+    fs = fs or {}
+    les = fs.get("lessons") or []
+    chips, any_star = [], False
+    for le in les:
+        items = {k: v for k, v in (le.get("items") or {}).items()
+                 if not _LS_SKIP.match(str(k))}
+        if not items:
+            continue
+        tot, bits = 0, []
+        for k, v in items.items():
+            sv = str(v or "").strip()
+            if not sv or sv in ("无", "-", "—"):
+                continue
+            m = _STAR_RE.search(sv)
+            if m:
+                any_star = True
+                tot += int(m.group(2)) * (-1 if m.group(1) == "-" else 1)
+            bits.append(f"{k} {sv}")
+        if not bits:
+            continue
+        # 表内「本节课星星数」优先（它是老师维护的权威值）
+        _n = (le.get("items") or {}).get("本节课星星数")
+        if _n is not None and str(_n).strip().lstrip("+-").isdigit():
+            tot = int(str(_n).strip())
+        head = f"+{tot}" if tot > 0 else str(tot)
+        cls = "ls-chip" + (" neg" if tot < 0 else (" zero" if tot == 0 else ""))
+        chips.append(f'<span class="{cls}" title="{_html.escape("课次%s：%s" % (le.get("seq"), " ｜ ".join(bits)))}">'
+                     f'课{le.get("seq")} {head}</span>')
+    if not any_star or not chips:
+        return ""
+    return (f'<div class="lsstrip"><span class="ls-h">课次星星</span>{"".join(chips)}</div>')
+
+
+_PROB_ORDER = {"P1-紧急": 0, "P2-重点": 1, "P3-关注": 2, "已改善": 3}
+_PROB_CLS = {"P1-紧急": "p1", "P2-重点": "p2", "P3-关注": "p3", "已改善": "ok"}
+
+
+def problems_box(fs, lv_key=None, meta=None):
+    """问题学生跟进清单**直引**块（level/desc/advice 原文）＋ 一条规则式综合建议。
+
+    综合建议只做「事实组合」：最重问题级别 × 续报等级 × 学习分层，不引入表外事实。
+    无 problems 记录 → ""。
+    """
+    fs = fs or {}
+    ps = [p for p in (fs.get("problems") or [])
+          if isinstance(p, dict) and (p.get("desc") or p.get("advice"))]
+    if not ps:
+        return ""
+    ps = sorted(ps, key=lambda p: _PROB_ORDER.get(str(p.get("level")), 9))
+    rows = []
+    for p in ps:
+        lvl = str(p.get("level") or "—")
+        cls = _PROB_CLS.get(lvl, "p3")
+        mbits = []
+        for k, lab in (("until", "跟进至"), ("rate", "情况"), ("absent", "缺勤")):
+            v = str(p.get(k) or "").strip()
+            if v and v not in ("无", "—"):
+                mbits.append(f"{lab} {v}")
+        rows.append(
+            '<div class="probitem">'
+            f'<span class="pbadge {cls}">{_html.escape(lvl)}</span>'
+            f'<span class="pdesc">{_html.escape(str(p.get("desc") or ""))}</span>'
+            + (f'<div class="padvice"><b>表内建议</b>{_html.escape(str(p.get("advice")))}</div>'
+               if p.get("advice") else "")
+            + (f'<div class="pmeta">{"　·　".join(_html.escape(x) for x in mbits)}</div>'
+               if mbits else "")
+            + '</div>')
+    # ---- 综合建议（规则组合，可核对） ----
+    worst = next((p for p in ps if str(p.get("level")) in ("P1-紧急", "P2-重点")), None)
+    rlv = str((meta or {}).get("renewLevel") or "")
+    bits = []
+    if worst:
+        bits.append(f'{worst.get("level")}项优先按表内建议执行，跟进后在清单回填进展')
+    if rlv.startswith("C等级"):
+        r = str((meta or {}).get("renewReason") or "").strip()
+        bits.append("续报触达按未续原因（" + (r or "见表") + "）选再沟通方式，连续 2 次未回应升级联席介入")
+    elif rlv.startswith("有退费风险"):
+        bits.append("先稳课消与家长情绪，再谈续报")
+    if lv_key in ("red", "orange"):
+        bits.append("学习分层偏低，问题整改与续报沟通放在同一次电话里完成")
+    _sum = (f'<div class="psum"><b>综合建议</b>{_html.escape("；".join(bits))}</div>' if bits else "")
+    n_p12 = sum(1 for p in ps if str(p.get("level")) in ("P1-紧急", "P2-重点"))
+    sub = f'P1/P2 {n_p12} 条' if n_p12 else f'共 {len(ps)} 条'
+    return (f'<div class="probbox"><div class="prob-h">🚩 问题学生跟进（表内直引）'
+            f'<span class="prob-sub">{sub}</span></div>'
+            f'{"".join(rows)}{_sum}</div>')
+
+
 def card_html(r, edu=False, show_co_tag=False, board=None):
     s, g = r["s"], r["g"]
     # v4.19.3 飞书表学习记录：按 (姓名归一, 课程名) 复合键取；取不到则不渲染该块。
@@ -2508,6 +2660,9 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     # v4.23：飞书表不再是「独立小模块」，而是拆成片段参与 ① 学习情况 ——
     #   提交情况 / 需要关注的点 / 评级轨迹 / 老师手记 分别插到不同位置（见 fs_parts）。
     fst = common.fs_stats(fs)
+    # v5.09 叶子团队：续报等级徽章（A/B/C）—— 挂卡头，C 级另出重点行（见 _renew_html）
+    _fsmeta = (fs or {}).get("meta") or {}
+    _rn_badge, _rn_key = renew_badge(_fsmeta)
     co = g.get("coTeacherName") or "未分配联席"
     co_tag = (f'<span class="ctag">联席：{co}</span>') if (edu or show_co_tag) else ""
     bt = (s.get("buy_type") or "").strip()
@@ -2673,6 +2828,11 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
          f'{d:+d}</i>{t}</span>') if d else f'<span class="lvev obs"><b>{src}</b>{t}</span>'
         for src, t, d in lv_ev) or '<span class="lvev">—</span>'
     head_right = (f'<span class="lvbadge sm {lv_key}" title="学习分层：综合小黑板作答 + 作业闭环 + 老师反馈 + 学生成绩 + 飞书表提交 五源判定">{lv_cn}</span>')
+    head_right += _rn_badge
+    # v5.09 叶子团队三块：C 级续报风险行 / 问题学生直引 / 课次星值条（无数据自动整块不渲染）
+    _renew_html = renew_risk_line(_fsmeta)
+    _probox = problems_box(fs, lv_key, _fsmeta)
+    _lstrip = lessons_strip(fs)
     rt_items = (s.get("recent3") or {}).get("items") or []
     if rt_items:
         head_right += badge(f'近3天待回应 {len(rt_items)}', "red")
@@ -2781,6 +2941,8 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
         "recent3": 1 if rt_items else 0,
     }
     kattr = " ".join(f'data-{k}="{v}"' for k, v in kflag.items())
+    if _rn_key:
+        kattr += f' data-renew="{_rn_key}"'
 
     # ══ v4.34 精简卡：一眼（诊断句 + 四格 + 动作）／两折（明细 + 剩余动作）══
     # ⚠️「学习分层判定依据（需重点关注 · 累计 −3）· 展开」整行**不渲染**（用户明确要求隐藏）——
@@ -3027,6 +3189,9 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
       {_xsum}
       {_sumcard}
       <div class="mgrid">{_mgrid}</div>
+      {_renew_html}
+      {_probox}
+      {_lstrip}
       {_score_html}
       {_issue_html}
       {_tp_html}
@@ -4056,6 +4221,38 @@ details.slimdet>summary:hover{color:#3a5bdb}
 .rxlist{margin:8px 0 0;padding:0;list-style:none;counter-reset:rx}
 .rxlist>li{counter-increment:rx;padding:8px 0 9px;border-top:1px dashed #eaeef7}
 .rxlist>li:first-child{border-top:0;padding-top:2px}
+/* ── v5.09 叶子团队：续报徽章 / 续报风险行 / 课次星星条 / 问题学生直引 ── */
+.rnbadge{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;
+  border-radius:10px;margin-left:6px;vertical-align:middle}
+.rnbadge.ok{background:#e8f7f0;color:#2ba471}
+.rnbadge.mid{background:#eef2ff;color:#3a5bdb}
+.rnbadge.risk{background:#fdeaea;color:#e54545}
+.renewline{margin-top:10px;background:#fdeaea;border-left:3px solid #e54545;
+  border-radius:6px;padding:7px 11px;font-size:12.5px;line-height:1.6;color:#8c2f2f}
+.renewline .rlk{font-weight:700;color:#e54545;margin-right:8px}
+.renewline .rlv{font-weight:700;margin-right:8px}
+.lsstrip{margin-top:10px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.lsstrip .ls-h{font-size:11.5px;font-weight:700;color:#6b7280;margin-right:4px}
+.ls-chip{font-size:11px;padding:1px 7px;border-radius:8px;background:#eef4ff;color:#2b4bb5;cursor:default}
+.ls-chip.neg{background:#fdeaea;color:#e54545;font-weight:700}
+.ls-chip.zero{background:#f2f4f7;color:#98a2b3}
+.probbox{margin-top:12px;border:1px solid #f3d7d7;border-left:3px solid #e54545;
+  border-radius:8px;padding:9px 12px;background:#fffafa}
+.prob-h{font-size:13px;font-weight:700;color:#b23434}
+.prob-sub{font-size:11px;font-weight:400;color:#98a2b3;margin-left:8px}
+.probitem{margin-top:7px;font-size:12.5px;line-height:1.6}
+.pbadge{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;
+  border-radius:8px;margin-right:7px;vertical-align:1px}
+.pbadge.p1{background:#e54545;color:#fff}
+.pbadge.p2{background:#ff8f1f;color:#fff}
+.pbadge.p3{background:#f5c542;color:#6b4b00}
+.pbadge.ok{background:#e8f7f0;color:#2ba471}
+.pdesc{color:#3a4150}
+.padvice{margin:3px 0 0 0;color:#57606a;background:#f6f8fa;border-radius:5px;padding:4px 8px}
+.padvice b{font-weight:700;color:#2b4bb5;margin-right:6px}
+.pmeta{font-size:11px;color:#98a2b3;margin-top:2px}
+.psum{margin-top:8px;border-top:1px dashed #f0d5d5;padding-top:6px;font-size:12.5px;color:#57606a}
+.psum b{color:#b23434;margin-right:6px}
 .rx-h1{display:flex;align-items:center;gap:7px;font-size:13px;margin-bottom:4px;flex-wrap:wrap}
 .rx-h1::before{content:counter(rx);flex:0 0 auto;width:16px;height:16px;border-radius:50%;
   background:#3a5bdb;color:#fff;font-size:10.5px;font-weight:700;text-align:center;line-height:16px}
