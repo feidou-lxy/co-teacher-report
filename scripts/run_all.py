@@ -257,7 +257,15 @@ if __name__ == "__main__":
         _log_run()
         if _ur is not None:
             try:
-                _ur.report_once(_ur.workdir_from_argv(), force=True,
+                # v5.12：优先用 main 里已解析的工作目录（--workdir / --edu/--co/--course
+                # 自动定位的结果都在 _RUN["wd"]）。以前经 workdir_from_argv() 只认
+                # 显式 --workdir，没传就取 CWD → token.txt 找不到 → 「跳过上报」
+                # （张豫报告实测，同事反馈）。main 早期崩溃时 _RUN["wd"] 还是初始值，
+                # 退回增强版 argv 解析兜底。
+                _wd_rep = _RUN.get("wd") or ""
+                if not _wd_rep or _wd_rep == ".":
+                    _wd_rep = _ur.workdir_from_argv() or "."
+                _ur.report_once(_wd_rep, force=True,
                                 event="run" if _ok else "run_failed")
             except Exception:
                 pass

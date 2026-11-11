@@ -1279,6 +1279,25 @@ x-token: <workdir/token.txt 里的后台 token>     ← 与本站其他接口一
 
 已实测：接口正常返回 `{"code":0,"data":{},"msg":"上报成功"}`；不可达地址耗时 3.02 秒后放弃且不抛异常。
 
+### 工作目录与 token 定位（v5.12 修复「跑成功却跳过上报」）
+
+同事实测反馈（张豫报告，2026-11-11）：`run_all.py --edu 张豫`（不显式给 --workdir）跑完，
+日志出现「跳过上报（./token.txt 无有效 x-token）」—— 上报模块只认显式 `--workdir`，
+没传就取 CWD，而 token.txt 在自动定位的报告目录里 → 那次根本没发出去。
+
+修复（三处，均为收尾旁路，不动主流程）：
+
+1. `usage_report.workdir_from_argv()` 三级解析：① `--workdir`（expanduser + abspath）
+   ② `--edu/--co/--course` 经 `workdir.resolve(..., create=False)` 定位（与 run_all 同口径）
+   ③ 返回 None。
+2. `usage_report._token()` 兜底：`<wd>/token.txt` 读不到时，扫报告根目录
+   （`workdir.home()`）下**最近修改**的一枚 token.txt —— x-token 与本站所有接口同一枚、
+   不绑定目录，上报只要求「可能有效的一枚」；token 约 24h 过期，最新的最可能有效。
+   跳过日志会列出实际尝试过的路径。
+3. `run_all.py` 收尾优先用 `_RUN["wd"]`（main 里已解析的目录），main 早期崩溃时
+   退回增强版 argv 解析。`common.workdir()` 顺带补 `expanduser`
+   （带引号传 `--workdir '~/...'` 以前会全链路静默失效）。
+
 ---
 
 ## 轻量刷新（`scripts/refresh.py`，v4.49）
@@ -4387,3 +4406,23 @@ renew → meta 挂 `renewLevel/renewReason/renewNote/renewContact`；problems �
 **核验（node 模拟 eduApply 于真实 197 行 DOM 数据）**：V=a→148 / V=b→20 / V=c→2 /
 未续报∩A→147 / 未续报∩C→2 / C∩原因「没回应」→2；课程过滤下 chips 计数同步
 （谢胡 137/19/2、昊 11/1/0）；页脚 v5.11、`**` 0、占位符 0、edun-* 只剩 7 个接口口径键。
+
+
+## v5.12（2026-11-11 · 同事反馈）：使用统计「跳过上报」修复
+
+同事实测：`run_all.py --edu 张豫`（不带 --workdir）跑完，日志「跳过上报（./token.txt 无有效
+x-token）」—— 上报模块只认显式 --workdir，没传就取 CWD（scripts 目录或任意目录），
+token.txt 在自动定位的报告目录里 → 上报根本没发出去。**这就是「有人能成功有人不能」的
+主因**：带 --workdir 跑的人上报成功，用 --edu/--co/--course 自动定位的人全漏。
+
+修复三处（详见「使用统计」章节）：
+- `usage_report.workdir_from_argv()`：--workdir（expanduser）→ --edu/--co/--course 经
+  workdir.resolve → None 三级链；返回值可能为 None，`_token`/`report_once` 已兼容。
+- `usage_report._token()`：目标目录无 token.txt 时兜底扫报告根目录**最近修改**的一枚
+  （x-token 同站通用、不绑定目录；24h 过期，最新最可能有效）；跳过日志列出尝试路径。
+- `run_all.py` 收尾优先 `_RUN["wd"]`（main 已解析），崩溃早期退回 argv 解析；
+  `common.workdir()` 补 expanduser（带引号的 `--workdir '~/...'` 全链路失效连带修复）。
+
+**实测（/tmp 模拟同事场景）**：`--edu 于红霞` → 自动定位 edu-于红霞 ✅；
+`--workdir '~/...'` → ~ 展开 ✅；无参数 → None + token 兜底命中最新 ✅；
+run_all 收尾表达式 → 报告目录 + token 有 ✅。SKILL_VER → v5.12。

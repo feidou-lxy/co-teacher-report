@@ -45,14 +45,38 @@ def _say(msg):
 
 
 def workdir_from_argv(argv=None):
-    """从命令行粗取 --workdir（上报发生在 main 收尾，此时不一定还拿得到 args）。"""
+    """从命令行解析上报用的工作目录（v5.12 修复「跑成功却跳过上报」）。
+
+    以前只认显式 --workdir，没传就取 CWD —— 而 run_all 支持 --edu/--co/--course
+    自动定位报告目录（workdir.resolve），token.txt 在报告目录里、CWD 里没有，
+    于是日志出现「跳过上报（./token.txt 无有效 x-token）」，统计就漏了一笔
+    （张豫报告实测，同事反馈 2026-11-11）。现在按序解析：
+      ① --workdir（展开 ~ 与相对路径；支持 --workdir= 两种写法）
+      ② --edu/--co/--course 经 workdir.resolve 定位（与 run_all 同口径，不创建目录）
+      ③ 都没有 → 返回 None（调用方按 "." 处理，token 兜底逻辑再接一层）
+    """
     a = list(sys.argv[1:] if argv is None else argv)
-    for i, x in enumerate(a):
-        if x == "--workdir" and i + 1 < len(a):
-            return a[i + 1]
-        if x.startswith("--workdir="):
-            return x.split("=", 1)[1]
-    return "."
+
+    def _pick(flag):
+        for i, x in enumerate(a):
+            if x == flag and i + 1 < len(a):
+                return a[i + 1]
+            if x.startswith(flag + "="):
+                return x.split("=", 1)[1]
+        return None
+
+    w = _pick("--workdir")
+    if w:
+        return os.path.abspath(os.path.expanduser(w))
+    try:
+        import workdir as _wdmod      # 同目录；找不到时静默退回 None
+        p = _wdmod.resolve(edu=_pick("--edu"), co=_pick("--co"),
+                           course=_pick("--course"), create=False)
+        if p:
+            return p
+    except Exception:
+        pass
+    return None
 
 
 # ------------------------------------------------------------ installation_id
@@ -138,19 +162,63 @@ def load_or_create_id():
 
 
 # ------------------------------------------------------------------- token
-def _token(wd):
-    """读 <workdir>/token.txt（与 skill 其他接口同一枚 x-token）；读不到返回空串。"""
-    p = os.path.join(wd or ".", "token.txt")
+def _read_file(path):
     try:
-        with open(p, "r", encoding="utf-8") as f:
-            raw = f.read()
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
     except Exception:
-        return ""
+        return None
+
+
+def _clean(raw):
     try:
-        import common                      # 同目录，复用统一的 token 清洗
+        import common              # 同目录，复用统一的 token 清洗
         return common.clean_token(raw) or ""
     except Exception:
         return (raw or "").strip()
+
+
+def _newest_token_in_reports():
+    """兜底：报告根目录（workdir.home()）下找最近修改的 token.txt。
+
+    x-token 与本站所有接口是同一枚（只看有效与否，不绑定目录），上报只要求
+    「有一枚可能有效的 token」；token 约 24h 过期，最新的最可能有效。
+    返回路径或 None。任何异常都吞掉（兜底不能影响主任务）。
+    """
+    try:
+        import workdir as _wdmod
+        root = _wdmod.home()
+        best, best_t = None, -1.0
+        for name in os.listdir(root):
+            tp = os.path.join(root, name, "token.txt")
+            if os.path.isfile(tp):
+                t = os.path.getmtime(tp)
+                if t > best_t:
+                    best, best_t = tp, t
+        return best
+    except Exception:
+        return None
+
+
+def _token(wd):
+    """读 <workdir>/token.txt（与 skill 其他接口同一枚 x-token）。
+
+    v5.12：读不到时兜底扫报告根目录最近修改的一枚（统计口径不绑定目录）。
+    返回 (token, 尝试过的路径列表)。
+    """
+    tried = []
+    p = os.path.join(wd or ".", "token.txt")
+    tried.append(p)
+    raw = _read_file(p)
+    if raw is not None:
+        return _clean(raw), tried
+    alt = _newest_token_in_reports()
+    if alt and os.path.abspath(alt) != os.path.abspath(p):
+        tried.append(alt)
+        raw = _read_file(alt)
+        if raw is not None:
+            return _clean(raw), tried
+    return "", tried
 
 
 # -------------------------------------------------------------------- HTTP
@@ -205,9 +273,9 @@ def report_once(wd=".", force=False, event=None):
             _say(f"跳过上报（installation_id {why}）")
             return False
 
-        token = _token(wd)
+        token, tried = _token(wd)
         if not token:
-            _say(f"跳过上报（{os.path.join(wd or '.', 'token.txt')} 无有效 x-token）")
+            _say(f"跳过上报（试过 { '、'.join(tried) } 都无有效 x-token）")
             return False
 
         payload = {

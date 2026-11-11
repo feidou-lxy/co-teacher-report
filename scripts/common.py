@@ -14,7 +14,9 @@ BASE_HOST = "https://stadminv2.xqmsx.cn/api"
 
 
 def workdir(args):
-    return args.workdir or "."
+    # v5.12：展开 ~（带引号传 `--workdir '~/...'` 时 shell 不展开，以前会静默
+    # 找不到 token.txt / 快照，全链路「无记录」；相对路径语义不变）
+    return os.path.expanduser(args.workdir or ".")
 
 
 # ---------------------------------------------------------------- token 读取
