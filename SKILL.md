@@ -4495,6 +4495,18 @@ SKILL_VER → v5.13。
   `test_exam.py` 用例 25 → **34 条**全过；重跑 extract→merge→report 后 audit 干净
   （8 条全真成绩；其中 2 条 7 月窗口外仅见于全量审计清单，报告窗口内不含）。
 
+**叶子团队链路检查（2026-11-12 追查知识树学段）**：
+- ⚠️ **初中团队跑报告前必须先拉初中知识树**：`pull_knowledge.py --subject 1 --stages 1`（初三/初一是
+  stages 1；高中才是 stages 2）。edu-于红霞此前从未拉过 → extract 一直退回**内置词表**（高中导向：
+  函数/导数/立体几何…），初三学生知识点识别错位。补拉 + extract→merge→report 重跑后修复。
+- 叶子团队**不是单一教务**：后台初三数学 922 人分属 于红霞196/隗佳怡162/贾思超126/陈浩浩124/
+  宋美仪71/刘颖超58/空185 —— 按教务维度跑报告时一人一份 workdir（edu-<教务名>），
+  各自需要 profile=yezi.json + 初中知识树。
+- ⚠️ getCStudentFileList **不认 productName/classTeacherName 过滤参数**（传了也不生效，
+  返回的是全库）—— 抽样验证班级归属时必须拉全库后本地过滤，别信接口参数。
+- 学段核对法：knowledge_used.json 的 `mode` 字段（backend=builtin 退化态）+
+  报告口径区显示的学段名（v5.13 起动态推断）。
+
 **环境教训**：lark-cli 的 keychain 存储文件操作（refresh-storage-probe.enc rename）会被
 沙箱拦截，且 `dangerouslyDisableSandbox + run_in_background` 组合下**后台任务仍走沙箱**
 （两次后台拉取同样失败）——pull_feishu 必须**前台 + 非沙箱**执行（实测通过）。
