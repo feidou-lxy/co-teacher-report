@@ -4481,6 +4481,20 @@ run_all 收尾表达式 → 报告目录 + token 有 ✅。SKILL_VER → v5.12�
 未接：UieYxU 闪闪（列位特殊留二阶段）、Jqpo30/k2nrfg 续报表（以后台为准）。
 SKILL_VER → v5.13。
 
+**回测（2026-11-12 · 刘晓旭教务维度 10-01~11-12，首个飞书表团队全链路实跑）**：
+- 链路：workdir `edu-刘晓旭`（token.txt + profile=xiaobai2.json）→ pull_students（后台
+  10803 全库分页后本地按教务过滤，314 人）→ pull_feishu/adapt_feishu（**前台非沙箱**）
+  → run_all（68 群 → 出勤/聊天/出勤备注/快照/报告）。KPI：314 人 / 68 学生卡 / 9 联席 /
+  4 门窗口内课程；飞书学情块（作业/精题/出门测/框架笔记提交率 + 催交跟进）完整渲染进卡。
+- **成绩识别两类新变体（第③道防线人眼审计抓出，已修）**：
+  1. **文件名**：文件分享消息「[初二上期中汇编——选填压轴（22-24）.pdf]」→ 22（题号区间）
+     当 22 分；「[26秋 顶尖阶段测1.pdf]」→ 26（年份）当 26 分。修：句子含文件扩展名
+     （`EXAM_FILE_EXT_RE`：pdf/docx/pptx/xlsx/zip/mp4/png…）→ 整句跳过。
+  2. **角度**：「我可能就是会因为90度标角来卡」→ 90 当 90 分（数学老师高频「N度角」）。
+     修：`EXAM_BARE_BAD_TAIL2` 加「度」。
+  `test_exam.py` 用例 25 → **34 条**全过；重跑 extract→merge→report 后 audit 干净
+  （8 条全真成绩；其中 2 条 7 月窗口外仅见于全量审计清单，报告窗口内不含）。
+
 **环境教训**：lark-cli 的 keychain 存储文件操作（refresh-storage-probe.enc rename）会被
 沙箱拦截，且 `dangerouslyDisableSandbox + run_in_background` 组合下**后台任务仍走沙箱**
 （两次后台拉取同样失败）——pull_feishu 必须**前台 + 非沙箱**执行（实测通过）。
