@@ -4426,3 +4426,62 @@ token.txt 在自动定位的报告目录里 → 上报根本没发出去。**这
 **实测（/tmp 模拟同事场景）**：`--edu 于红霞` → 自动定位 edu-于红霞 ✅；
 `--workdir '~/...'` → ~ 展开 ✅；无参数 → None + token 兜底命中最新 ✅；
 run_all 收尾表达式 → 报告目录 + token 有 ✅。SKILL_VER → v5.12。
+
+
+## v5.13（2026-11-11）：小白团队接入（两个工作簿）+ 适配层四处新能力 + 五个判定层修复
+
+用户：「开始接入小白团队的飞书表格，两个，分不同年级的」，并拍板**两个工作簿全接**、
+教务/联席数据**以后台为准**（同叶子团队）。
+
+**数据源**（via=cli 无密钥形态，配置可进仓库）：
+- 初二工作簿：wiki `WWLawBSDcinkMUklCFdco9UDndc` → obj_token `Wn3HsQsIGh58NStED7CczIYrnTd`
+  ——16 张老师档案表（全部 forceLayout）+ nn26we 学生大表（478 行系统导出花名册）作 course-index。
+- 小学初一工作簿：wiki `OFoGw2rO2ip5pBk7EsicMpaUnqd` → obj_token `Q5TmsBKwahG2G1tnqC5cC4dQnoh`
+  ——6 张档案表（5 narrow 1 force）+ 731b14 初一总表 / bM8AqP 小学总表 作 course-index。
+- 课程映射依据 = 学生交集反查（大表/总表 姓名→课程），非猜测；courseAlias 16 条。
+
+**adapt_feishu.py 四个新能力（全部数据驱动、可复用）**：
+- `forceLayout`：`lessonPattern`（profile.feishu）覆盖内置 LESSON_RE 三组正则
+  （小白样式 `第N次/节/讲周 课?` 与 `课次N`，中文/全角数字走 `_parse_num`）；
+  `force_spec(vals, fl)` 对**表头不含课次标记**的档案表显式声明布局
+  （headerRow 1-based / subRows / metaCols），课次区并成一个大组，items 按列名
+  （续行 forward fill 作前缀，撞名加列号绝不覆盖）。小白 16 张表表头五花八门
+  （主表头行 1/2/3、子列行 0/1/2、元数据 2~18 列），detect 的启发式判据全部失效，
+  只有显式声明可靠。
+- `rowSkipPatterns`：数据行按行首元数据区文本匹配跳过（「例：顶尖1｜小A｜小B」示范行），
+  sheet_demo 计数。
+- `columnRoles`（已有机制延伸到 force 布局）：表头为空的列显式声明字段
+  ——张丁仃表 A~C 表头全空（课程/联席/姓名），不声明就是 0 人。
+- `course-index` 辅助表：auxSheets 声明用途 + auxCols 声明列位 → 建
+  `COURSE_INDEX = {姓名: [课程全名]}`；产品名解析链末端兜底：无 2026Q- 前缀且姓名唯一
+  → 采用；多候选不猜（sheet_multi_course 显式降级）。
+
+**五个判定层修复（接小白暴露，全部影响旧团队语义）**：
+1. **force_spec 漏传 metaAlias** ——「班型→productName」只配在 metaAlias，force 路径
+   不传 extra → 顶尖1班/北京版课程列全部识别失败。加 meta_alias 参数。
+2. **窄表否定命中算完成** ——小白格子「作业已交,笔记未交」，「作业未交」经 alias 映射
+   到「作业」后被记成**完成**（窄表值恒 True）。split_items 加第 4 返回值（否定命中），
+   窄表记值 False；`is_done_val` 补 `v is False` 分支 + **否定子串兜底**
+   （NOT_DONE_SUBSTR：宽表整格「作业未交,笔记未交」前缀匹配抓不到句中否定）。
+3. **显式词表覆盖 DEFAULT_IGNORE** ——v5.09「显式即完整」设计：小白配置声明 ignore 后，
+   「请假/出勤/回放/红包」默认词全丢 → 大量假 unk。两个 json 补齐四词（教训：
+   新团队配置必须自带全量 ignore，技能文档要写明）。
+4. **leaf 为空的组名列** ——子续行空时列名落在组名本身：组名是课次名（「第6讲」）→
+   无名手记列按记录型处理；其余查 nm 全名是否登记。
+5. **passiveContains 子串兜底** ——leaf 带长后缀/多行说明
+   （「绝对值基础\n（绝对值的非负性、化简…）」）精确匹配落空 → leaf/nm 含任一子串即记录型。
+   窄表调用同时传入 `IGNORE | PASSIVE`（三刷/回放类词在窄表此前无出口）。
+
+**guard.TEAMS**：加 4 行（小白团队（初二）/ 初二数学 · 小白团队 → xiaobai2.json；
+小白团队（小学初一）/ 小学初一 · 小白团队 → xiaobai1.json）。两配置无 appSecret，
+与 yezi.json 同形态可进仓库。
+
+**实测**：初二 917 人 / 16 表全通 / unk 0；小学初一 318 人 / 8 表全通 / unk 0；
+降级剩长文本提示与显式声明项（同课程多记录 2 人、仅元数据 24 人 = 转班/新转入，不静默丢弃）。
+未接：UieYxU 闪闪（列位特殊留二阶段）、Jqpo30/k2nrfg 续报表（以后台为准）。
+SKILL_VER → v5.13。
+
+**环境教训**：lark-cli 的 keychain 存储文件操作（refresh-storage-probe.enc rename）会被
+沙箱拦截，且 `dangerouslyDisableSandbox + run_in_background` 组合下**后台任务仍走沙箱**
+（两次后台拉取同样失败）——pull_feishu 必须**前台 + 非沙箱**执行（实测通过）。
+

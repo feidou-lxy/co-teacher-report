@@ -55,6 +55,11 @@ TEAMS = {
     # v5.09：叶子团队（26秋季初三数学）—— via=cli 无密钥形态，配置可进仓库
     "叶子团队": "yezi.json",
     "初三数学 · 叶子团队": "yezi.json",
+    # v5.13：小白团队（两个工作簿，分年级）—— via=cli 无密钥形态
+    "小白团队（初二）": "xiaobai2.json",
+    "初二数学 · 小白团队": "xiaobai2.json",
+    "小白团队（小学初一）": "xiaobai1.json",
+    "小学初一 · 小白团队": "xiaobai1.json",
 }
 
 

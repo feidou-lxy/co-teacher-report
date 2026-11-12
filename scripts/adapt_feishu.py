@@ -39,9 +39,41 @@ TZ = "+08:00"
 #   叶子团队主档案表把课次标记写在分组首列（`课次1`…`课次18`），子列名在下一行 ——
 #   与孙一文「首列标记 + 续行子列名」形态相同，只是措辞不同。
 LESSON_RE = re.compile(r"^(?:第\s*(\d+)\s*[次节]\s*课|课次\s*(\d+))\s*[-－—_:：]?\s*(.*)$")
+# v5.13：profile.feishu.lessonPattern 可覆盖课次正则（小白团队用「第N讲/第N节/第N周」
+#   且混中文数字「第六讲」「第二节」）。必须保持三组结构：1=序号 2=备用序号 3=子列名。
+#   detect 一律走 _LESSON_RE（main 启动时按 profile 装配），模块内直接引用 LESSON_RE 的旧代码不受影响。
+_LESSON_RE = LESSON_RE
 # 取序号 / 内联子列名的辅助：两组序号只可能有一组命中
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7,
+           "八": 8, "九": 9, "十": 10}
+_FW_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def _parse_num(s):
+    """课次序号：阿拉伯数字（含全角）/ 中文数字（一~九十九）→ int；失败返回 None。"""
+    if not s:
+        return None
+    t = str(s).strip().translate(_FW_TRANS)
+    if t.isdigit():
+        return int(t)
+    # 中文数字：十X / X十 / X十Y / 单字
+    if re.fullmatch(r"[一二三四五六七八九十]{1,3}", t):
+        if t == "十":
+            return 10
+        if "十" in t:
+            a, _, b = t.partition("十")
+            hi = _CN_NUM.get(a, 1) if a else 1
+            lo = _CN_NUM.get(b, 0) if b else 0
+            return hi * 10 + lo
+        return _CN_NUM.get(t)
+    return None
+
+
 def lesson_seq(m):
-    return int(m.group(1) or m.group(2))
+    try:
+        return int(m.group(1) or m.group(2))
+    except (TypeError, ValueError):
+        return _parse_num(m.group(1) or m.group(2)) or 0
 
 
 def lesson_leaf(m):
@@ -79,7 +111,9 @@ DEFAULT_PASSIVE = ["额外加分", "当日星星", "模块打分"]
 #      （本项目：框架笔记 237/667=36% 是 ✘、作业 103/1200=9%、精题 125/616=20%）。
 #   ⭐ 窄表的值恒为 True（拆分命中 = 出现即完成），不受影响。
 NOT_DONE_EXACT = {"✘", "✗", "✖", "✕", "❌", "❌️", "x", "X", "×", "╳",
-                  "无", "/", "—", "－", "-", "未完成"}
+                  "无", "/", "—", "－", "-", "未完成",
+                  # v5.13（小白团队实测值形）：已催=催过但没交；未参加=没考；没出分=没成绩
+                  "已催", "未参加", "没参加", "未出分", "没出分", "不在本班"}
 DONE_EXACT = {"⭐", "🌟", "√", "✓", "✔", "好", "完成", "已交"}
 #   ⚠️ 自由文本默认判「完成」，所以**否定式写法必须显式列出**，否则完成率虚高。
 #      实测娜娜团队「周文峰」表的 `几综模块测`（12 格）：`通关！`5 / `思路没问题，细节需完善`4 /
@@ -108,10 +142,23 @@ PLACEHOLDER_NAMES = {"学生姓名", "姓名", "学生", "学生名字"}
 LONG_VAL_LEN = 15
 
 
+#   ⚠️ 窄表拆词命中 done 词 ≠ 完成：实测小白团队格子是「作业已交,笔记未交」——
+#      「作业未交」经 alias 映射到「作业」后若与「作业已交」同待遇，未交学生会被算进完成率。
+#      判定：别名映射**之前**的原词含否定子串 → 值记 False（→ is_done_val → undone）。
+NOT_DONE_SUBSTR = ("未交", "未完成", "未过关", "未通过", "未参加", "未写",
+                   "没交", "没写", "没做", "没过关", "没通过")
+
+
+def _negated(w):
+    return any(k in w for k in NOT_DONE_SUBSTR)
+
+
 def is_done_val(v):
     """完成项取值 → True（完成）/ False（未完成）/ None（无法判断）。"""
     if v is True:
         return True
+    if v is False:
+        return False     # v5.13：窄表拆词的否定命中（「作业未交」→ 作业=False）
     if v is None:
         return None
     s = str(v).strip()
@@ -122,6 +169,11 @@ def is_done_val(v):
     if s in DONE_EXACT:
         return True
     if s in NOT_DONE_EXACT or s.startswith(NOT_DONE_PREFIX):
+        return False
+    # v5.13：否定子串 —— 小白团队 la27wW 的整格值是「作业未交,笔记未交」这类
+    #   组合句，前缀匹配抓不到句中的否定 → 子串兜底判未完成。
+    #   （自由文本默认完成的大前提不变：只有显式否定词形才翻 False。）
+    if _negated(s):
         return False
     return True          # 其余自由文本（`正确率高` / `已完成，且优秀` / `写了，并积极改错`）视为完成
 
@@ -231,6 +283,74 @@ def match_field(header, extra=None):
     return None
 
 
+# ================================================================ 强制布局（v5.13）
+def force_spec(vals, fl, meta_alias=None):
+    """表头不含「第N课次」标记的档案表 → 由 profile.feishu.forceLayout 显式声明布局。
+
+    fl: {"headerRow": 主表头行(1-based), "subRows": 续行数(默认0), "metaCols": 元数据列数}
+    全部课次区列（metaCols..hi）并成一个大组，items 按列名（续行作前缀，合并格 forward
+    fill）—— 下游 wide 分支通用。kind=forceN。返回 None = 参数非法。
+    ⚠️ v5.13：meta_alias 必须传入 —— 实测小白团队「班型→productName」只配在
+       profile.feishu.metaAlias，漏传会让 force 布局的课程列全部识别失败。
+    """
+    hr = int(fl.get("headerRow") or 1) - 1
+    sub = int(fl.get("subRows") or 0)
+    mcols = int(fl.get("metaCols") or 0)
+    if hr < 0 or hr >= len(vals) or mcols <= 0 or hr + sub >= len(vals):
+        return None
+    hdr_idx = [hr + k for k in range(sub + 1)]
+    hi = max((j for i in hdr_idx if i < len(vals)
+              for j, v in enumerate(vals[i]) if v not in (None, "")),
+             default=mcols - 1)
+    hi = max(hi, mcols - 1)
+    if hi < mcols:                      # 没有课次区列 → 非学情表
+        return None
+    span = hi - mcols + 1
+    fill = []
+    for i in hdr_idx[1:]:
+        ne = sum(1 for j in range(mcols, hi + 1)
+                 if j < len(vals[i]) and vals[i][j] not in (None, ""))
+        fill.append(ne < span * 0.8)
+    items, seen = [], set()
+    cur = ["" for _ in hdr_idx[1:]]
+    for j in range(mcols, hi + 1):
+        txt = []
+        for k, i in enumerate(hdr_idx[1:]):
+            v = (cell_text(vals[i][j])
+                 if j < len(vals[i]) and vals[i][j] not in (None, "") else "")
+            if v:
+                cur[k] = v
+            txt.append(cur[k] if fill[k] else v)
+        txt = [t for t in txt if t]
+        leaf = txt[-1] if txt else ""
+        label = cell_text(vals[hr][j]) if j < len(vals[hr]) else ""
+        nm = "/".join([x for x in ([label] + txt) if x]) or (leaf or f"col{colname(j + 1)}")
+        if nm in seen:
+            nm = f"{nm}#{colname(j + 1)}"      # 撞名加列号，绝不静默覆盖
+        seen.add(nm)
+        items.append({"col": j, "name": nm, "leaf": leaf})
+    groups = [{"seq": 1, "start": mcols, "end": hi, "_last": hi,
+               "leaves": [], "items": items}]
+    meta_map, meta_dup = {}, {}
+    for j in range(0, mcols):
+        txt = [cell_text(vals[i][j]) for i in hdr_idx
+               if j < len(vals[i]) and vals[i][j] not in (None, "")]
+        if not txt:
+            continue
+        f = (match_field(txt[0], extra=meta_alias)
+             or match_field("/".join(txt), extra=meta_alias))
+        if not f:
+            continue
+        if f not in meta_map:
+            meta_map[f] = j
+        elif meta_map[f] != j:
+            meta_dup.setdefault(f, []).append(j)
+    return {"kind": "force%d" % (1 + sub), "lessonRow": hr, "headerRows": hdr_idx[1:],
+            "dataStart": hr + sub + 1, "metaCols": mcols, "hi": hi, "groups": groups,
+            "metaMap": meta_map, "metaDup": meta_dup, "lessons": 1,
+            "perLesson": span, "skippedCols": []}
+
+
 # ================================================================ 结构探测
 def detect(values, max_probe=6, skip_pats=None, meta_alias=None, header_limit=None,
            meta_rate=None, row_heuristics=False):
@@ -263,7 +383,7 @@ def detect(values, max_probe=6, skip_pats=None, meta_alias=None, header_limit=No
     best, best_n = None, 0
     for i in range(min(max_probe, len(values))):
         n = sum(1 for v in values[i]
-                if v and LESSON_RE.match(str(v).strip()) and not _skip(v))
+                if v and _LESSON_RE.match(str(v).strip()) and not _skip(v))
         if n > best_n:
             best, best_n = i, n
     if best is None or best_n < 2:
@@ -277,7 +397,7 @@ def detect(values, max_probe=6, skip_pats=None, meta_alias=None, header_limit=No
         if _skip(v):
             skipped_cols.append({"col": colname(j + 1), "header": str(v).strip()})
             continue
-        m = LESSON_RE.match(str(v).strip())
+        m = _LESSON_RE.match(str(v).strip())
         if m:
             marks.append((j, lesson_seq(m), lesson_leaf(m)))
     if not marks:
@@ -421,7 +541,7 @@ def detect(values, max_probe=6, skip_pats=None, meta_alias=None, header_limit=No
             label = ""
             if j < len(values[best]):
                 lt = cell_text(values[best][j])
-                if lt and not LESSON_RE.match(lt.strip()):
+                if lt and not _LESSON_RE.match(lt.strip()):
                     label = lt
             nm = "/".join([x for x in ([label] + txt) if x]) or (leaf or "col%s" % colname(j + 1))
             if nm in seen_names and label:
@@ -659,8 +779,12 @@ def merge_records(recs):
 
 # ================================================================ 拆分
 def split_items(raw, done_set, ignore_set, alias):
-    """窄表格子 `出勤,作业,框架笔记` → (命中标准项, 未知词, 被忽略词)。"""
-    got, unknown, ignored = [], [], []
+    """窄表格子 `出勤,作业,框架笔记` → (命中标准项, 未知词, 被忽略词, 否定命中)。
+
+    v5.13 第四个返回值：命中 done 词但**原词含否定子串**（「作业未交」）——
+    调用方记值为 False，count_done 据此判未完成。
+    """
+    got, unknown, ignored, negated = [], [], [], []
     for w in re.split(r"[,，;；/、\s]+", str(raw)):
         w = w.strip()
         if not w:
@@ -668,11 +792,11 @@ def split_items(raw, done_set, ignore_set, alias):
         w2 = alias.get(w, w)
         if w2 in ignore_set or w in ignore_set:
             ignored.append(w)
-        elif w2 in done_set:
-            got.append(w2)
+        elif w2 in done_set or w in done_set:
+            (negated if _negated(w) else got).append(w2)
         else:
             unknown.append(w)
-    return got, unknown, ignored
+    return got, unknown, ignored, negated
 
 
 # ================================================================ aux 辅助表并表（v5.09）
@@ -822,6 +946,10 @@ def main():
     DONE = set(items_cfg["done"]) if isinstance(items_cfg.get("done"), list) else set(DEFAULT_DONE)
     IGNORE = set(items_cfg["ignore"]) if isinstance(items_cfg.get("ignore"), list) else set(DEFAULT_IGNORE)
     PASSIVE = set(items_cfg["passive"]) if isinstance(items_cfg.get("passive"), list) else set(DEFAULT_PASSIVE)
+    # v5.13：passiveContains —— 子列名带长后缀/多行说明时精确匹配落空
+    #   （「绝对值基础\n（绝对值的非负性、化简、解绝对值方程）」），
+    #   leaf/nm **包含**任一子串 → 记录型。只在精确匹配全部落空后兜底。
+    PASSIVE_CONTAINS = tuple(items_cfg.get("passiveContains") or ())
     ALIAS = dict(DEFAULT_ALIAS)
     ALIAS.update(items_cfg.get("alias") or {})
     PROD_MAP = fs.get("sheetProductMap") or {}     # sheetId → 课程全名（sheet 名不是课程名时用）
@@ -834,6 +962,10 @@ def main():
     #    解析出的课程名最后统一过一遍这张表，命中即换成全名。
     COURSE_ALIAS = {k: v for k, v in (fs.get("courseAlias") or {}).items()
                     if not k.startswith("_")}
+    # v5.13：合并单元格简写常含换行/空格（「顶\n\n尖\n\n谢」）→ 同时登记去空白键。
+    #   精确键优先；带空白的原始值先走精确，落空再走去空白键（见产品名解析处）。
+    COURSE_ALIAS.update({re.sub(r"\s+", "", k): v for k, v in list(COURSE_ALIAS.items())
+                         if re.sub(r"\s+", "", k) and re.sub(r"\s+", "", k) not in COURSE_ALIAS})
     # ⭐ v4.20：元数据列别名覆盖（团队自定义叫法，优先级高于内置默认表）
     META_ALIAS = {k: v for k, v in (fs.get("metaAlias") or {}).items()
                   if not k.startswith("_")}
@@ -873,6 +1005,35 @@ def main():
     # ⭐ v4.21：评级序列声明（有 ABCD 等级的团队用；不声明 = 不启用）
     RATINGS = {k: v for k, v in (fs.get("ratings") or {}).items()
                if not k.startswith("_") and isinstance(v, dict)}
+    # ⭐ v5.13：课次正则覆盖（profile.feishu.lessonPattern）—— 小白团队用「第N讲/第N节/第N周」
+    #    且混中文数字（第六讲/第二节），默认 LESSON_RE（第N次课/课次N）全部落空。
+    #    ⚠️ 必须保持三组结构：1=序号 2=备用序号 3=子列名；序号支持阿拉伯/全角/中文数字。
+    global _LESSON_RE
+    _lp = fs.get("lessonPattern")
+    if isinstance(_lp, str) and _lp.strip():
+        try:
+            _c = re.compile(_lp)
+            if _c.groups < 3:
+                raise ValueError(f"组数 {_c.groups} < 3（需要 1=序号 2=备用序号 3=子列名）")
+            _LESSON_RE = _c
+            print(f"   [课次正则] 已覆盖：{_lp[:60]}…")
+        except re.error as e:
+            raise SystemExit(f"❌ profile.feishu.lessonPattern 编译失败：{e}")
+    # ⭐ v5.13：数据行跳过（profile.feishu.rowSkipPatterns）—— 「例：顶尖1｜小A｜小B」
+    #    示范行会被当成真学生（姓名=小B 非空）。命中任一正则的行整行跳过并显式计数。
+    ROW_SKIP = [re.compile(p) for p in (fs.get("rowSkipPatterns") or [])
+                if isinstance(p, str) and p.strip()]
+    # ⭐ v5.13：课程索引辅助表（profile.feishu.auxCols = {sheetId: {stuName: 列, productName: 列}}）
+    #    小白团队的档案表「班级」列是合并块简写（顶尖谢/高手3宇），且部分块没标 ——
+    #    简写走 courseAlias，没标的行靠总表（花名册型）建 姓名→课程全名 索引兜底。
+    #    索引 sheet 同时要在 auxSheets 里声明用途 course-index 才会被拉取。
+    AUX_COLS = {k: v for k, v in (fs.get("auxCols") or {}).items()
+                if not k.startswith("_") and isinstance(v, dict)}
+    COURSE_INDEX = {}          # nameNorm → [课程全名…]（去重保序）
+    # ⭐ v5.13：强制布局（profile.feishu.forceLayout = {sheetId: {headerRow, subRows, metaCols}}）
+    #    表头是知识点名（两点之间/神奇等腰）不含「第N课次」标记 → detect 必然落空 → 显式声明。
+    FORCE_LAYOUT = {k: v for k, v in (fs.get("forceLayout") or {}).items()
+                    if not k.startswith("_") and isinstance(v, dict)}
 
     out_dir = args.out or os.path.join(wd, "snapshot")
     os.makedirs(out_dir, exist_ok=True)
@@ -901,6 +1062,34 @@ def main():
               f"/{raw.get('plannedSheets')} 个 sheet（半成品）")
 
     aux_sheets = []
+    # ---- v5.13：先扫 course-index 辅助表，建 姓名→课程全名 索引（列位由 auxCols 声明）
+    for sh in (raw.get("sheets") or []):
+        if (sh.get("aux") or "") != "course-index":
+            continue
+        sid, title = sh.get("sheetId"), sh.get("title") or ""
+        cols = AUX_COLS.get(sid) or {}
+        sj, cj = col_index(cols.get("stuName")), col_index(cols.get("productName"))
+        if sj is None or cj is None:
+            degraded.append({
+                "field": f"feishu.auxCols[{sid}]",
+                "reason": f"课程索引表「{title}」缺 stuName/productName 列声明",
+                "impact": "该表未参与课程兜底；档案表里没标班级块的学生将无法对齐后台课程",
+            })
+            continue
+        n = 0
+        for row in (sh.get("values") or []):
+            nm = cell_text(row[sj]) if sj < len(row) else ""
+            cv = cell_text(row[cj]) if cj < len(row) else ""
+            if not nm or not cv:
+                continue
+            lst = COURSE_INDEX.setdefault(common.norm_name(nm), [])
+            if cv not in lst:
+                lst.append(cv)
+                n += 1
+        print(f"   [课程索引] {title}：{n} 条 姓名→课程")
+    if not COURSE_INDEX:
+        print("   [课程索引] 无 course-index 辅助表 → 课程名完全依赖表内列/别名/映射")
+
     for sh in raw.get("sheets") or []:
         if sh.get("aux"):
             # v5.09 辅助表：不进 detect 主流程（无课次表头），按用途并表
@@ -913,9 +1102,25 @@ def main():
             continue
         vals = sh.get("values") or []
         sid, title = sh.get("sheetId"), sh.get("title") or ""
-        spec = detect(vals, skip_pats=SKIP_PATS, meta_alias=META_ALIAS,
-                     header_limit=HEADER_LIMIT, meta_rate=META_RATE,
-                     row_heuristics=ROW_HEUR)
+        _fl = FORCE_LAYOUT.get(sid)
+        if _fl:
+            spec = force_spec(vals, _fl, meta_alias=META_ALIAS)
+            if spec is None:
+                sheet_reports.append({"sheetId": sid, "title": title, "structure": "flat",
+                                      "students": 0,
+                                      "note": "forceLayout 参数非法（headerRow/metaCols 越界）→ 跳过"})
+                degraded.append({
+                    "field": f"feishu.forceLayout[{sid}]",
+                    "reason": f"「{title}」forceLayout 参数非法：{_fl}",
+                    "impact": "该 sheet 未纳入；请检查 headerRow / metaCols 声明",
+                })
+                continue
+            print(f"   [强制布局] {title}：kind={spec['kind']} 元数据 {spec['metaCols']} 列"
+                  f"｜课次区 {spec['hi'] - spec['metaCols'] + 1} 列｜数据起行 {spec['dataStart'] + 1}")
+        else:
+            spec = detect(vals, skip_pats=SKIP_PATS, meta_alias=META_ALIAS,
+                          header_limit=HEADER_LIMIT, meta_rate=META_RATE,
+                          row_heuristics=ROW_HEUR)
         if spec is None:
             sheet_reports.append({"sheetId": sid, "title": title, "structure": "flat",
                                   "students": 0, "note": "无课次表头，非学情表 → 跳过"})
@@ -977,6 +1182,8 @@ def main():
             })
         sheet_unknown, sheet_ignored, sheet_badname = [], [], 0
         sheet_placeholder = 0
+        sheet_demo = 0                      # v5.13：rowSkipPatterns 命中的示范/说明行
+        sheet_multi_course = []             # v5.13：课程索引多候选不猜的学生
         sheet_undone, sheet_longval = {}, []
         n_ok = 0
         for ri in range(spec["dataStart"], len(vals)):
@@ -990,6 +1197,14 @@ def main():
                         carry[field] = v
                     return carry.get(field, "")
                 return v
+
+            # v5.13：示范/说明行跳过（「例：顶尖1｜小A｜小B」—— 姓名列非空但不是真学生）。
+            #    按行首元数据区文本匹配 rowSkipPatterns；命中整行跳过并显式计数。
+            if ROW_SKIP:
+                _head = " ".join(cell_text(v) for v in row[:max(spec["metaCols"], 3)]).strip()
+                if _head and any(p.search(_head) for p in ROW_SKIP):
+                    sheet_demo += 1
+                    continue
 
             name = cell(mm.get("stuName"))
             if not name:
@@ -1019,11 +1234,14 @@ def main():
                     rawv = cell(g["start"])
                     if not rawv:
                         continue
-                    got, unk, ign = split_items(rawv, DONE, IGNORE, ALIAS)
+                    got, unk, ign, neg = split_items(rawv, DONE, IGNORE | PASSIVE, ALIAS)
                     sheet_unknown += unk
                     sheet_ignored += ign
+                    it = {k: True for k in got}
+                    for k in neg:                  # v5.13：否定命中（作业未交）→ False
+                        it[k] = False
                     lessons.append({"seq": g["seq"], "raw": rawv,
-                                    "items": {k: True for k in got}})
+                                    "items": it})
                 else:
                     items, unk = {}, []
                     for it in g["items"]:
@@ -1039,8 +1257,17 @@ def main():
                         elif (base in IGNORE or leaf in IGNORE
                               or base in PASSIVE or leaf in PASSIVE):
                             pass                              # 出勤类 / 记录型：保留原值，不统计
+                        elif leaf == "" and (_LESSON_RE.match(nm) or nm in PASSIVE
+                                             or nm in IGNORE):
+                            # v5.13：子续行空 → 列名落在组名本身。若组名是课次名
+                            # （「第6讲」），该列是课次下的无名手记列（自由文本），
+                            # 不能当完成项；其余查 nm 全名是否登记过。
+                            pass
+                        elif PASSIVE_CONTAINS and any(
+                                c in leaf or c in nm for c in PASSIVE_CONTAINS):
+                            pass      # v5.13：子串兜底（leaf 带长后缀/多行说明）
                         else:
-                            unk.append(leaf)
+                            unk.append(leaf or nm)
                     if not items:
                         continue
                     sheet_unknown += unk
@@ -1052,6 +1279,20 @@ def main():
             if not pname_raw:
                 pname_raw = prod_fallback or title
             pname = COURSE_ALIAS.get(pname_raw, pname_raw)
+            # v5.13：合并单元格里的简写常带换行/空格（「顶\n\n尖\n\n谢」）→
+            #    精确键落空时再按「去全部空白」的键找一遍（索引同样去空白构建）。
+            if pname == pname_raw and COURSE_ALIAS:
+                _ns = re.sub(r"\s+", "", pname_raw)
+                if _ns and _ns in COURSE_ALIAS:
+                    pname = COURSE_ALIAS[_ns]
+            # v5.13：课程索引兜底 —— 解析出的名字仍不是后台全名（无 2026Q- 前缀）
+            #    且姓名在索引里唯一 → 直接采用；多个候选不猜（保留原名并降级说明）。
+            if pname == pname_raw and not re.search(r"20\d\d[QS]-", pname) and COURSE_INDEX:
+                _cand = COURSE_INDEX.get(common.norm_name(name), [])
+                if len(_cand) == 1:
+                    pname = _cand[0]
+                elif len(_cand) > 1:
+                    sheet_multi_course.append(name)
             # ---- 完成 / 未完成分开计（v4.19.3）：别把 ✘ 当完成
             done_cnt, undone_cnt = count_done(lessons, DONE, ALIAS)
             # v4.50：「总结」列的三档是 已交 / 佳作 / 未交 —— 「佳作」是**质量更高的完成**
@@ -1148,6 +1389,16 @@ def main():
                 "reason": f"「{title}」有 {sheet_placeholder} 行的姓名列写成了表头文字（如「学生」）",
                 "impact": "这些行**有课次记录但无法归属到学生**（实测同行的「课程/班型」列也写成了「课程」，"
                           "多为复制表头时误粘）→ 已跳过。**请回表修正**，否则这几个学生会漏掉。",
+            })
+        if sheet_demo:
+            print(f"       ↳ 示范/说明行跳过 {sheet_demo} 行（rowSkipPatterns 命中）")
+        if sheet_multi_course:
+            degraded.append({
+                "field": f"feishu.sheet[{sid}].productName",
+                "reason": f"「{title}」{len(sheet_multi_course)} 名学生（如 {sheet_multi_course[:6]}）"
+                          f"班级块没标且课程索引里有多个候选",
+                "impact": "这些学生保留原名（多为 sheet 名/简写），与后台课程复合键对齐可能落空"
+                          "→ 请回表补班级块或在 courseAlias 补映射",
             })
         # v4.19.3：超长值多半是**手记串列**（写到了课次列里）→ 报出来核对，别静默当成完成
         if sheet_longval:

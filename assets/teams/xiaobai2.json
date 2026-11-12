@@ -1,0 +1,301 @@
+{
+  "_readme": [
+    "小白团队 · 26秋初二（工作簿「26初二秋季大表」）。2026-11-11 接入。",
+    "wiki 节点 WWLawBSDcinkMUklCFdco9UDndc → obj_token=Wn3HsQsIGh58NStED7CczIYrnTd。",
+    "via=cli：走本机 lark-cli 个人授权（v5.04 起无密钥形态），本文件无任何 secret。",
+    "⚠️ 档案表没有「第N次课/课次N」标记：主表头用「第N讲/第N节课/第N周」且混中文数字",
+    "  （第六讲/第二节），部分表（Sheet12/晓旭/闪闪/嘉驹）表头是知识点名（两点之间/神奇等腰）",
+    "  → 课次正则走 profile.feishu.lessonPattern（v5.13），知识点列名表走 forceLayout（v5.13）。",
+    "⚠️ 班级列是**合并块简写**（顶尖谢/高手5/高手8，含换行）→ courseAlias 去空白匹配 +",
+    "  fillDownFields 下填；块没标的行靠 nn26we 学生大表（course-index 辅助表）兜底。",
+    "⚠️ 教务/联席/续报口径**以后台接口为准**（用户 2026-11-11 拍板）：飞书表只挂学情，",
+    "  学生大表/续报表里的「是否续报」不入续报等级（以后台 pull_enroll 为准）。"
+  ],
+  "team": "初二数学 · 小白团队",
+  "_team_note": "同事口中「小白团队」之一（初二年级）；另一张「26秋小学+初一」见 xiaobai1.json。",
+  "minVersion": "5.13",
+  "feishu": {
+    "via": "cli",
+    "sourceType": "wiki",
+    "source": "WWLawBSDcinkMUklCFdco9UDndc",
+    "_source_note": "wiki 节点 →「26初二秋季大表」，obj_token=Wn3HsQsIGh58NStED7CczIYrnTd（2026-11-11 实测可读）。",
+    "spreadsheetToken": "Wn3HsQsIGh58NStED7CczIYrnTd",
+    "lessonPattern": "^(?:第\\s*([0-9０-９一二三四五六七八九十]+)\\s*[次节讲周]\\s*课?|课次\\s*([0-9０-９]+))\\s*[-－—_:：]?\\s*(.*)$",
+    "_lessonPattern_note": "小白表头是「第6讲/第6节课/第２周出门测(全角)/第六讲(中文)/第五周」——默认 LESSON_RE（第N次课/课次N）全部落空。三组结构不变：1=序号 2=备用序号 3=子列名；中文数字由 lesson_seq 归一。",
+    "rowSkipPatterns": [
+      "^例[:：]"
+    ],
+    "_rowSkipPatterns_note": "小学初一工作簿的老师表有「例：顶尖1｜小A｜小B」示范行（姓名列非空）；本工作簿暂无，留着无妨。",
+    "fillDownFields": [
+      "productName"
+    ],
+    "_fillDownFields_note": "班级/班型列按课程分块合并（值只在块首行）→ 逐行下填，否则 productName 兜底成 sheet 名。",
+    "forceLayout": {
+      "v5fWAR": {
+        "headerRow": 1,
+        "subRows": 1,
+        "metaCols": 16
+      },
+      "V7ATDQ": {
+        "headerRow": 1,
+        "subRows": 1,
+        "metaCols": 9
+      },
+      "L0ywjn": {
+        "headerRow": 1,
+        "subRows": 1,
+        "metaCols": 9
+      },
+      "419myL": {
+        "headerRow": 1,
+        "subRows": 1,
+        "metaCols": 3
+      },
+      "FZd4Hk": {
+        "headerRow": 1,
+        "subRows": 1,
+        "metaCols": 3
+      },
+      "KASWBC": {
+        "headerRow": 1,
+        "subRows": 1,
+        "metaCols": 2
+      },
+      "WRs0x5": {
+        "headerRow": 2,
+        "subRows": 0,
+        "metaCols": 7
+      },
+      "4JL6nx": {
+        "headerRow": 1,
+        "subRows": 1,
+        "metaCols": 4
+      },
+      "1Tu8T3": {
+        "headerRow": 1,
+        "subRows": 2,
+        "metaCols": 5
+      },
+      "0e6c1d": {
+        "headerRow": 3,
+        "subRows": 0,
+        "metaCols": 17
+      },
+      "ar8540": {
+        "headerRow": 3,
+        "subRows": 0,
+        "metaCols": 14
+      },
+      "ocbOaI": {
+        "headerRow": 2,
+        "subRows": 0,
+        "metaCols": 18
+      },
+      "cNl3iB": {
+        "headerRow": 2,
+        "subRows": 0,
+        "metaCols": 3
+      },
+      "KmN8DO": {
+        "headerRow": 3,
+        "subRows": 0,
+        "metaCols": 3
+      },
+      "nw2K0J": {
+        "headerRow": 3,
+        "subRows": 0,
+        "metaCols": 3
+      },
+      "yZon4q": {
+        "headerRow": 3,
+        "subRows": 0,
+        "metaCols": 4
+      }
+    },
+    "_forceLayout_note": "⚠️ 为什么不用 detect：①双行表头的子列名区（行2）里混着「第二讲/第三讲」等课次词 → 表头续行的元数据区非空率超线，detect 会把行2 当数据行整表降级；②知识点列名表无课次标记。force 把主表头+续行并成两级列名（主/子），元数据列数显式声明。",
+    "sheets": {
+      "include": [
+        "v5fWAR",
+        "V7ATDQ",
+        "L0ywjn",
+        "419myL",
+        "FZd4Hk",
+        "KASWBC",
+        "WRs0x5",
+        "4JL6nx",
+        "1Tu8T3",
+        "0e6c1d",
+        "ar8540",
+        "ocbOaI",
+        "cNl3iB",
+        "KmN8DO",
+        "nw2K0J",
+        "yZon4q"
+      ],
+      "_include_note": "16 张学生档案表（按联席/主讲分 sheet，一张表可跨多门课；行=一名学生）。班级列+courseAlias+课程索引三层兜底解析课程全名。",
+      "exclude": {
+        "nn26we": "学生大表（系统导出的花名册）→ auxSheets 作 course-index（课程全名兜底来源）",
+        "RKeYBc": "学生问题汇总（逐题记录型，无学生姓名列，无法归属）",
+        "YQmIdL": "加课安排（运营记录）",
+        "FTTzKO": "琦班小黑板反馈索引（班级/教务/联席/链接，无学情）",
+        "cbdfz6": "闫浩然（整表空白）",
+        "KtYnns": "何文进·期中专项简表（6 列：班级/联席/学生姓名/技术/情况/成绩，无课次区）",
+        "aVJgbG": "张振勋·期中专项简表（同上）",
+        "5Y08PX": "Sheet25 培优班加课安排（运营记录）",
+        "Jqpo30": "刘晓旭续报表（是否续报/未续报原因 —— 续报以后台接口为准，不入表内等级）",
+        "k2nrfg": "刘嘉驹续保表格（同上）",
+        "UieYxU": "闪闪（高手+北京红）—— 表头有「第N节课」标记走 detect，暂未开（列位特殊待验证）",
+        "DiXfQm": "高手8（交接）—— 2 列名单草稿（学生姓名/备注），非档案表"
+      },
+      "_exclude_note": "UieYxU 留待二阶段验证后纳入；其余为运营/花名册/空表。"
+    },
+    "auxSheets": {
+      "nn26we": "course-index"
+    },
+    "_auxSheets_note": "学生大表（478 行系统导出花名册）→ 按 姓名→课程全名 建索引，给「班级块没标」的档案行兜底。",
+    "auxCols": {
+      "nn26we": {
+        "stuName": "H",
+        "productName": "A"
+      }
+    },
+    "_auxCols_note": "学生大表列位：A=课程（后台全名 2026Q-SX-…），H=学生。与 auxSheets 的 course-index 配套。",
+    "metaAlias": {
+      "班型": "productName",
+      "学生情况": "note",
+      "学生目前情况": "note",
+      "目前进度": "note",
+      "学生等级": "note"
+    },
+    "_metaAlias_note": "「班型」= 课程全名列（V7ATDQ/L0ywjn）；「学生情况/学生目前情况/目前进度」= 老师手记（各表叫法不一，全挂 note）；「学生等级」是 A/B 分档（挂 note 防止被默认别名「学生」吃成 stuName）。",
+    "items": {
+      "done": [
+        "作业",
+        "作业题",
+        "打穿题",
+        "精题",
+        "精题一刷",
+        "出门测",
+        "出门测情况",
+        "出门测完成情况",
+        "框架笔记",
+        "课前测",
+        "总结",
+        "视频打卡",
+        "同类题"
+      ],
+      "_done_note": "小白完成项的值形：通过/未通过/已交-优秀/第一次未过关/未参加 —— is_done_val 的否定式已补「已催/未参加/没参加/未出分/没出分/不在本班」（v5.13）。",
+      "ignore": [
+        "请假",
+        "出勤",
+        "回放",
+        "红包"
+      ],
+      "_ignore_note": "本表无出勤/回放列（出勤只信系统，用户口径）。",
+      "passive": [
+        "分数",
+        "得分",
+        "错题",
+        "错题号",
+        "错题以及薄弱点",
+        "薄弱点",
+        "薄弱项",
+        "薄弱题型",
+        "备注",
+        "备注说明",
+        "分析情况",
+        "试卷分析",
+        "卷面情况",
+        "情况",
+        "问题",
+        "分档",
+        "学校",
+        "时间",
+        "排名",
+        "目前进度",
+        "打穿题进度",
+        "学校期中时间",
+        "学校进度",
+        "学生反思",
+        "实际情况",
+        "试卷成绩",
+        "学生用到的技术",
+        "掌握情况",
+        "课堂掌握情况",
+        "题型",
+        "后续安排",
+        "测试情况最终汇总",
+        "适配班型",
+        "反馈",
+        "教师备注",
+        "二次评档",
+        "三次评档",
+        "首次打穿题测试自评",
+        "针对性训练安排",
+        "简单分析",
+        "成绩",
+        "期中成绩+情况",
+        "校内期中情况",
+        "阶段测1分数",
+        "阶段测1情况",
+        "月考检测成绩以及措施",
+        "小爱记",
+        "三刷",
+        "精题三刷",
+        "打穿题目前进度",
+        "打穿题情况",
+        "必须参加的加课",
+        "是否参加",
+        "没有参加后续操作",
+        "未通过原因",
+        "结果（顶尖班这一讲时间不够，都没做完）",
+        "顶尖：分班\n高手：测试",
+        "colR"
+      ],
+      "_passive_note": "成绩/错因/评档/备注都是**记录型**（保留原值，不计完成率也不报未登记）。首跑后若还有未登记词，按实际值形补进来。",
+      "alias": {
+        "第二讲": "出门测",
+        "第三讲": "出门测",
+        "第四讲": "出门测",
+        "第五讲": "出门测",
+        "出门测情况": "出门测",
+        "作业完成情况": "作业",
+        "作业情况": "作业",
+        "笔记": "框架笔记",
+        "结果": "同类题"
+      }
+    },
+    "sheetProductMap": {},
+    "_sheetProductMap_note": "档案表的班级/班型列带课程全名（合并块）或简写（courseAlias 换算），无需按 sheet 兜底。",
+    "courseAlias": {
+      "顶尖谢": "2026Q-SX-初二数学顶尖进化2班谢黄",
+      "顶尖3班红": "2026Q-SX-初二数学顶尖3班红",
+      "高手3班琦": "2026Q-SX-初二数学高手3班琦",
+      "高手1班宇": "2026Q-SX-初二数学高手1班宇",
+      "高手5": "2026Q-SX-初二数学高手5班荷",
+      "高手8": "2026Q-SX-初二数学高手8班红"
+    },
+    "_courseAlias_note": "合并块简写（含换行空格，代码会去空白匹配）：顶尖谢=顶尖进化2班谢黄（汪志安/秦紫茉表）、顶尖3班红/高手3班琦/高手1班宇（闫仪荣表）、高手5/高手8（汪志安表）。映射依据=学生大表按学生交集反查（2026-11-11 实测），非猜测。",
+    "columnRoles": {
+      "FZd4Hk": {
+        "productName": {
+          "col": "A"
+        },
+        "coTeacherName": {
+          "col": "B"
+        },
+        "stuName": {
+          "col": "C"
+        }
+      },
+      "4JL6nx": {
+        "productName": {
+          "col": "A"
+        },
+        "stuName": {
+          "col": "B"
+        }
+      }
+    }
+  }
+}
