@@ -5815,9 +5815,23 @@ def main():
                 f'知识点不参与分层（分层只看小黑板 / 作业 / 老师反馈 / 成绩 / 飞书提交）。<br>'
             )
         else:
+            # v5.13：学段名从 snapshot/knowledge_points.json 的 filters.stages 动态推断
+            #   （原来写死「高中数学」—— 接初中团队后口径会写错学段）。
+            _stage_cn = ""
+            try:
+                _kpj = json.load(open(os.path.join(wd, "snapshot", "knowledge_points.json"),
+                                      encoding="utf-8"))
+                _stg = (_kpj.get("filters") or {}).get("stages") or []
+                _stage_cn = {1: "初中", 2: "高中"}.get(
+                    _stg[0] if len(_stg) == 1 else None, "")
+                if not _stage_cn:
+                    _stage_cn = "、".join({1: "初中", 2: "高中"}.get(s, "?") for s in _stg[:3])
+            except (OSError, ValueError):
+                pass
+            _subj_cn = f"{_stage_cn}数学" if _stage_cn else "数学"
             kp_note = (
                 f'• <b>知识点口径（v4.81）</b>：知识点<b>以后台知识树为准</b>'
-                f'（{str(kp_used.get("pulled_at") or "")[:10]} 拉取，高中数学 {kp_used.get("backend_nodes", 0)} 个节点）'
+                f'（{str(kp_used.get("pulled_at") or "")[:10]} 拉取，{_subj_cn} {kp_used.get("backend_nodes", 0)} 个节点）'
                 f'—— 后台树上没有的一律不出现' + ('（唯一例外见下）' if _pend else '') +
                 f'，因此本课程的知识点清单与后台<b>逐条对得上</b>。'
                 f'命中仍用群里的自然说法（学生只会说「韦达定理」，不会说节点全名），'
@@ -5828,7 +5842,7 @@ def main():
                 # v4.81：导数是唯一例外 —— 后台没节点，但教学上单独成章，故保留并单列。
                 + (f'<b>{_pend}</b> 后台<b>同样暂无节点</b>，但{_pend}与函数在本课是'
                    f'<b>分开讲的两章</b>，按教学口径<b>保留并单列</b>，不并入函数；' if _pend else '')
-                + ('' if _mn else '后台高中数学<b>方法类节点为 0</b>，方法维度暂无可依据来源，本报告不呈现。')
+                + ('' if _mn else f'后台{_subj_cn}<b>方法类节点为 0</b>，方法维度暂无可依据来源，本报告不呈现。')
                 + '「计算/粗心」属错误类型而非知识树节点，仍单列、不与后台模块混排；'
                 '小黑板逐题表的「关联知识点」列同样按后台模块名显示：读图原标是「函数＋导数」的合并模块名，'
                 '本课白板题全是函数内容，故显示为「函数」，读图若明确标成导数则显示「导数」。'
