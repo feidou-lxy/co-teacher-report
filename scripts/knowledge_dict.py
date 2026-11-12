@@ -341,6 +341,18 @@ def augment(units, wd="."):
     names = {p["name"] for p in points if p.get("level", 0) >= 2}
     method_n = sum(1 for p in points if p.get("category") == 2)
 
+    # v5.13：学段一致性校验 —— 数学词表没有物理那样的学段分流，树拉错学段 =
+    #   判据整个错位（初中课剔掉初中模块、并入高中词，或反之），augment 无法
+    #   自行纠正，但必须显式报警（报告口径区红字可见）。不阻断：错树仍好过裸词表。
+    stage_mismatch = ""
+    if kd:
+        _stg = ((kd.get("filters") or {}).get("stages")) or []
+        _tree_stage = ({1: "初中", 2: "高中"}.get(_stg[0])
+                       if len(_stg) == 1 else "")
+        if _tree_stage and _cstage and _tree_stage != _cstage:
+            stage_mismatch = (f"课程学段「{_cstage}」与知识树学段「{_tree_stage}」"
+                              f"不一致 —— 请核对 pull_knowledge.py 的 --stages 参数")
+
     added, dropped, pending, out = 0, [], [], []
     for disp, kws, key in units:
         # ① 排除后台未建的模块（非知识点单元豁免；BACKEND_PENDING 里的例外也豁免）
@@ -383,4 +395,6 @@ def augment(units, wd="."):
         "backend_missing": dropped,
         # v4.81：后台暂无节点、但按教学口径保留的单元（报告需显式说明，不能装作后台有）
         "pending": pending,
+        # v5.13：学段一致性（树与课程学段不一致时为非空描述，报告口径区红字显示）
+        "stage_mismatch": stage_mismatch,
     }

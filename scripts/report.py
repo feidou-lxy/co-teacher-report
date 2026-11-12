@@ -5832,7 +5832,10 @@ def main():
             kp_note = (
                 f'• <b>知识点口径（v4.81）</b>：知识点<b>以后台知识树为准</b>'
                 f'（{str(kp_used.get("pulled_at") or "")[:10]} 拉取，{_subj_cn} {kp_used.get("backend_nodes", 0)} 个节点）'
-                f'—— 后台树上没有的一律不出现' + ('（唯一例外见下）' if _pend else '') +
+                # v5.13：树学段与课程学段不一致 → 红字警示（判据整个错位，必须一眼可见）
+                + (f'<b style="color:#f5222d">⚠️ 学段不一致：{kp_used.get("stage_mismatch")}</b>；'
+                   if kp_used.get("stage_mismatch") else '')
+                + f'—— 后台树上没有的一律不出现' + ('（唯一例外见下）' if _pend else '') +
                 f'，因此本课程的知识点清单与后台<b>逐条对得上</b>。'
                 f'命中仍用群里的自然说法（学生只会说「韦达定理」，不会说节点全名），'
                 f'范围以后台为准、措辞不强制对齐。'
