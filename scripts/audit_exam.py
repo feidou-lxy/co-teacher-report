@@ -24,6 +24,7 @@ import glob
 import json
 import os
 import sys
+from collections import Counter
 
 sys.path.insert(0, ".")
 import common  # noqa: E402
@@ -34,6 +35,23 @@ def scan(wd):
     if not os.path.exists(p):
         return None
     c = json.load(open(p, encoding="utf-8"))
+    # v5.14：审计的满分推断要与正式链路同科目（宋婕语文回测发现写死「数学」
+    #   → 审计清单按 150 推断、报告按 100，两边不一致会误导人眼复核）。
+    #   从花名册 productName 取多数票科目；取不到时退回「数学」（历史默认）。
+    subj = "数学"
+    try:
+        st = json.load(open(os.path.join(wd, "students.json"), encoding="utf-8"))
+        cnt = Counter()
+        for x in st:
+            s = common.subject_of(x.get("productName") or "")
+            if s:
+                cnt[s] += 1
+        if cnt:
+            top, n = cnt.most_common(1)[0]
+            if n * 2 > sum(cnt.values()):
+                subj = top
+    except Exception:
+        pass
     rows = []
     for nm, v in c.items():
         ms = v.get("messages") or []
@@ -41,7 +59,7 @@ def scan(wd):
             ((m.get("msgTime") or ""), m.get("role"),
              (m.get("content") or {}).get("content", "") if isinstance(m.get("content"), dict) else "")
             for m in ms]))
-        ex = common.extract_exam(tri, nm, "数学")
+        ex = common.extract_exam(tri, nm, subj)
         if ex.get("latest"):
             # v4.65：审计要看的必须是**整句原文**（原来截 70 字，分数偶尔正落在截断处）
             lt = ex["latest"]

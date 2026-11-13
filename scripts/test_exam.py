@@ -87,6 +87,16 @@ CASES = [
     ("某生", "月考没考好", None, None),          # 只有形容词、无分数 → 未知
 ]
 
+# ── v5.14 语文首跑回测（宋婕教务）──────────────────────────────────────
+#   三条实测：①「期末作文36」是作文分不是总分（v5.14 新挡 EXAM_SUB_SCORE_PRE）；
+#   ②③ 语文满分推断改为 100 制（北京初中语文卷面）。
+SUBJ_CASES = [
+    ("某生", "这次期末作文36，一般情况34，35.", "语文", None, None),
+    ("某生", "西城，北京市回民学校，语文初一期末63分", "语文", 63, 100),
+    ("某生", "语文期中我们考了91分，除了作文就扣一分", "语文", 91, 100),
+]
+
+
 # ── v4.65：卡片上的「原话」必须**包含命中的分数** ────────────────────────
 # 用户截图事故：卡片显示「「@联席-小尹老师（嘿袜精 ） 老师，徐…」」——
 # 从句首截 22 字，把「60分」切在窗口外，摆了一句话却依然无法溯源。
@@ -149,7 +159,33 @@ def run():
     return 0 if fail == 0 else 1
 
 
+def run_subj():
+    """v5.14：带科目的用例（语文首跑回测）。"""
+    ok = fail = 0
+    fails = []
+    for name, text, subj, exp_v, exp_f in SUBJ_CASES:
+        tri = [("2026-10-14T10:00:00", 2, text)]
+        ex = common.extract_exam(tri, name, subj)
+        latest = ex.get("latest")
+        got_v = latest.get("value") if latest else None
+        got_f = latest.get("full") if latest else None
+        good = (got_v is None and latest is None) if exp_v is None else (got_v == exp_v)
+        if good and exp_v is not None and exp_f is not None and got_f != exp_f:
+            good = False
+        if good:
+            ok += 1
+        else:
+            fail += 1
+            fails.append((name, subj, text, exp_v, exp_f, got_v, got_f, ex.get("why")))
+    print(f"语文用例 {len(SUBJ_CASES)} 条：通过 {ok}，失败 {fail}")
+    for f in fails:
+        print(f"  ❌ [{f[1]}] {f[0]} | 原话「{f[2]}」")
+        print(f"     期望 {f[3]}/{f[4]}，实际 {f[5]}/{f[6]}  why={f[7]}")
+    return 0 if fail == 0 else 1
+
+
 if __name__ == "__main__":
     rc = run()
     rc2 = run_evi()
-    sys.exit(rc or rc2)
+    rc3 = run_subj()
+    sys.exit(rc or rc2 or rc3)
