@@ -208,6 +208,7 @@ def _course_stage(wd="."):
 BUILTIN_MODULES = {
     "物理": "physics_dict",
     "化学": "chemistry_dict",
+    "语文": "chinese_dict",     # v5.14：语文知识树打底（教材自建，与高中物理同构）
 }
 # 全部已建词表的科目（subject_mismatch 空态文案用，让读者知道还差什么）
 BUILTIN_SUBJECTS = ("数学",) + tuple(BUILTIN_MODULES)
@@ -300,7 +301,7 @@ def augment(units, wd="."):
 
     units 结构不变（(显示名, 命中词, 归属大类) 三元组），下游零改动。
     无字典时**不做剔除**（不知道该剔什么），返回原表并标 degraded。
-    v4.97：按课程科目分派 —— 物理/化学 → 各自教材自建词表（BUILTIN_MODULES），
+    v4.97：按课程科目分派 —— 物理/化学/语文 → 各自教材自建词表（BUILTIN_MODULES），
     数学 → 本文件的后台对齐逻辑；其余科目 → 整维度停用（subject_mismatch）。
 
     ⚠️ 分派必须在 load(wd) **之前**：教材自建词表不依赖后台树，

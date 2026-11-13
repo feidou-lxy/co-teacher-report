@@ -84,8 +84,8 @@ try:
               open(os.path.join(tmp, "students.json"), "w"))
     u3, i3 = knowledge_dict.augment(MATH_UNITS, tmp)
     check("生物课 → 停用", i3.get("mode") == "subject_mismatch" and u3 == [])
-    check("停用文案列出已建科目（数学、物理、化学）",
-          i3.get("vocab_subjects") == ["数学", "物理", "化学"])
+    check("停用文案列出已建科目（数学、物理、化学、语文）",
+          i3.get("vocab_subjects") == ["数学", "物理", "化学", "语文"])
 finally:
     shutil.rmtree(tmp)
 
