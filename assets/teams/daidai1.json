@@ -1,0 +1,235 @@
+{
+ "team": "语英 · 呆呆团队（初中）",
+ "minVersion": "5.16",
+ "feishu": {
+  "via": "cli",
+  "sourceType": "wiki",
+  "source": "ZgE0wgzupiz9n2kyhphcCYranHh",
+  "lessonPattern": "^(?:第\\s*([0-9０-９一二三四五六七八九十]+)\\s*[次节讲周]\\s*课?|课次\\s*([0-9０-９]+))\\s*[-－—_:：]?\\s*(.*)$",
+  "sheets": {
+   "include": [
+    "sLM9Ax",
+    "2TyXae",
+    "AUmSpT",
+    "eUr5qX",
+    "V4LzYk",
+    "UmEQZ2"
+   ],
+   "exclude": {
+    "hsQlLk": "数据（联席×打卡率聚合统计，运营）",
+    "TGgVOt": "初一语学情表（档案型无课次，二期再挂 aux）",
+    "RzvcKb": "初三语学情表（同上）",
+    "85f139": "初一英学情表（同上）",
+    "59x2VG": "初三英学情表（同上）",
+    "HyeUbf": "初二英学情表（同上）",
+    "2wrKdG": "初英月考成绩（成绩唯一来源=群聊正则，不入表）",
+    "dhR5p4": "红包报销（运营）",
+    "8lsDEc": "初语加课覆盖（运营记录）",
+    "wYRHMt": "Sheet20（错题统计，二期评估）",
+    "gGPUUC_aux": "初语续报 → auxSheets renew"
+   }
+  },
+  "auxSheets": {
+   "gGPUUC": "renew"
+  },
+  "columnRoles": {
+   "sLM9Ax": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "RUnnj9": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "2TyXae": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "AUmSpT": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "eUr5qX": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "V4LzYk": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "UmEQZ2": {
+    "stuName": {
+     "col": "A"
+    },
+    "coTeacherName": {
+     "col": "B"
+    },
+    "productName": {
+     "col": "C"
+    }
+   }
+  },
+  "forceLayout": {
+   "UmEQZ2": {
+    "headerRow": 1,
+    "subRows": 0,
+    "metaCols": 5
+   }
+  },
+  "metaAlias": {
+   "特殊情况备注": "note",
+   "学习水平分层（联席）": "note",
+   "活跃度分层（教务）": "note"
+  },
+  "items": {
+   "done": [
+    "作业",
+    "笔记"
+   ],
+   "ignore": [
+    "出勤",
+    "摄像头",
+    "周二",
+    "周三",
+    "周四",
+    "周日",
+    "周五",
+    "一条命通关",
+    "一条命参加",
+    "积分",
+    "colT",
+    "colF",
+    "colH",
+    "colI"
+   ],
+   "passive": [
+    "课堂状态",
+    "暴露出来的学科问题",
+    "解决办法",
+    "闪光点",
+    "作业提醒",
+    "本周问题",
+    "主讲诊断",
+    "联席跟进情况",
+    "总积分",
+    "学生学习习惯",
+    "学科主要问题",
+    "首课反馈",
+    "沟通反馈",
+    "成绩",
+    "学校",
+    "性格特点",
+    "城区"
+   ],
+   "passiveContains": [
+    "反馈",
+    "情况",
+    "问题",
+    "分层",
+    "诊断",
+    "周一",
+    "周二",
+    "周三",
+    "周四",
+    "周五",
+    "周六",
+    "周日",
+    "一条命",
+    "积分",
+    "批改",
+    "沟通",
+    "学习信息",
+    "打卡"
+   ]
+  },
+  "columnSkipPatterns": [
+   "数字$",
+   "^col[A-Za-z]{0,3}$",
+   "^[周一二三四五六日]+[0-9.]*$"
+  ],
+  "sheetProductMap": {
+   "sLM9Ax": "初一语文",
+   "RUnnj9": "初二语文",
+   "2TyXae": "初三语文",
+   "AUmSpT": "初一英语",
+   "eUr5qX": "初二英语",
+   "V4LzYk": "初三英语"
+  },
+  "_sheetProductMap_note": "星星榜一个年级一张榜（初三语 35 人跨顶尖1+顶尖2 两个后台班）→ 粗粒度课程名，学生课程归属以后台花名册按姓名对齐为准。",
+  "longValLen": 400,
+  "auxRenewCols": {
+   "gGPUUC": {
+    "stu": "姓名",
+    "level": "等级",
+    "reason": "具体情况",
+    "note": "备注",
+    "contact": [
+     "沟通续报",
+     "第一轮状态",
+     "第二轮状态",
+     "第三轮状态"
+    ],
+    "_note": "呆呆续报表列名与叶子不同；contact 多列拼接；等级值 C/B/已续 原样保留"
+   }
+  }
+ },
+ "_readme": [
+  "呆呆团队（初中）·「初中文科档案-26秋」。2026-11-14 接入 v5.16。",
+  "wiki 节点 ZgE0wgzupiz9n2kyhphcCYranHh → obj_token=TssAsSY4mhQooAtUK6Rc6CPEnsh。",
+  "via=cli：走本机 lark-cli 个人授权，本文件无任何 secret。",
+  "后台花名册两个教务：语文=宋婕（2026Q-YW- 昝老师 4 班）、英语=孙紫菁（2026Q-YY-，",
+  "  初一高手1/顶尖1班布 + 初二顶尖1班布 + 初三顶尖1班布/高手1班倩）。",
+  "结构：星星榜（第N周课次块，wide2，主表）×6（语英×三个年级）+ 初三听口专项班（档案 force1）",
+  "  + 初语续报（aux renew，列名与叶子不同 → auxRenewCols 覆盖，contact 多列拼接）。",
+  "⚠️ 星星榜姓名双列：B=真名 E=脱敏（吴*沫）—— columnRoles 显式锁 B（叶子教训）。",
+  "⚠️ 星星榜一个年级一张榜（初三语 35 人跨顶尖1+2 两班、初一英 23 人跨高手1/顶尖1 两班）→",
+  "  sheetProductMap 粗名，课程归属靠 v5.16 roster-lookup 按姓名反查后台全名",
+  "  （语文 81 条修正实证；⚠️ roster 同学生同课程重复条目必须 cands 去重，否则全部误判多班）。",
+  "⚠️ 星星榜子列 0/1 值（作业/笔记）—— is_done_val v5.16 起认纯 0/1 数值语义。",
+  "⚠️ 出勤/摄像头/周几/一条命列 = ignore（出勤只信系统，用户口径）；「补交」= 公式列噪声。",
+  "学情表×6（档案型无课次）暂 exclude —— 沟通记录/家长情况挂载留二期（aux problems 扩展）。",
+  "初英月考成绩表不入（成绩唯一来源=群聊正则，用户定口径）。"
+ ]
+}

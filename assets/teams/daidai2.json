@@ -1,0 +1,305 @@
+{
+ "team": "语英 · 呆呆团队（高中）",
+ "minVersion": "5.16",
+ "feishu": {
+  "via": "cli",
+  "sourceType": "wiki",
+  "source": "JnBqwuWZPiw03qkJpoUc08IXnDh",
+  "lessonPattern": "^(?:第\\s*([0-9０-９一二三四五六七八九十]+)\\s*[次节讲周]\\s*课?|课次\\s*([0-9０-９]+))\\s*[-－—_:：]?\\s*(.*)$",
+  "sheets": {
+   "include": [
+    "dtBltf",
+    "gqd1ob",
+    "33N1WS",
+    "3oJtR6",
+    "NDs9A9",
+    "EPznKa",
+    "G28vaF",
+    "q0mYxY",
+    "PvXJiV",
+    "TM30Rv",
+    "i0wWrK"
+   ],
+   "exclude": {
+    "qNxksc": "数据（聚合统计）",
+    "07b44d": "高一145班六A 档案表（无课次；续报信息走积分表旁档案表 aux）",
+    "f36jYD": "高二120班六B 档案表（同上）",
+    "WR7EOF": "高二145班 档案表（同上）",
+    "9zmRN9": "高三145班 档案表（同上）",
+    "ud4DJk": "高一120班日D班 档案表（同上）",
+    "mzVPjj": "高一145日A班 档案表（同上）",
+    "8hYJKo": "高中英语听口专题 档案表（同上）",
+    "rDUsJY_aux": "高一语文清北班 → auxSheets renew",
+    "UynAcd_aux": "高一语文985班 → auxSheets renew",
+    "AvbPYF_aux": "高二语文 → auxSheets renew",
+    "RZs8tG_aux": "高三语文 → auxSheets renew",
+    "kj8W2Z": "问题反馈-越（无问题等级列，二期扩展）",
+    "mLF43i": "问题反馈-宁（同上）",
+    "M9wGrA": "语文一对一加课覆盖率（运营）",
+    "sJL0UA": "语文加课（运营）",
+    "BKGYFV": "作文班（评估中）",
+    "yzm453": "秋季红包报销（运营）",
+    "WVdDWT": "欠费核对-宁（运营）",
+    "gMkQDz": "欠费核对-越（运营）",
+    "UQ3iTy": "Sheet31（待确认）",
+    "OT4T7v": "英语加课记录（运营）",
+    "SwDNvK": "Sheet35（待确认）",
+    "F1QDIT": "高一145班打卡情况（评估中）"
+   }
+  },
+  "auxSheets": {
+   "rDUsJY": "renew",
+   "UynAcd": "renew",
+   "AvbPYF": "renew",
+   "RZs8tG": "renew"
+  },
+  "auxRenewCols": {
+   "rDUsJY": {
+    "stu": "学生姓名",
+    "level": "续班分层",
+    "reason": "未续原因",
+    "_note": "是否续报/是否建群等留二期"
+   },
+   "UynAcd": {
+    "stu": "学生姓名",
+    "level": "续班分层",
+    "reason": "未续原因"
+   },
+   "AvbPYF": {
+    "stu": "学生姓名",
+    "level": "续班分层",
+    "reason": "未续原因"
+   },
+   "RZs8tG": {
+    "stu": "学生姓名",
+    "level": "续班分层",
+    "reason": "未续原因"
+   }
+  },
+  "columnRoles": {
+   "dtBltf": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "gqd1ob": {
+    "stuName": {
+     "col": "D"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "3oJtR6": {
+    "stuName": {
+     "col": "D"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "33N1WS": {
+    "stuName": {
+     "col": "B"
+    },
+    "coTeacherName": {
+     "col": "C"
+    }
+   },
+   "NDs9A9": {
+    "stuName": {
+     "col": "E"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "EPznKa": {
+    "stuName": {
+     "col": "E"
+    },
+    "coTeacherName": {
+     "col": "C"
+    },
+    "note": {
+     "col": "A"
+    }
+   },
+   "G28vaF": {
+    "stuName": {
+     "col": "E"
+    },
+    "coTeacherName": {
+     "col": "C"
+    }
+   },
+   "q0mYxY": {
+    "stuName": {
+     "col": "D"
+    },
+    "note": {
+     "col": "B"
+    }
+   },
+   "PvXJiV": {
+    "stuName": {
+     "col": "D"
+    },
+    "note": {
+     "col": "B"
+    }
+   },
+   "TM30Rv": {
+    "stuName": {
+     "col": "D"
+    },
+    "note": {
+     "col": "B"
+    }
+   },
+   "i0wWrK": {
+    "stuName": {
+     "col": "D"
+    },
+    "note": {
+     "col": "B"
+    }
+   }
+  },
+  "sheetProductMap": {
+   "dtBltf": "高一英语145班六A",
+   "gqd1ob": "高二英语120班六B",
+   "33N1WS": "高二英语145班",
+   "3oJtR6": "高三英语145班",
+   "NDs9A9": "高一英语120班日D",
+   "EPznKa": "高一英语145班日A",
+   "G28vaF": "高中英语听口",
+   "q0mYxY": "高一语文清北班",
+   "PvXJiV": "高一语文985班",
+   "TM30Rv": "高二语文",
+   "i0wWrK": "高三语文"
+  },
+  "metaAlias": {
+   "特殊情况备注": "note",
+   "学习水平分层（联席）": "note",
+   "学习水平分层联席：多多": "note",
+   "学习水平分层联席：小智": "note",
+   "学习水平分层\n联席：小智": "note"
+  },
+  "items": {
+   "done": [
+    "作业",
+    "笔记"
+   ],
+   "ignore": [
+    "出勤",
+    "摄像头",
+    "积分",
+    "colT",
+    "colF",
+    "colH",
+    "colI",
+    "补交",
+    "学生姓名"
+   ],
+   "passive": [
+    "课堂状态",
+    "暴露出来的学科问题",
+    "解决办法",
+    "闪光点",
+    "作业提醒",
+    "本周问题",
+    "主讲诊断",
+    "联席跟进情况",
+    "总积分",
+    "学生学习习惯",
+    "学科主要问题",
+    "首课反馈",
+    "沟通反馈",
+    "成绩",
+    "学校",
+    "性格特点",
+    "城区",
+    "掌控手段",
+    "月考成绩",
+    "跟踪解决建议",
+    "提醒",
+    "是否纠正",
+    "推理题",
+    "单词听写",
+    "听写",
+    "朗读",
+    "每周朗读"
+   ],
+   "passiveContains": [
+    "反馈",
+    "情况",
+    "问题",
+    "分层",
+    "诊断",
+    "周一",
+    "周二",
+    "周三",
+    "周四",
+    "周五",
+    "周六",
+    "周日",
+    "一条命",
+    "积分",
+    "批改",
+    "第一天",
+    "第二天",
+    "第三天",
+    "第四天",
+    "第五天",
+    "第六天",
+    "第七天",
+    "沟通",
+    "学习信息",
+    "打卡"
+   ],
+   "alias": {
+    "作业1": "作业",
+    "作业2": "作业",
+    "作业3": "作业"
+   }
+  },
+  "longValLen": 400,
+  "columnSkipPatterns": [
+   "数字$",
+   "^col[A-Za-z]{0,3}$",
+   "^[周一二三四五六日]+[0-9.]*$"
+  ],
+  "_sheetProductMap_note": "145/120 班是英语班（班档案表学科问题=语法/完型/写作 实证）；粗名带科目词供归一规则（v5.16 roster-lookup）在高中花名册接入后使用；高中后台课程全名待拉英语教务花名册后归一。"
+ },
+ "_readme": [
+  "呆呆团队（高中）·「高中文科学情表」。2026-11-14 接入 v5.16。",
+  "wiki 节点 JnBqwuWZPiw03qkJpoUc08IXnDh → obj_token=ISjAs4eS4h1F8RtHJIocKtmjnif。",
+  "⚠️⚠️ 真名/脱敏列与初中星星榜**相反**：表头「学生名字」列=真名，「学生姓名」列=脱敏",
+  "  （张*峰）—— 已按星号率逐表判定真名列（gqd1ob/3oJtR6 例外用 D：B 断写 D 续全名单）。",
+  "⚠️⚠️ 高中积分表只有部分班有后台花名册：孙紫菁（高一英语145层日A赵/120层日D赵/",
+  "  初三英语听口专项班赵）已归一 32 条；高二英语145/120、高三英语145、语文 4 班、",
+  "  高一145班六A（81 人，班型层命名，后台课程待确认）的花名册缺失 → 保留粗名待接。",
+  "结构：一班一积分表（第N周+第N天子列，wide2 主表）×11 + 语文 4 班档案表（aux renew，",
+  "  level=续班分层/reason=未续原因）。",
+  "⚠️ 积分表四套列布局（A/B/C/D 型）→ columnRoles 逐表声明；姓名尾缀「某生（初二）」",
+  "  走 norm_name_loose 兜底。",
+  "问题反馈-越/宁 无问题等级列 → 暂 exclude（AUX_PROBLEM_COLS 需 stu+level）。",
+  "作文班/打卡情况/Sheet31/Sheet35 待业务确认后再定用途。"
+ ]
+}
