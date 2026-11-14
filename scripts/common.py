@@ -987,7 +987,10 @@ def fs_stats(fs):
         if isinstance(g, dict) and g.get("seq"):
             ratings.append(g)
     meta = fs.get("meta") or {}
-    exam = parse_fs_exam(meta.get("examScore") or meta.get("exam_score"))
+    # v5.18：档案表「成绩」列解析结果（adapt attach_exams 挂在 record 级）优先——
+    #   它带表级满分语境（高一 100 制中考英语 / 高二三 150 制），比裸 parse_fs_exam 准。
+    #   与群聊正则**并存**：chat 有成绩时这里只作「飞书表另有」提示，不改分档。
+    exam = fs.get("exam") or parse_fs_exam(meta.get("examScore") or meta.get("exam_score"))
     note = str(meta.get("note") or "").strip()
     # v4.51：备注里的「月考 / 分数 / 名次」句子单独摘出来（优先展示在卡片可见区）
     _sn = fs_score_notes(note)

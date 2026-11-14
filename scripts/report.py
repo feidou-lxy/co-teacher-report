@@ -990,7 +990,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.17"
+SKILL_VER = "v5.18"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -1040,7 +1040,7 @@ def exam_head(s, fst):
                f'{exl.get("evi_full") or exl.get("evi") or ""}'
                + ("（原文无满分标注，满分按学科默认值推断）" if exl.get("assumed") else ""))
         if fst and fst.get("exam"):
-            tip += f'｜飞书表另有：{fst["exam"].get("text") or ""}'
+            tip += f'｜飞书档案表另有：{fst["exam"].get("text") or ""}'
         # v4.64：**把匹配到的那句原话直接显示出来**（原来只在 title 悬浮提示里）。
         #   用户看到「11/150 得分率 7%」时无法自证真假，只能来问「这成绩哪来的」。
         #   原话一摆出来，「没有月考，11月2日期中考试」是不是分数，一眼可判。
@@ -1073,7 +1073,8 @@ def exam_head(s, fst):
         score = (_html.escape(_raw) if re.search(r"\d", _raw)
                  else f'<span class="cword">{_html.escape(_raw)}</span>')
         pct = f'{f["pct"]:.0%}' if f.get("pct") is not None else ""
-        meta = "飞书表"
+        # v5.18：来源标到子类（飞书档案 · 中考/期中/听口），与群聊正则来源并排可辨
+        meta = "飞书档案" + (f" · {f['examTag']}" if f.get("examTag") else "")
         tip = (f'飞书表「{fst.get("sheet") or ""}」第 {fst.get("row")} 行：'
                f'{f.get("text") or ""}'
                + (f'（{f["assumed"]}）' if f.get("assumed") else ""))

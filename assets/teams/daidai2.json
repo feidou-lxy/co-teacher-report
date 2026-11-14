@@ -22,13 +22,14 @@
    ],
    "exclude": {
     "qNxksc": "数据（聚合统计）",
-    "07b44d": "高一145班六A 档案表（无课次；续报信息走积分表旁档案表 aux）",
-    "f36jYD": "高二120班六B 档案表（同上）",
-    "WR7EOF": "高二145班 档案表（同上）",
-    "9zmRN9": "高三145班 档案表（同上）",
-    "ud4DJk": "高一120班日D班 档案表（同上）",
-    "mzVPjj": "高一145日A班 档案表（同上）",
-    "8hYJKo": "高中英语听口专题 档案表（同上）",
+    "07b44d_aux": "高一145班六A 档案表 → auxSheets exam（v5.18 成绩列提取）",
+    "f36jYD_aux": "高二120班六B 档案表 → auxSheets exam",
+    "WR7EOF_aux": "高二145班 档案表 → auxSheets exam",
+    "9zmRN9_aux": "高三145班 档案表 → auxSheets exam",
+    "ud4DJk_aux": "高一120班日D班 档案表 → auxSheets exam",
+    "mzVPjj_aux": "高一145日A班 档案表 → auxSheets exam",
+    "8hYJKo_aux": "高中英语听口专题 档案表 → auxSheets exam",
+    "BKGYFV_aux": "作文班 → auxSheets exam（成绩列暂空，占位）",
     "rDUsJY_aux": "高一语文清北班 → auxSheets renew",
     "UynAcd_aux": "高一语文985班 → auxSheets renew",
     "AvbPYF_aux": "高二语文 → auxSheets renew",
@@ -37,7 +38,6 @@
     "mLF43i": "问题反馈-宁（同上）",
     "M9wGrA": "语文一对一加课覆盖率（运营）",
     "sJL0UA": "语文加课（运营）",
-    "BKGYFV": "作文班（评估中）",
     "yzm453": "秋季红包报销（运营）",
     "WVdDWT": "欠费核对-宁（运营）",
     "gMkQDz": "欠费核对-越（运营）",
@@ -51,8 +51,17 @@
    "rDUsJY": "renew",
    "UynAcd": "renew",
    "AvbPYF": "renew",
-   "RZs8tG": "renew"
+   "RZs8tG": "renew",
+   "07b44d": "exam",
+   "f36jYD": "exam",
+   "WR7EOF": "exam",
+   "9zmRN9": "exam",
+   "ud4DJk": "exam",
+   "mzVPjj": "exam",
+   "8hYJKo": "exam",
+   "BKGYFV": "exam"
   },
+  "_auxSheets_note": "v5.18：8 张英语档案表进 aux exam 通道——「学习信息→成绩」列解析后挂 record 级 exam，与群聊正则并存不改分档；renew 语文档案表的「成绩（初中）」列也由 attach_exams 顺带提取（不占 purpose）。",
   "auxRenewCols": {
    "rDUsJY": {
     "stu": "学生姓名",
@@ -120,7 +129,7 @@
    },
    "NDs9A9": {
     "stuName": {
-     "col": "E"
+     "col": "B"
     },
     "coTeacherName": {
      "col": "C"
@@ -131,7 +140,7 @@
    },
    "EPznKa": {
     "stuName": {
-     "col": "E"
+     "col": "B"
     },
     "coTeacherName": {
      "col": "C"
@@ -142,7 +151,7 @@
    },
    "G28vaF": {
     "stuName": {
-     "col": "E"
+     "col": "B"
     },
     "coTeacherName": {
      "col": "C"
@@ -150,7 +159,7 @@
    },
    "q0mYxY": {
     "stuName": {
-     "col": "D"
+     "col": "A"
     },
     "note": {
      "col": "B"
@@ -158,7 +167,7 @@
    },
    "PvXJiV": {
     "stuName": {
-     "col": "D"
+     "col": "A"
     },
     "note": {
      "col": "B"
@@ -166,7 +175,7 @@
    },
    "TM30Rv": {
     "stuName": {
-     "col": "D"
+     "col": "A"
     },
     "note": {
      "col": "B"
@@ -174,7 +183,7 @@
    },
    "i0wWrK": {
     "stuName": {
-     "col": "D"
+     "col": "A"
     },
     "note": {
      "col": "B"

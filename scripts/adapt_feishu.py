@@ -832,6 +832,95 @@ def _aux_colmap(vals, wanted):
     return m
 
 
+def attach_exams(students, all_sheets, degraded):
+    """v5.18：飞书档案表「学习信息 → 成绩」列 → 档案表成绩（与群聊正则**并存**，不改分档）。
+
+    覆盖两类：
+    - 主表带成绩子列（呆呆初三听口专项班 UmEQZ2）→ 按 sourceRow 行号 1:1 挂；
+    - aux 表带成绩子列（高中 8 张英语档案表 / 4 张语文档案表）→ 按姓名归一挂
+      （exact → loose 任意尾括号 → 括号内别名，与 roster 对齐同套兜底）。
+    同一学生多表命中：第一条进 s["exam"]，其余进 s["examAlt"]（仅悬浮提示用）。
+    解析失败 / 纯描述文字不挂（反编造：只收解析器实证认出的分数形态）。
+    """
+    try:
+        import extract_feishu_exam as _fee
+    except Exception as e:                     # pragma: no cover
+        degraded.append({"field": "feishu.exam", "reason": f"extract_feishu_exam 导入失败：{e}",
+                         "impact": "档案表「成绩」列不参与报告（其余功能不受影响）"})
+        return
+    by_norm = {}
+    for s in students:
+        by_norm.setdefault(s["studentNameNorm"], []).append(s)
+
+    def _match(nm):
+        n = common.norm_name(nm)
+        for c in (n, common.norm_name_loose(n)):
+            if c in by_norm:
+                return by_norm[c]
+        for m in re.finditer(r"[（(]([^（()）]{2,})[）)]", n):
+            c = common.norm_name(m.group(1))
+            if c in by_norm:
+                return by_norm[c]
+        return None
+
+    for sh in all_sheets:
+        vals = sh.get("values") or []
+        if not vals:
+            continue
+        recs = _fee.extract_sheet(sh)
+        if not recs:
+            continue
+        title = sh.get("title") or ""
+        full, full_note = _fee.infer_full(title, recs)
+        is_aux = bool(sh.get("aux"))
+        if is_aux:
+            n_hit = n_miss = 0
+            miss_names = []
+            for rec in recs:
+                if not rec["parsed"]:
+                    continue
+                tgt = _match(rec["student"])
+                if not tgt:
+                    n_miss += 1
+                    if len(miss_names) < 6:
+                        miss_names.append(rec["student"])
+                    continue
+                ex = _fee.to_fs_exam(rec["raw"], rec["parsed"], full, full_note)
+                for s in tgt:
+                    if not s.get("exam"):
+                        s["exam"] = ex
+                    else:
+                        s.setdefault("examAlt", []).append(
+                            {"sheet": title, "text": rec["raw"]})
+                n_hit += 1
+            stats_note = f"{n_hit} 人命中"
+            if n_miss:
+                stats_note += f"；{n_miss} 行未对齐"
+            print(f"   [档案成绩] aux「{title}」：{stats_note}")
+            if n_miss:
+                degraded.append({
+                    "field": f"feishu.aux[{sh.get('sheetId')}].exam",
+                    "reason": f"成绩表「{title}」{n_miss} 行学生未对齐主档案表"
+                              f"（如 {miss_names}）",
+                    "impact": "这些行的档案成绩不参与报告（可能是已退/未报名学生）",
+                })
+        else:
+            by_row = {r["row"]: r for r in recs}
+            n_hit = 0
+            for s in students:
+                if s.get("sourceSheetId") != sh.get("sheetId"):
+                    continue
+                rec = by_row.get(s.get("sourceRow"))
+                if not rec or not rec["parsed"]:
+                    continue
+                ex = _fee.to_fs_exam(rec["raw"], rec["parsed"], full, full_note)
+                if ex and not s.get("exam"):
+                    s["exam"] = ex
+                    n_hit += 1
+            if n_hit:
+                print(f"   [档案成绩] 主表「{title}」：{n_hit} 人（按行号直挂）")
+
+
 def merge_aux(students, aux_sheets, degraded, renew_cols_override=None):
     """辅助表按学生姓名并入 students（meta 挂 renew* 字段 / problems 列表）。
 
@@ -1679,6 +1768,9 @@ def main():
     #      让这些字段跟着学生记录一起走完后续流程。
     aux_stats = merge_aux(students, aux_sheets, degraded,
                           renew_cols_override=(fs.get("auxRenewCols") or {}))
+
+    # ---- v5.18：档案表「成绩」列 → 档案表成绩（并存口径，主表+aux 都试）
+    attach_exams(students, raw.get("sheets") or [], degraded)
 
     # ---- 对齐花名册（去重后）
     joined = unmatched = 0
