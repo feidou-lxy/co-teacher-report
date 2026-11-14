@@ -10,7 +10,7 @@
     wide2   宽表·2 行表头   每课 6~7 子列   NPMSWD / MbVgf8 / mslXT3 / KR6aiI / 罗
     wide3   宽表·3 行表头   每课 10 列      某生（次课名 → 分类 → 子项）
     narrow  窄表·1 行表头   每课 1 列       张寒 / 马（格内是 `出勤,作业,框架笔记`）
-    flat    扁平无课次列                   轩轩（已按用户口径排除）
+    flat    扁平无课次列                   某生（已按用户口径排除）
 
 ━━━ 三条铁律 ━━━
 1. **绝不硬编码列号**。实测「打穿题」是第 3 次课才插入的列：第 1、2 次课每课 6 列、
@@ -1724,9 +1724,18 @@ def main():
         for s in students:
             # v5.16：loose 二次匹配——「某生（初二）」这类尾缀标注（norm_name 不剥）
             #   在精确集 miss，用 norm_name_loose（剥尾部状态括号）再对一次。
+            # v5.17：第三 chance——括号内别名（「Cindy3077（某生）」「nike（某生）停课」），
+            #   外层剥不出真名时取（xxx）里的名字再对精确集。
             _k = s["studentNameNorm"]
             _hit = (_k in roster_norm
                     or common.norm_name_loose(_k) in roster_norm_loose)
+            if not _hit:
+                import re as _re
+                for _m in _re.finditer(r"[（(]([^（()）]{2,})[）)]", _k):
+                    _inner = common.norm_name(_m.group(1))
+                    if _inner in roster_norm or common.norm_name_loose(_inner) in roster_norm_loose:
+                        _hit = True
+                        break
             if _hit:
                 joined += 1
             else:

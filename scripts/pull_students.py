@@ -56,7 +56,14 @@ def main():
         sel = [x for x in rows if (x.get(field) or "").strip() == name]
         label = common.ROLE_LABEL.get(role, "联席")
     out = []
+    seen = set()          # v5.17：后台接口一产品可能返回多条完全相同记录，按业务键去重
+    n_dup = 0
     for x in sel:
+        key = (x.get("stuSeq"), x.get("productStudentId"), x.get("productName"))
+        if key in seen:
+            n_dup += 1
+            continue
+        seen.add(key)
         out.append({
             "stuName": x.get("stuName"),
             "stuSeq": x.get("stuSeq"),
@@ -73,7 +80,8 @@ def main():
     json.dump(out, open(f"{wd}/students.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
     label = common.ROLE_LABEL.get(role, "联席")
-    print(f"\n✅ {label}「{name}」学生 {len(out)} 人 -> students.json")
+    print(f"\n✅ {label}「{name}」学生 {len(out)} 人 -> students.json"
+          + (f"（已去重 {n_dup} 条后台重复记录）" if n_dup else ""))
     c = Counter((x.get("productName") or "") for x in out)
     for k, v in c.most_common():
         print(f"   {v:>3}  {k}")

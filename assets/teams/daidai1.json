@@ -9,6 +9,7 @@
   "sheets": {
    "include": [
     "sLM9Ax",
+    "2pmDnB",
     "2TyXae",
     "AUmSpT",
     "eUr5qX",
@@ -18,6 +19,7 @@
    "exclude": {
     "hsQlLk": "数据（联席×打卡率聚合统计，运营）",
     "TGgVOt": "初一语学情表（档案型无课次，二期再挂 aux）",
+    "RUnnj9": "初二语学情表（同上）",
     "RzvcKb": "初三语学情表（同上）",
     "85f139": "初一英学情表（同上）",
     "59x2VG": "初三英学情表（同上）",
@@ -44,7 +46,7 @@
      "col": "A"
     }
    },
-   "RUnnj9": {
+   "2pmDnB": {
     "stuName": {
      "col": "B"
     },
@@ -191,7 +193,7 @@
   ],
   "sheetProductMap": {
    "sLM9Ax": "初一语文",
-   "RUnnj9": "初二语文",
+   "2pmDnB": "初二语文",
    "2TyXae": "初三语文",
    "AUmSpT": "初一英语",
    "eUr5qX": "初二英语",
