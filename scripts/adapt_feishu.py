@@ -1701,14 +1701,16 @@ def main():
                 continue
             gr = next((g for g in _GRADES if g in p), None)
             sj = common.subject_of(p)
-            if not (gr and sj):
+            if not sj:
                 continue
             # v5.16b：cands 去重——roster 里同一学生同课程会有重复条目（后台
             #   一产品多记录），不去重会把「唯一班」误判成「多班不猜」
             #   （实测初一英星星榜 23 人全卡在这条上：每人都重复两条同课程）。
+            # v5.16c：粗名无年级词（「高中英语听口」——后台班名「高中英语听口
+            #   专题课日E赵」本身跨年级）时退化为只按科目找；唯一命中才替换。
             cands = list(dict.fromkeys(
                 c for c in roster_prods.get(s["studentNameNorm"], [])
-                if gr in c and common.subject_of(c) == sj))
+                if (gr in c if gr else True) and common.subject_of(c) == sj))
             if len(cands) == 1:
                 s["productRaw"] = s.get("productRaw") or p
                 s["productName"] = cands[0]
