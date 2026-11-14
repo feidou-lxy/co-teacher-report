@@ -166,6 +166,11 @@ def is_done_val(v):
         return None
     if s in ERROR_VALS or s.startswith("#"):
         return None      # 公式错误值 = 没拿到数据 → 与空白同待遇（不进分母）
+    # v5.16：纯 0/1 数值（呆呆团队星星榜「作业/笔记」列值就是 1/0）——
+    #   原先落到「自由文本兜底=True」→ 0 也算完成，完成率虚高（实测某生笔记
+    #   第 1 周=0 却被计入 done）。只认 1/0 两个值，其他数字（积分 12/113）不在此列。
+    if s in ("1", "1.0", "0", "0.0"):
+        return s.startswith("1")
     if s in DONE_EXACT:
         return True
     if s in NOT_DONE_EXACT or s.startswith(NOT_DONE_PREFIX):
@@ -827,12 +832,15 @@ def _aux_colmap(vals, wanted):
     return m
 
 
-def merge_aux(students, aux_sheets, degraded):
+def merge_aux(students, aux_sheets, degraded, renew_cols_override=None):
     """辅助表按学生姓名并入 students（meta 挂 renew* 字段 / problems 列表）。
 
     ⚠️ 续报等级口径（用户 2026-11-11）：A=确定续、B=有意向、C 存在 —— 原样保留，不换算。
     ⚠️ 同名学生在多张续报 sheet 出现（按教务分工分 sheet）→ 字段取第一个非空、
        contact 逐条拼接（每条带 sheet 名出处）。问题清单允许多条（不同课次的问题）。
+    v5.16：profile.feishu.auxRenewCols = {sheetId: {stu/level/reason/note/contact/action: 列名或列名数组}}
+       —— 呆呆团队续报表列名与叶子不同（姓名/等级/具体情况/备注/沟通续报+第一二三轮状态），
+       contact 给数组 = 多列非空值按表内顺序拼接。
     """
     by_norm = {}
     for s in students:
@@ -842,7 +850,20 @@ def merge_aux(students, aux_sheets, degraded):
         purpose, title = sh.get("aux"), (sh.get("title") or "")
         vals = sh.get("values") or []
         if purpose == "renew":
-            cm = _aux_colmap(vals, {"stu": ["学生姓名"], **AUX_RENEW_COLS})
+            ovr = {k: v for k, v in (renew_cols_override or {}).get(sh.get("sheetId"), {}).items()
+                   if not k.startswith("_")} if renew_cols_override else {}
+            if ovr:
+                hdr = [cell_text(v) for v in (vals[0] if vals else [])]
+                cm = {}
+                for f, spec in ovr.items():
+                    names = spec if isinstance(spec, list) else [spec]
+                    idx = [j for j, t in enumerate(hdr)
+                           if t and any(t == nm or t.startswith(nm) for nm in names)]
+                    if idx:
+                        # contact 给数组 = 多列拼接（「沟通续报｜第一轮状态｜…」）；单字段取首个命中列
+                        cm[f] = idx if (f == "contact" and len(names) > 1) else idx[0]
+            else:
+                cm = _aux_colmap(vals, {"stu": ["学生姓名"], **AUX_RENEW_COLS})
             if "stu" not in cm or "level" not in cm:
                 degraded.append({
                     "field": f"feishu.aux[{sh.get('sheetId')}]",
@@ -855,8 +876,16 @@ def merge_aux(students, aux_sheets, degraded):
             for row in vals[1:]:
                 def _g(f):
                     j = cm.get(f)
+                    if j is None:
+                        return ""
+                    if isinstance(j, list):
+                        parts = [cell_text(row[x]) for x in j
+                                 if x < len(row) and cell_text(row[x])]
+                        return "｜".join(parts)
                     return cell_text(row[j]) if (j is not None and j < len(row)) else ""
                 name = _g("stu")
+                # v5.16：「（回）某生」这类括号前缀是业务标记（回费/回访），不是名字的一部分
+                name = re.sub(r"^[（(][^）)]*[）)]\s*", "", name or "").strip()
                 entry = {f: _g(f) for f in AUX_RENEW_COLS}
                 if not name or not any(entry.values()):
                     continue
@@ -1040,6 +1069,8 @@ def main():
 
     roster = load_json(os.path.join(out_dir, "roster.json"), []) or []
     roster_norm = {r.get("stuNameNorm") for r in roster if r.get("stuNameNorm")}
+    # v5.16：loose 归一集合（剥尾部状态括号）—— 尾缀学生也能对齐
+    roster_norm_loose = {common.norm_name_loose(n) for n in roster_norm if n}
     in_roster = bool(roster_norm)
 
     degraded = []
@@ -1220,6 +1251,11 @@ def main():
                     continue                      # 分组行：喂完值即走，不算脏行
                 # 整行空白 / 只有备注 —— 不计
                 if not any(v not in (None, "") for v in row):
+                    continue
+                # v5.16：只有 0 值格的行也不算「有数据」（呆呆团队积分表尾部
+                #   公式下拉残留大量 0 值网格，D 列无姓名、无法归属 → 纯噪声告警）
+                if not any(v not in (None, "") and str(v).strip() not in ("0", "0.0")
+                           for v in row):
                     continue
                 sheet_badname += 1
                 continue
@@ -1641,14 +1677,51 @@ def main():
 
     # ---- v5.09：辅助表并表（续报等级/未续原因/问题学生清单）—— 在花名册对齐前完成，
     #      让这些字段跟着学生记录一起走完后续流程。
-    aux_stats = merge_aux(students, aux_sheets, degraded)
+    aux_stats = merge_aux(students, aux_sheets, degraded,
+                          renew_cols_override=(fs.get("auxRenewCols") or {}))
 
     # ---- 对齐花名册（去重后）
     joined = unmatched = 0
     unjoined_names = []
     if in_roster:
+        # v5.16：粗粒度课程名归一（呆呆团队：星星榜一个年级一张榜，粗名「初三语文」
+        #   跨后台两个班；报告按 (姓名, 课程) 复合键取飞书记录，粗名会全部落空）。
+        #   规则：粗名含年级词+科目词 → 按学生姓名在 roster 里找「同年级+同科目」
+        #   的课程全名；**唯一命中才替换**（不猜），多命中保留粗名走 FS_BY_NAME 兜底。
+        _GRADES = ["高一", "高二", "高三", "初一", "初二", "初三", "小六", "五年级", "四年级"]
+        roster_prods = {}
+        for r in roster:
+            nm, pc = r.get("stuNameNorm"), (r.get("productName") or "")
+            if nm and pc:
+                roster_prods.setdefault(nm, []).append(pc)
+        n_fixed = n_ambig = 0
         for s in students:
-            if s["studentNameNorm"] in roster_norm:
+            p = str(s.get("productName") or "")
+            if re.search(r"20\d\d[QS]-", p):
+                continue
+            gr = next((g for g in _GRADES if g in p), None)
+            sj = common.subject_of(p)
+            if not (gr and sj):
+                continue
+            cands = [c for c in roster_prods.get(s["studentNameNorm"], [])
+                     if gr in c and common.subject_of(c) == sj]
+            if len(cands) == 1:
+                s["productRaw"] = s.get("productRaw") or p
+                s["productName"] = cands[0]
+                s["productFrom"] = "roster-lookup"
+                n_fixed += 1
+            elif len(cands) > 1:
+                n_ambig += 1
+        if n_fixed or n_ambig:
+            print(f"   [课程归一] 粗名→后台全名：修正 {n_fixed} 条"
+                  f"{'；' + str(n_ambig) + ' 条同年级同科目多班不猜' if n_ambig else ''}")
+        for s in students:
+            # v5.16：loose 二次匹配——「某生（初二）」这类尾缀标注（norm_name 不剥）
+            #   在精确集 miss，用 norm_name_loose（剥尾部状态括号）再对一次。
+            _k = s["studentNameNorm"]
+            _hit = (_k in roster_norm
+                    or common.norm_name_loose(_k) in roster_norm_loose)
+            if _hit:
                 joined += 1
             else:
                 unmatched += 1

@@ -60,6 +60,11 @@ TEAMS = {
     "初二数学 · 小白团队": "xiaobai2.json",
     "小白团队（小学初一）": "xiaobai1.json",
     "小学初一 · 小白团队": "xiaobai1.json",
+    # v5.16：呆呆团队（语英，两个工作簿）—— via=cli 无密钥形态
+    "呆呆团队（初中）": "daidai1.json",
+    "语英 · 呆呆团队（初中）": "daidai1.json",
+    "呆呆团队（高中）": "daidai2.json",
+    "语英 · 呆呆团队（高中）": "daidai2.json",
 }
 
 
