@@ -175,10 +175,21 @@ def main():
     run("leave_notes.py", ["--workdir", wd] + win_args)
     run("merge.py", ["--workdir", wd])
 
+    # ---------------- 阶段三：折算快照 + 覆盖模型 + 报告 ----------------
+    scope_flag = (["--course", name] if role == "course"
+                  else (["--edu", name] if role == "edu" else ["--co", name]))
+    adapter = "adapt_api.py" if args.api else "adapt_legacy.py"
+    run(adapter, ["--workdir", wd] + scope_flag
+        + ["--start", args.window, "--end", end])
+
     # ---------------- 飞书表（v4.66：并入主链路，需显式 --feishu）----------------
     # 为什么以前不并：pull_feishu 依赖 lark-cli 授权，单次要跑几分钟，不适合默认执行。
     # 但不并的后果是「报告静默沿用旧快照」—— 多人复用目录时旧数据混进新报告且看不出来。
     # 折中：显式 --feishu 才拉；不拉时 report.py 的「数据体检」会把快照时间写到报告顶部。
+    # ⚠️ v5.19 必须在 adapter 之后：adapt_feishu 的「粗名→后台全名」课程归一（v5.16）
+    #    依赖 snapshot/roster.json（adapter 落盘）—— 原先排在 adapter 之前，全新工作目录
+    #    首跑 roster 为空 → 归一全落空，卡片复合键全 miss，作业提交整列「无记录」
+    #    （2026-11-15 孙紫菁首跑实测踩中；宋婕没踩到只是因为目录里有上次残留的 roster）。
     if args.feishu:
         _prof = os.path.join(wd, "profile.json")
         if not os.path.exists(_prof):
@@ -187,12 +198,6 @@ def main():
         run("pull_feishu.py", ["--workdir", wd])
         run("adapt_feishu.py", ["--workdir", wd])
 
-    # ---------------- 阶段三：折算快照 + 覆盖模型 + 报告 ----------------
-    scope_flag = (["--course", name] if role == "course"
-                  else (["--edu", name] if role == "edu" else ["--co", name]))
-    adapter = "adapt_api.py" if args.api else "adapt_legacy.py"
-    run(adapter, ["--workdir", wd] + scope_flag
-        + ["--start", args.window, "--end", end])
     # ---------------- 教务维度：在读科目 / 续报接口（v5.10 补链）----------------
     #   ⚠️ 此前只在 --edu 帮助文本里提了 pull_enroll，run_all 却从没执行过 —— 教务报告的
     #   「已续报/未续报」永远显示「—」、多科目/可扩科全 0（于红霞首跑实测踩中）。
