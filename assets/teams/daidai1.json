@@ -18,12 +18,6 @@
    ],
    "exclude": {
     "hsQlLk": "数据（联席×打卡率聚合统计，运营）",
-    "TGgVOt": "初一语学情表（档案型无课次，二期再挂 aux）",
-    "RUnnj9": "初二语学情表（同上）",
-    "RzvcKb": "初三语学情表（同上）",
-    "85f139": "初一英学情表（同上）",
-    "59x2VG": "初三英学情表（同上）",
-    "HyeUbf": "初二英学情表（同上）",
     "2wrKdG": "初英月考成绩（成绩唯一来源=群聊正则，不入表）",
     "dhR5p4": "红包报销（运营）",
     "8lsDEc": "初语加课覆盖（运营记录）",
@@ -32,7 +26,13 @@
    }
   },
   "auxSheets": {
-   "gGPUUC": "renew"
+   "gGPUUC": "renew",
+   "TGgVOt": "note",
+   "RUnnj9": "note",
+   "RzvcKb": "note",
+   "85f139": "note",
+   "HyeUbf": "note",
+   "59x2VG": "note"
   },
   "columnRoles": {
    "sLM9Ax": {

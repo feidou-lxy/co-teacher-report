@@ -845,6 +845,29 @@ def _aux_colmap(vals, wanted):
     return m
 
 
+def _aux_colmap2(vals, wanted, hdr_rows=2):
+    """v5.22：前 hdr_rows 行表头合并 → {字段: 列号}。
+
+    学情表/档案表是两行表头：row0 是合并大栏（学习信息 / 第一次沟通…），
+    row1 才是子列名（学生学习习惯 / 学科主要问题…）→ 必须两行合着扫。
+    """
+    m = {}
+    n_rows = min(hdr_rows, len(vals))
+    for field, names in wanted.items():
+        for j in range(len(vals[0]) if vals else 0):
+            hit = False
+            for ri in range(n_rows):
+                row = vals[ri]
+                t = cell_text(row[j]) if j < len(row) else ""
+                if t and any(t.startswith(nm) for nm in names):
+                    m[field] = j
+                    hit = True
+                    break
+            if hit:
+                break
+    return m
+
+
 def attach_exams(students, all_sheets, degraded):
     """v5.18：飞书档案表「学习信息 → 成绩」列 → 档案表成绩（与群聊正则**并存**，不改分档）。
 
@@ -1016,6 +1039,61 @@ def merge_aux(students, aux_sheets, degraded, renew_cols_override=None):
                               f"（如 {miss_names[:6]}）",
                     "impact": "这些行不并表（可能只报了寒春/已退费学生）；如人数偏多请人工核对姓名写法",
                 })
+        elif "note" in (purpose or ""):
+            # v5.22：学情表/档案表「学生学习习惯 + 学科主要问题」→ 学生手记（meta.note）。
+            #   用户 2026-11-15 拍板：呆呆团队卡片「手记」取这两列（原先是星星榜/积分板的
+            #   特殊情况备注/学习水平分层，那种 A/B 分层值没有信息量）。
+            cm = _aux_colmap2(vals, {"stu": ["学生姓名"], "habit": ["学生学习习惯"],
+                                     "problem": ["学科主要问题"]})
+            if "stu" not in cm or ("habit" not in cm and "problem" not in cm):
+                degraded.append({
+                    "field": f"feishu.aux[{sh.get('sheetId')}]",
+                    "reason": f"手记表「{title}」表头不认识（需要「学生姓名 + 学生学习习惯/学科主要问题」列）",
+                    "impact": "该表未并入手记；卡片「手记」仍显示板上的旧备注",
+                })
+                continue
+            # 学科范围：表名带 语/英/数 → 只挂对应学科的记录（学生语英都在读时互不串）
+            subj = ("语文" if "语" in title else
+                    "英语" if "英" in title else
+                    "数学" if "数" in title else None)
+            sj = cm["stu"]
+            data_start = None
+            for ri, row in enumerate(vals):
+                v = cell_text(row[sj]) if sj < len(row) else ""
+                if v and v != "学生姓名":
+                    data_start = ri
+                    break
+            if data_start is None:
+                continue
+            n_hit = n_miss = 0
+            for row in vals[data_start:]:
+                def _gn(f):
+                    j = cm.get(f)
+                    return cell_text(row[j]) if (j is not None and j < len(row)) else ""
+                name = _gn("stu")
+                habit = _gn("habit").strip()
+                problem = _gn("problem").strip()
+                text = "；".join(x for x in (f"学习习惯：{habit}" if habit else "",
+                                             f"学科主要问题：{problem}" if problem else "")
+                                 if x)
+                if not name or not text:
+                    continue
+                tgt = [s for s in (by_norm.get(common.norm_name(name)) or [])
+                       if not subj or subj in (s.get("productName") or "")]
+                if not tgt:
+                    n_miss += 1
+                    continue
+                n_hit += 1
+                for s in tgt:
+                    _m = s.setdefault("meta", {})
+                    if _m.get("note") and _m["note"] != text:
+                        _m["noteBoard"] = _m["note"]      # 板上旧备注留档（报告不渲染）
+                    _m["note"] = text
+            stats["note:" + title] = {"rows_hit": n_hit, "rows_unmatched": n_miss,
+                                      "subject": subj or "全部学科"}
+            if n_hit:
+                print(f"   [手记] {title}：{n_hit} 人挂上手记"
+                      f"（{subj or '全部学科'}｜未命中 {n_miss}）")
         elif purpose == "problems":
             cm = _aux_colmap(vals, {"stu": ["学生姓名"], **AUX_PROBLEM_COLS})
             if "stu" not in cm or "level" not in cm:
