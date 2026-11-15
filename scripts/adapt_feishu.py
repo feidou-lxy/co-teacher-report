@@ -153,6 +153,19 @@ def _negated(w):
     return any(k in w for k in NOT_DONE_SUBSTR)
 
 
+def _blankish(v):
+    """v5.20：格子是否为「空信号」（0 / 空 / 公式错误值）。
+
+    全部格子都是空信号的周块 = 还没上的课（星星榜预画的未来周块），
+    不能生成课节，否则这些周的 作业/笔记 "0" 会全被 count_done 判成未完成，
+    分母虚高（2026-11-15 某生实测：10 周数据被算成 4/18、4/36、22%）。
+    """
+    if v in (None, "", False):
+        return True
+    s = str(v).strip()
+    return (not s) or s in ("0", "0.0") or s.startswith("#")
+
+
 def is_done_val(v):
     """完成项取值 → True（完成）/ False（未完成）/ None（无法判断）。"""
     if v is True:
@@ -1303,6 +1316,7 @@ def main():
         sheet_unknown, sheet_ignored, sheet_badname = [], [], 0
         sheet_placeholder = 0
         sheet_demo = 0                      # v5.13：rowSkipPatterns 命中的示范/说明行
+        sheet_empty_lesson = 0              # v5.20：全零周块（还没上的课）跳过计数
         sheet_multi_course = []             # v5.13：课程索引多候选不猜的学生
         sheet_undone, sheet_longval = {}, []
         n_ok = 0
@@ -1394,6 +1408,15 @@ def main():
                         else:
                             unk.append(leaf or nm)
                     if not items:
+                        continue
+                    # v5.20：**全零周块 = 还没上的课**，不生成课节 —— 否则未来周
+                    #   （星星榜预先画好 18 个周块）的 作业/笔记 "0" 全被 count_done
+                    #   判成「未完成」，分母虚高：某生 10 周数据被算成 作业 4/18、
+                    #   合计 4/36、22%，教务看到 22% 以为作业没读到（2026-11-15 实测踩中）。
+                    #   判据：该周所有格子全是 0/空 且无任何文字（已上但全零的周
+                    #   至少会有课堂状态/问题/办法之类的文字列，不会命中）。
+                    if all(_blankish(v) for v in items.values()):
+                        sheet_empty_lesson += 1
                         continue
                     sheet_unknown += unk
                     lessons.append({"seq": g["seq"], "raw": None, "items": items})
@@ -1536,6 +1559,8 @@ def main():
         if sheet_undone:
             print(f"       ↳ 未完成项："
                   + ", ".join(f"{k} {v}" for k, v in sorted(sheet_undone.items())))
+        if sheet_empty_lesson:
+            print(f"       ↳ v5.20 全零周块（还没上的课）跳过 {sheet_empty_lesson} 课节，不计入未完成分母")
         sheet_reports.append({
             "sheetId": sid, "title": title, "structure": spec["kind"],
             "lessonRow": spec["lessonRow"] + 1,
@@ -1546,6 +1571,7 @@ def main():
             "perLesson": spec.get("perLesson"),
             "skippedCols": spec.get("skippedCols") or [],
             "students": n_ok,
+            "emptyLessonsSkipped": sheet_empty_lesson,   # v5.20：全零周块跳过数
             "studentRowsSkipped": {"noName": sheet_badname, "placeholderName": sheet_placeholder},
             "metaMapped": {f: colname(j + 1) for f, j in sorted(mm.items())},
             "metaMissing": [f for f, _ in META_FIELDS if f not in mm],
