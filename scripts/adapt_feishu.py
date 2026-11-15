@@ -957,6 +957,66 @@ def attach_exams(students, all_sheets, degraded):
                 print(f"   [档案成绩] 主表「{title}」：{n_hit} 人（按行号直挂）")
 
 
+def merge_note_overlay(by_norm, vals, title, degraded, stats, sid):
+    """v5.22：学情表/档案表「学生学习习惯 + 学科主要问题」→ 学生手记（meta.note）。
+
+    v5.23 扩列名变体：呆呆各班表头不统一——星榜学情表=学生学习习惯/学科主要问题，
+    高中语文档案表=学习习惯/薄弱项（高三档案表又是 学科主要问题）→ 两组词形都认。
+    """
+    cm = _aux_colmap2(vals, {"stu": ["学生姓名"],
+                             "habit": ["学生学习习惯", "学习习惯"],
+                             "problem": ["学科主要问题", "薄弱项"]})
+    if "stu" not in cm or ("habit" not in cm and "problem" not in cm):
+        degraded.append({
+            "field": f"feishu.aux[{sid}]",
+            "reason": f"手记表「{title}」表头不认识（需要「学生姓名 + 学生学习习惯/学科主要问题」列）",
+            "impact": "该表未并入手记；卡片「手记」仍显示板上的旧备注",
+        })
+        return
+    # 学科范围：表名带 语/英/数 → 只挂对应学科的记录（学生语英都在读时互不串）
+    subj = ("语文" if "语" in title else
+            "英语" if "英" in title else
+            "数学" if "数" in title else None)
+    sj = cm["stu"]
+    data_start = None
+    for ri, row in enumerate(vals):
+        v = cell_text(row[sj]) if sj < len(row) else ""
+        if v and v != "学生姓名":
+            data_start = ri
+            break
+    if data_start is None:
+        return
+    n_hit = n_miss = 0
+    for row in vals[data_start:]:
+        def _gn(f):
+            j = cm.get(f)
+            return cell_text(row[j]) if (j is not None and j < len(row)) else ""
+        name = _gn("stu")
+        habit = _gn("habit").strip()
+        problem = _gn("problem").strip()
+        text = "；".join(x for x in (f"学习习惯：{habit}" if habit else "",
+                                     f"学科主要问题：{problem}" if problem else "")
+                         if x)
+        if not name or not text:
+            continue
+        tgt = [s for s in (by_norm.get(common.norm_name(name)) or [])
+               if not subj or subj in (s.get("productName") or "")]
+        if not tgt:
+            n_miss += 1
+            continue
+        n_hit += 1
+        for s in tgt:
+            _m = s.setdefault("meta", {})
+            if _m.get("note") and _m["note"] != text:
+                _m["noteBoard"] = _m["note"]          # 板上旧备注留档（报告不渲染）
+            _m["note"] = text
+    stats["note:" + title] = {"rows_hit": n_hit, "rows_unmatched": n_miss,
+                              "subject": subj or "全部学科"}
+    if n_hit:
+        print(f"   [手记] {title}：{n_hit} 人挂上手记"
+              f"（{subj or '全部学科'}｜未命中 {n_miss}）")
+
+
 def merge_aux(students, aux_sheets, degraded, renew_cols_override=None):
     """辅助表按学生姓名并入 students（meta 挂 renew* 字段 / problems 列表）。
 
@@ -974,7 +1034,7 @@ def merge_aux(students, aux_sheets, degraded, renew_cols_override=None):
     for sh in aux_sheets:
         purpose, title = sh.get("aux"), (sh.get("title") or "")
         vals = sh.get("values") or []
-        if purpose == "renew":
+        if purpose and "renew" in purpose:
             ovr = {k: v for k, v in (renew_cols_override or {}).get(sh.get("sheetId"), {}).items()
                    if not k.startswith("_")} if renew_cols_override else {}
             if ovr:
@@ -1039,61 +1099,14 @@ def merge_aux(students, aux_sheets, degraded, renew_cols_override=None):
                               f"（如 {miss_names[:6]}）",
                     "impact": "这些行不并表（可能只报了寒春/已退费学生）；如人数偏多请人工核对姓名写法",
                 })
+            # v5.23：renew+note 组合用途（小词高中语文档案表既是续报表、又带 学习习惯/薄弱项 列）
+            if "note" in (purpose or ""):
+                merge_note_overlay(by_norm, vals, title, degraded, stats, sh.get("sheetId"))
         elif "note" in (purpose or ""):
             # v5.22：学情表/档案表「学生学习习惯 + 学科主要问题」→ 学生手记（meta.note）。
             #   用户 2026-11-15 拍板：呆呆团队卡片「手记」取这两列（原先是星星榜/积分板的
             #   特殊情况备注/学习水平分层，那种 A/B 分层值没有信息量）。
-            cm = _aux_colmap2(vals, {"stu": ["学生姓名"], "habit": ["学生学习习惯"],
-                                     "problem": ["学科主要问题"]})
-            if "stu" not in cm or ("habit" not in cm and "problem" not in cm):
-                degraded.append({
-                    "field": f"feishu.aux[{sh.get('sheetId')}]",
-                    "reason": f"手记表「{title}」表头不认识（需要「学生姓名 + 学生学习习惯/学科主要问题」列）",
-                    "impact": "该表未并入手记；卡片「手记」仍显示板上的旧备注",
-                })
-                continue
-            # 学科范围：表名带 语/英/数 → 只挂对应学科的记录（学生语英都在读时互不串）
-            subj = ("语文" if "语" in title else
-                    "英语" if "英" in title else
-                    "数学" if "数" in title else None)
-            sj = cm["stu"]
-            data_start = None
-            for ri, row in enumerate(vals):
-                v = cell_text(row[sj]) if sj < len(row) else ""
-                if v and v != "学生姓名":
-                    data_start = ri
-                    break
-            if data_start is None:
-                continue
-            n_hit = n_miss = 0
-            for row in vals[data_start:]:
-                def _gn(f):
-                    j = cm.get(f)
-                    return cell_text(row[j]) if (j is not None and j < len(row)) else ""
-                name = _gn("stu")
-                habit = _gn("habit").strip()
-                problem = _gn("problem").strip()
-                text = "；".join(x for x in (f"学习习惯：{habit}" if habit else "",
-                                             f"学科主要问题：{problem}" if problem else "")
-                                 if x)
-                if not name or not text:
-                    continue
-                tgt = [s for s in (by_norm.get(common.norm_name(name)) or [])
-                       if not subj or subj in (s.get("productName") or "")]
-                if not tgt:
-                    n_miss += 1
-                    continue
-                n_hit += 1
-                for s in tgt:
-                    _m = s.setdefault("meta", {})
-                    if _m.get("note") and _m["note"] != text:
-                        _m["noteBoard"] = _m["note"]      # 板上旧备注留档（报告不渲染）
-                    _m["note"] = text
-            stats["note:" + title] = {"rows_hit": n_hit, "rows_unmatched": n_miss,
-                                      "subject": subj or "全部学科"}
-            if n_hit:
-                print(f"   [手记] {title}：{n_hit} 人挂上手记"
-                      f"（{subj or '全部学科'}｜未命中 {n_miss}）")
+            merge_note_overlay(by_norm, vals, title, degraded, stats, sh.get("sheetId"))
         elif purpose == "problems":
             cm = _aux_colmap(vals, {"stu": ["学生姓名"], **AUX_PROBLEM_COLS})
             if "stu" not in cm or "level" not in cm:
