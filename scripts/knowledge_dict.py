@@ -209,6 +209,7 @@ BUILTIN_MODULES = {
     "物理": "physics_dict",
     "化学": "chemistry_dict",
     "语文": "chinese_dict",     # v5.14：语文知识树打底（教材自建，与高中物理同构）
+    "英语": "english_dict",     # v5.20：英语知识树打底（人教版教材自建；后台英语树为空）
 }
 # 全部已建词表的科目（subject_mismatch 空态文案用，让读者知道还差什么）
 BUILTIN_SUBJECTS = ("数学",) + tuple(BUILTIN_MODULES)

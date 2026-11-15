@@ -391,6 +391,17 @@ EXAM_SUB_SCORE_PRE = ("作文",)
 #   同一句里出现 ≥2 个不同分项科目标注 → 整句不取（总分未知，宁缺勿错）。
 #   注意单个「听口38分」仍保留 —— 听口专项班整卷就是听口，那是合法成绩。
 EXAM_SUB_LABELS = ("听口", "笔试", "作文", "听力", "口语")
+# ⚠️ v5.20：分项分的「转述给分」形态（小词回测实测两条，语文课）——
+#   「月考的作文…为啥还是36」/「作文老师给分38分」→ 36、38 是**作文分项分**
+#   不是整卷总分，被当成 36/100 得分率 36% 封顶需关注（反向误判）。
+#   句内含分项标注 + 分数前有「给分/还是/只给」这类**给分语境词** → 整句不取。
+#   「这次月考还是90分」句内无分项标注 → 不受影响，保真。
+EXAM_SUB_GIVE_PRE = ("给分", "只给", "还是", "才给")
+# ⚠️ v5.20：「从A到B」进步/退步区间取**后值**（刘颖越回测实测「从90多分到
+#   110多分」→ 原取 90/150 得分率 60%，实际进步到 110 多）。end 必须跟
+#   「分」字（防「从11月2日到11月9日」的日期区间）。
+EXAM_FROMTO_RE = re.compile(
+    r"从\s*\d{1,3}(?:\.\d)?[^0-9，。;；]{0,4}到\s*(\d{2,3})(?:\.\d)?\s*(?:多)?\s*分")
 # 班级/年级平均分 ≠ 学生本人成绩（实测：「今天考的一个算是单元测吧，平均60多分」）
 EXAM_AVG_SENT = ("平均", "班平", "均分", "全班", "年级平均", "班级平均", "平均分")
 EXAM_FULL_RE = re.compile(r"(?:满分|总分|卷面)\s*[:：]?\s*(\d{2,3})")
@@ -474,6 +485,13 @@ def _exam_attributed(sent, name, value_str):
     ③ 该词是别的人名（如「李四 140」）→ 否；④ 分数前没有名字 → 单人群语境下归本人。
     """
     if name and name in sent:
+        return True
+    # ⚠️ v5.20：「从A到B」进步/退步区间 → 区间值默认归本人（这是家长/学生
+    #   描述自己成绩变化的第一人称句式；前面 2~4 字是「提高到/分到」这类
+    #   动介词，不是名字，走 rule ② 会被误拒）。EXAM_FROMTO_RE 已要求
+    #   到后跟「分」，日期区间（从11月2日到11月9日）不会进来。
+    if value_str and re.search(
+            r"从\s*\d{1,3}[^，。;；]{0,6}到\s*[:：]?\s*" + re.escape(value_str), sent):
         return True
     if value_str:
         m = re.search(r"([\u4e00-\u9fa5]{2,4})\s*[:：]?\s*" + re.escape(value_str), sent)
@@ -567,6 +585,16 @@ def extract_exam(triples, stu_name, subject=""):
                     hit = mb.start()
             if value is None and rank is None:
                 continue
+            # ⚠️ v5.20：分项「给分」语境 → 整句不取（EXAM_SUB_GIVE_PRE 注释）
+            if (value is not None and hit is not None
+                    and any(k in s for k in EXAM_SUB_LABELS)
+                    and any(k in s[max(0, hit - 6):hit] for k in EXAM_SUB_GIVE_PRE)):
+                continue
+            # ⚠️ v5.20：「从A到B」进步/退步区间取后值（EXAM_FROMTO_RE 注释）
+            m_ft = EXAM_FROMTO_RE.search(s)
+            if m_ft:
+                value = float(m_ft.group(1))
+                hit = m_ft.start(1)
             if hit is None and mr is not None:      # 只报了名次（无分数）→ 围绕「第 N 名」截
                 hit = mr.start()
             # v5.13：目标/虚拟语气 + 卷面满分短语（见 EXAM_GOAL_PRE / EXAM_FULL_PHRASE 注释）
