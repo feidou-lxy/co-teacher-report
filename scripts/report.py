@@ -666,12 +666,72 @@ def score_row(fst, limit=4):
             f'<div class="tchips">{"".join(chips)}</div></div>')
 
 
+# v5.24：课节点评（三段式）—— 依据 2026-11-18 呆呆联席培训「看什么—发现什么—用什么词点评」
+#   话术骨架（团队激励话术库）逐课次生成，供联席直接取用：
+#   ① 我看见：一个具体动作，指得出位置（哪轮、交没交、写到哪、错在哪）
+#   ② 这说明：给这个动作起个名字（已有的能力 / 缺的那一步）
+#   ③ 这件事：这个动作以后能帮他什么（让它值得，而不是好听）
+# 反编造约束：只用 boards_summary 里真实存在的字段（status/errors/stuck_at/topic_knowledge/topic），
+#   读图失败轮不计入；一节课一条点评；无可用证据的课次不写（宁缺勿编）。
+#   措辞约束：不写「粗心/不认真/基础差」，不下「不会」的判词（空白=先确认漏做还是漏交）。
+def _lesson_comment3(g):
+    from collections import Counter
+    ds = [d for d in (g.get("details") or []) if not d.get("failed")]
+    if not ds:
+        return None
+    n = len(ds)
+    ok = sum(1 for d in ds if d.get("status") == "完整作答")
+    part = sum(1 for d in ds if d.get("status") == "部分作答")
+    blank = sum(1 for d in ds if d.get("status") in ("空白", "空白未提交"))
+    errs = [e for d in ds for e in (d.get("errors") or [])]
+    err_top = Counter(errs).most_common(1)[0][0] if errs else ""
+    # 课次主题：取本课次出现最多的关联知识点（对齐聊天高频词表口径，v4.80 用 _bk_name 归一）
+    tc = Counter((_bk_name((d.get("topic_knowledge") or "").strip())
+                  or (d.get("topic") or "").strip()) for d in ds)
+    topic = next((t for t, _ in tc.most_common(1) if t), "")
+    tshow = f"{topic}这类题" if topic else "这类题"
+    stuck = next(((d.get("stuck_at") or "").strip() for d in ds
+                  if d.get("status") == "部分作答" and (d.get("stuck_at") or "").strip()), "")
+    if blank * 2 > n:
+        # 空白过半 → 动笔动员，不下对错结论（漏做还是漏交需联席课上确认）
+        a = f"这节课 {n} 轮小黑板有 {blank} 轮是空白"
+        if ok or part:
+            a += f"，{ok + part} 轮动了笔（完整 {ok} 轮、写了一半 {part} 轮）"
+        return (a, "现在最要紧的不是对错，是「当堂每一轮都动笔」这个动作本身",
+                "小黑板是当场纠错最快的地方——从下一轮就写起来，错了当场就能被纠正")
+    if ok * 2 >= n:
+        # 完整作答过半 → 正向命名（哪怕有错点也先肯定习惯，再把错点指出来）
+        a = f"这节课 {n} 轮小黑板，{ok} 轮完整写到了最后"
+        if blank:
+            a += f"（另有 {blank} 轮空白）"
+        if not errs:
+            a += "，没出典型错误"
+            return (a, "当堂把每道题完整写到底、而且写得对的习惯，你已经有了",
+                    f"以后考场上遇到{tshow}，会做的分你能稳稳拿住")
+        a += f"，错点集中在「{err_top}」"
+        return (a, f"完整落笔的习惯已经有了，现在差的是「{err_top}」这一步的熟练度",
+                f"把这个错点练熟，{tshow}的分就稳了")
+    # 交了但写不完 / 错偏多 → 指出卡住的具体位置，命名「收尾」，不下「不会」的判词
+    a = f"这节课 {n} 轮里完整 {ok} 轮、写到一半 {part} 轮"
+    if blank:
+        a += f"、空白 {blank} 轮"
+    if stuck:
+        a += f"——卡住的位置很具体：{stuck[:44]}{'…' if len(stuck) > 44 else ''}"
+    elif err_top:
+        a += f"——错点集中在「{err_top}」"
+    return (a, "能写到一半说明思路在往前走，缺的是把最后一步算到底——先当「收尾」练，不当「不会」处理",
+            f"把最后一步写完的习惯养起来，{tshow}「会做但没拿到」的分就能捡回来")
+
+
 def board_block(sm):
     """学生卡「学习情况」内的佐证子块：课堂小黑板逐轮读图结论（v3.8 按**课次**组织）。
 
     目录层级：第 1 层=课次（上课日期）→ 第 2 层=该课次下每一轮（时间戳）→ 第 3 层=图片。
     v4.0：正文只留「一句话作答概况 + 典型错误」，「逐次课情况」表与「逐轮明细」表**均可折叠**
-    （默认收起），需要时点击展开 —— 避免 8 次课 × 29 轮铺满卡片、淹没结论。"""
+    （默认收起），需要时点击展开 —— 避免 8 次课 × 29 轮铺满卡片、淹没结论。
+    v5.24：新增「课节点评（三段式）」折叠块 —— 逐课次按
+    「我看见（具体动作）→ 这说明（给动作命名）→ 这件事（以后能帮他什么）」生成点评话术，
+    联席可直接取用；默认折叠，与整体「明细收起」的版面原则一致。"""
     if not sm:
         return ('<div class="sub-blk"><div class="sb-h">课堂小黑板（学习情况佐证）</div>'
                 '<div class="noatt">该生暂无小黑板图片（未被收录 / 课程未提供）</div></div>')
@@ -758,10 +818,30 @@ def board_block(sm):
     # v5.06：趋势为「样本不足」时整段不显示（用户 2026-11-06：这种文字不展示）；
     #   有实际趋势（逐步改善/下滑/基本持平）才写。
     _trend_txt = (f" ｜ 趋势：{trend}" if str(trend) and str(trend) != "样本不足" else "")
+    # v5.24：课节点评（三段式）—— 逐课次生成，默认折叠；有可写课次才渲染整块
+    cmts, _nc = "", 0
+    for g in lessons:
+        c3 = _lesson_comment3(g)
+        if not c3:
+            continue
+        _nc += 1
+        a, b, c = (_html.escape(x) for x in c3)
+        _ld = _html.escape(g.get("lesson_date") or "")
+        _ln = _html.escape(str(g.get("lesson") or "课次"))
+        cmts += (f'<div class="lcmt"><div class="lcmh">{_ln}（{_ld} · '
+                 f'{g.get("rounds", 0)} 轮）</div>'
+                 f'<div class="l3"><span class="l3k s1">我看见</span>{a}</div>'
+                 f'<div class="l3"><span class="l3k s2">这说明</span>{b}</div>'
+                 f'<div class="l3"><span class="l3k s3">这件事</span>{c}</div></div>')
+    _cmtblk = (f'<details class="bdet"><summary>课节点评 · 三段式（{_nc} 次课，点击展开）</summary>'
+               f'<div class="lcmnote">骨架：我看见（具体动作，指得出位置）→ 这说明（给动作起个名字）'
+               f'→ 这件事（这个动作以后能帮他什么）。联席可直接按这个骨架发给家长/学生。</div>{cmts}</details>'
+               ) if cmts else ""
     return f'''<div class="sub-blk">
       <div class="sb-h">课堂小黑板（{_clbl}{lc} 次课 · {_nok} 轮 · 学习情况佐证{_src_note}）</div>
       <div class="kv"><span class="k">作答概况</span><span class="v">共 {_nok} 轮{_ftip} ｜ {dist}{_trend_txt}</span></div>
       <div class="kv"><span class="k">典型错误</span><span class="v">{errs}</span></div>
+      {_cmtblk}
       <details class="bdet"><summary>{_lsum}</summary>{ltable}</details>
       <details class="bdet"><summary>逐题明细（{len(ds)} 题 · {n} 轮，点击展开）</summary>
         <table><tr><th>上课日期</th><th>题目</th><th>作答</th><th>正确性</th><th>关联知识点</th><th>错误类型</th><th>卡点</th><th>图片</th></tr>{rows}</table>
@@ -990,7 +1070,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.23"
+SKILL_VER = "v5.24"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -3938,6 +4018,15 @@ details.attdet[open]>summary:before{content:"▾ "}
 .kv{display:flex;gap:10px;font-size:13px;line-height:1.7;margin:4px 0;align-items:flex-start}
 .kv .k{flex:0 0 64px;color:#8a9099;font-weight:600}
 .kv .v{flex:1}
+/* v5.24：课节点评（三段式）*/
+.lcmt{margin:6px 0 2px;padding:8px 12px;background:#f8f9fb;border:1px solid #eef0f3;border-radius:8px}
+.lcmh{font-size:12px;font-weight:700;color:#3a5bdb;margin-bottom:4px}
+.l3{font-size:13px;line-height:1.7;margin:2px 0;color:#2b2f36}
+.l3k{display:inline-block;font-size:11.5px;font-weight:700;border-radius:4px;padding:0 6px;margin-right:8px;color:#fff;vertical-align:1px;white-space:nowrap}
+.l3k.s1{background:#0a8a4a}
+.l3k.s2{background:#1a6dd4}
+.l3k.s3{background:#b45309}
+.lcmnote{font-size:12px;color:#8a9099;margin:2px 0 6px;line-height:1.6}
 .note{font-size:12px;color:#8a9099;line-height:1.6}
 .attbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .lchip{display:inline-flex;flex-direction:column;align-items:center;line-height:1.25;font-size:12px;font-weight:700;padding:5px 10px;border-radius:8px;min-width:64px}
