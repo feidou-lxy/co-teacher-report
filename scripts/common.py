@@ -1346,6 +1346,68 @@ def learning_level(s, board, fs=None):
     return key, LEVEL_CN[key], ev
 
 
+# ══════════ v5.26：退费预警 ══════════
+# 规则口径来自 2026-11-17《开课后退费全量分析》（会话「协同处理个人账号任务」）的回溯验证：
+#   全量 10535 条后台退费记录 → 开课后退费 4801 条（去重 2808 人）→ 有学情信号数据 388 人。
+#   R2 作业未交率≥50%：事前命中 140/388 = 36%（2026 秋口径 44%）—— 最强、最稳定的事前信号；
+#   R1 出勤连续缺勤≥2 次：命中 14/388 = 4% —— 命中率低但一旦命中极强（王艺程：0/9 到课全回放
+#      + 连续 4 次缺勤，退费前 1 个月轨迹清晰）；
+#   R3 群聊泛负面：仅 2% 命中且多为老师讨论考试策略 → **不设规则**。
+# ⚠️ 两条必须写进呈现文案的边界（回溯结论原文）：
+#   ① 任一信号对退费学生的事前覆盖率天花板约 38%（全量）~48%（2026 秋）——
+#      「效果不满意 / 进度不匹配」类退费几乎无过程信号（数据盲区），无标签 ≠ 无风险；
+#   ② 退费是**科次级**的——某门课的信号才对应该门课的退费，不按人跨科聚合。
+# 标签语义 = 「有过程信号支撑的退费风险」，命中后需联席/教务人工确认，再回写后台续报意向 D 档。
+def refund_risk(att, fs=None):
+    """退费预警（v5.26）：按回溯验证的 R1/R2 规则给 强/中 两档。
+
+    参数：
+      att — attendance_clean 里该生的出勤记录（含 classes[] 逐节 isAttend/isPlayback）；
+      fs  — fs_stats() 结果（D/U 为老师逐格打勾的提交事实，是权威口径）。
+    返回 (level, reasons)：level ∈ "strong" / "watch" / None。
+    """
+    reasons = []
+    level = None
+
+    def raise_to(lv, txt):
+        nonlocal level
+        reasons.append(txt)
+        if lv == "strong" or level is None:
+            level = lv if level != "strong" else "strong"
+
+    # R2：作业未交率（飞书表）。最小样本护栏与 _fs_evidence 同值：记录 <3 条不判
+    if fs and fs.get("pct") is not None:
+        n = int(fs.get("D") or 0) + int(fs.get("U") or 0)
+        u = int(fs.get("U") or 0)
+        if n >= 3:
+            rate = u / n
+            if rate >= 0.5:
+                raise_to("strong", f"作业未交率 {u}/{n}（{rate:.0%} ≥50%；退费最强事前信号，"
+                                   f"退费学生回溯命中率 36%~44%）")
+            elif rate >= 0.3:
+                raise_to("watch", f"作业未交率 {u}/{n}（{rate:.0%}，30%~50% 偏高区间）")
+    # R1：出勤连续缺勤 ≥2 次（逐节按 classSeq 排序；回放不算缺——与有效出勤口径一致）
+    if isinstance(att, dict):
+        cls = sorted((att.get("classes") or []),
+                     key=lambda c: (c.get("classSeq") or 0))
+        run = worst = 0
+        for c in cls:
+            if c.get("isAttend") != 1 and c.get("isPlayback") != 1:
+                run += 1
+                worst = max(worst, run)
+            else:
+                run = 0
+        if worst >= 2:
+            raise_to("strong", f"出勤连续缺勤 {worst} 次（R1 出勤崩塌：连续缺勤 ≥2 次，"
+                               f"退费前典型轨迹，命中率 4% 但极强）")
+        # R5：全程零到课且无任何回放（≥4 节）—— 只给中档：可能是未排课 / 数据未更新
+        #     （v4.24 已证「无出勤记录 ≠ 退课」），需人工先核排课状态
+        n_cls = len(cls)
+        if n_cls >= 4 and not any(c.get("isAttend") == 1 or c.get("isPlayback") == 1 for c in cls):
+            raise_to("watch", f"全程未到课（{n_cls} 节均无到课/回放记录，需先确认排课状态）")
+    return level, reasons
+
+
 def att_effective(a):
     """有效出勤口径（v3.8 定，v4.18 统一出口）：**看回放也算出勤**。
 

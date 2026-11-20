@@ -863,6 +863,9 @@ BOARDS_MAP = {}
 #   为什么不用 crows：没有群聊的学生（端木这类「有白板但没群」）不在 crows 里，
 #   而他们恰恰是这条维度最该被看见的人；以 boards 驱动、用 cov 补出勤才能全覆盖。
 COV_MAP = {}
+# v5.26：退费预警命中收集（card_html 里填充，概览页「退费预警名单」读取 —— 卡片先渲染，顺序安全）
+RF_HITS = []
+_RF_SEEN = set()   # (姓名, 课程, 理由) 去重 —— 同一卡会在两个面板各拼一次 DOM
 
 
 def _cov_of(stu):
@@ -1070,7 +1073,7 @@ def school_line(st):
 
 # ============ v4.36 近期成绩 → 学校名下方一行（用户要求：放到明显位置） ============
 # v4.66：报告自证生成版本（"这份报告是哪版技能跑的"以前只能靠人记）
-SKILL_VER = "v5.25"
+SKILL_VER = "v5.26"
 
 # ============ v4.86 处方层运行时状态 ============
 # 为什么用模块级变量而不层层传参：处方要挂在「学生卡」和「Tab② 概览」两个位置，
@@ -3042,6 +3045,8 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     # 前者与学习分层语义混淆（用户反馈「两个分层不知道什么意思」），后者在 ② 信号条、③ To-Do 里已有，
     # 属重复。故头部只留学习分层；近 3 天待回应是硬提醒，作为唯一附加红徽标保留。
     lv_key, lv_cn, lv_ev = common.learning_level(s, board, fst)
+    # v5.26：退费预警（强/中两档）—— 规则与回溯命中率见 common.refund_risk 注释
+    rf_level, rf_reasons = common.refund_risk(r.get("att"), fst)
     # v4.86：处方（知识点维度）—— 只在联席 / 课程视角出，教务视角不出（那是联席的动作）。
     #   配额按分层：需重点关注 2 条 / 需关注 1 条 / 正常·良好 0 条（见 prescribe.QUOTA）。
     _rx = ""
@@ -3071,6 +3076,24 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
          f'{d:+d}</i>{t}</span>') if d else f'<span class="lvev obs"><b>{src}</b>{t}</span>'
         for src, t, d in lv_ev) or '<span class="lvev">—</span>'
     head_right = (f'<span class="lvbadge sm {lv_key}" title="学习分层：综合小黑板作答 + 作业闭环 + 老师反馈 + 学生成绩 + 飞书表提交 五源判定">{lv_cn}</span>')
+    # v5.26：退费预警徽章 —— 与学习分层并行（口径不同：这是「退费前过程信号」，不是学习效果）
+    if rf_level:
+        _rf_txt = "；".join(rf_reasons)
+        _rf_cls = "refund-s" if rf_level == "strong" else "refund-w"
+        _rf_cn = "退费风险" if rf_level == "strong" else "退费观察"
+        _rf_tip = (f"退费预警（规则来自 2026-11-17《开课后退费全量分析》回溯验证）：{_rf_txt}。"
+                   f"作业未交率≥50% 对退费学生事前命中率 36%（2026 秋 44%）、出勤连续缺勤≥2 次命中率 4% 但极强；"
+                   f"任一信号覆盖率天花板约 38%~48% —— 无标签 ≠ 无风险（效果不满意类是数据盲区）。"
+                   f"人工确认后退写后台续报意向 D 档「有退费风险」。")
+        head_right += (f'<span class="lvbadge sm {_rf_cls}" title="{_html.escape(_rf_tip)}">{_rf_cn}</span>')
+        # 名单收集：概览页「退费预警名单」用（卡片循环先于 cov_block 渲染，顺序安全）
+        _rf_nm = str(r.get("stu") or s.get("name") or "")
+        _rf_cs = str(r.get("course") or r.get("course_raw") or "")
+        _rf_key = (_rf_nm, _rf_cs, tuple(rf_reasons))
+        if _rf_key not in _RF_SEEN:
+            _RF_SEEN.add(_rf_key)
+            RF_HITS.append({"name": _rf_nm, "level": rf_level,
+                            "reasons": rf_reasons, "course": _rf_cs})
     head_right += _rn_badge
     # v5.09 叶子团队三块：C 级续报风险行 / 问题学生直引 / 课次星值条（无数据自动整块不渲染）
     _renew_html = renew_risk_line(_fsmeta)
@@ -3408,6 +3431,10 @@ def card_html(r, edu=False, show_co_tag=False, board=None):
     if _risk_items:
         _sumrows += (f'<div class="sumrow sum-risk"><span class="sk">风险</span>'
                      f'<span class="sv">{_html.escape("；".join(_risk_items))}</span></div>')
+    # v5.26：退费预警行 —— 独立于「风险」（那是学习/配合风险），这是退费前过程信号
+    if rf_level:
+        _sumrows += (f'<div class="sumrow sum-refund"><span class="sk">退费预警</span>'
+                     f'<span class="sv">{_html.escape("；".join(rf_reasons))}</span></div>')
     if _act_txt:
         _sumrows += (f'<div class="sumrow sum-act" title="{_html.escape(_a1_full)}">'
                      f'<span class="sk">下一步</span><span class="sv">{_html.escape(_act_txt)}</span></div>')
@@ -4106,6 +4133,16 @@ details.fsdet[open]>summary:before{content:"▾ "}
 .lvbadge.sm{font-size:12px;padding:2px 10px;border-radius:11px;font-weight:700}
 .lvbadge.red{background:#e54545}.lvbadge.orange{background:#ff8f1f}
 .lvbadge.green{background:#2ba471}.lvbadge.blue{background:#3a5bdb}
+/* v5.26：退费预警徽章 —— 深红=强信号（退费风险），描边橙=中信号（退费观察）；与学习分层并行、不混用配色语义 */
+.lvbadge.refund-s{background:#a8071a}
+.lvbadge.refund-w{background:#fff7e6;color:#d46b08;border:1.5px solid #ffc53d}
+.sum-refund .sk{background:#fff1f0;color:#a8071a}
+.sum-refund .sv{color:#8c3a2b}
+.rfh{font-size:13px;margin:10px 0 4px;color:#4b5563}
+.rftab{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e6eaf2}
+.rftab th,.rftab td{border-bottom:1px solid #eef0f3;padding:7px 10px;text-align:left;vertical-align:top}
+.rftab th{background:#fafbfc;color:#6b7280}
+.rftab td:first-child{white-space:nowrap;font-weight:600;color:#1a1a1a}
 details.lvdet{margin-top:8px;border-top:1px dashed #eef0f3;padding-top:7px}
 details.lvdet>summary{cursor:pointer;font-size:12px;font-weight:600;color:#3a5bdb;list-style:none;outline:none}
 details.lvdet>summary::-webkit-details-marker{display:none}
@@ -6444,6 +6481,34 @@ def main():
                 _fs_note += f'（其中 {len(_fs_extra)} 人有加课 / 电话沟通记录，已汇总到学生信息上方）'
     cov_block = coverage_block(cov, roster_n, analyzed_n, args.chat_days,
                                cov_meta.get("degraded"), _fs_note, cov_filter=_covf)
+    # v5.26：退费预警名单 —— 挂在覆盖与失联预警之后；卡上已带同款徽章与理由
+    if RF_HITS:
+        _rf_rows_s, _rf_rows_w = "", ""
+        for _h in sorted(RF_HITS, key=lambda x: (x["level"] != "strong", x["name"])):
+            _rs = "；".join(_h["reasons"])
+            _row = (f'<tr><td>{_html.escape(_h["name"])}</td>'
+                    f'<td>{_html.escape(_h["course"] or "—")}</td>'
+                    f'<td>{_html.escape(_rs)}</td></tr>')
+            if _h["level"] == "strong":
+                _rf_rows_s += _row
+            else:
+                _rf_rows_w += _row        # noqa: 保留分组
+        _rf_tab = ""
+        if _rf_rows_s:
+            _rf_tab += (f'<h3 class="rfh">强信号（命中即建议人工确认，回写后台意向 D 档）</h3>'
+                        f'<table class="rftab"><tr><th>学生</th><th>课程</th><th>命中信号</th></tr>'
+                        f'{_rf_rows_s}</table>')
+        if _rf_rows_w:
+            _rf_tab += (f'<h3 class="rfh">观察（信号偏弱 / 需先核实排课状态）</h3>'
+                        f'<table class="rftab"><tr><th>学生</th><th>课程</th><th>命中信号</th></tr>'
+                        f'{_rf_rows_w}</table>')
+        _rf_note = ('口径：规则来自 2026-11-17《开课后退费全量分析》回溯验证——作业未交率≥50% 是最强事前信号'
+                    '（退费学生命中率 36%，2026 秋 44%），出勤连续缺勤≥2 次命中率 4% 但极强；'
+                    '群聊泛负面仅 2% 命中，不设规则。'
+                    '<b>任一信号覆盖率天花板约 38%~48%，无标签 ≠ 无风险</b>（「效果不满意 / 进度不匹配」类几乎无过程信号，'
+                    '靠成绩曲线与主动回访补充）。退费按科次发生，标签挂在出现信号的那门课上。')
+        cov_block += (f'<div class="covsec" id="refundsec"><h2>💸 退费预警名单（{len(RF_HITS)} 人）</h2>'
+                      f'<div class="covnote">{_rf_note}</div>{_rf_tab}</div>')
     kpi_cov = ""
     _cov_badge = ""
     if cov:
